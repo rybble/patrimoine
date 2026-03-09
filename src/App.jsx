@@ -1234,13 +1234,14 @@ function AppContent() {
     setLoading(true);
     try {
       const codes = cryptoData.map(c => c.code);
+
+      // 1. Fetch crypto prices in USD
       const res = await fetch("https://api.livecoinwatch.com/coins/map", {
         method: "POST",
         headers: { "content-type": "application/json", "x-api-key": LCW_KEY },
         body: JSON.stringify({ codes, currency: "USD", sort: "rank", order: "ascending", offset: 0, limit: 0, meta: false }),
       });
-      const rawText = await res.text();
-      const data = JSON.parse(rawText);
+      const data = await res.json();
       const pricesMap = {};
       if (Array.isArray(data)) {
         data.forEach(coin => {
@@ -1252,6 +1253,9 @@ function AppContent() {
       }
       setCryptoPrices(pricesMap);
 
+      // 2. Fetch ETH in EUR to compute USD/EUR rate
+      // eurUsd = nb de USD pour 1 EUR (ex: 1.08)
+      // ETH_USD / ETH_EUR = USD/EUR
       const eurRes = await fetch("https://api.livecoinwatch.com/coins/map", {
         method: "POST",
         headers: { "content-type": "application/json", "x-api-key": LCW_KEY },
@@ -1259,7 +1263,34 @@ function AppContent() {
       });
       const eurData = await eurRes.json();
       if (Array.isArray(eurData) && eurData[0]?.rate && pricesMap["ETH"]?.usd) {
-        setEurUsd(eurData[0].rate / pricesMap["ETH"].usd);
+        // ETH_EUR = eurData[0].rate, ETH_USD = pricesMap["ETH"].usd
+        // 1 EUR = ETH_USD/ETH_EUR USD → eurUsd = ETH_USD / ETH_EUR
+        const rate = pricesMap["ETH"].usd / eurData[0].rate;
+        setEurUsd(rate); // ex: 1.08 (1 EUR vaut 1.08 USD)
+      }
+
+      // 3. Fetch stock prices via Finnhub
+      const stockSymbols = {
+        "BYD":    "HKEX:1211",
+        "CSPX":   "LSE:CSPX",
+        "APOLLO": null,
+        "EQTF":   null,
+        "AAPL":   "AAPL",
+        "TSLA":   "TSLA",
+      };
+      const stockUpdates = {};
+      await Promise.all(
+        Object.entries(stockSymbols).map(async ([sym, finnSym]) => {
+          if (!finnSym) return;
+          try {
+            const r = await fetch(`https://finnhub.io/api/v1/quote?symbol=${finnSym}&token=${FINNHUB_KEY}`);
+            const q = await r.json();
+            if (q.c && q.c > 0) stockUpdates[sym] = q.c;
+          } catch {}
+        })
+      );
+      if (Object.keys(stockUpdates).length > 0) {
+        setStocks(prev => prev.map(st => stockUpdates[st.symbol] ? { ...st, price: stockUpdates[st.symbol] } : st));
       }
 
       await fetchOraPrice();
@@ -1298,6 +1329,10 @@ function AppContent() {
 
   return (
     <div style={{ minHeight: "100vh", background: "#0B1120", fontFamily: "'DM Sans', 'Segoe UI', sans-serif", color: "#F1F5F9", width: "100%" }}>
+      <style>{`
+        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+        html, body, #root { width: 100%; min-height: 100vh; background: #0B1120; }
+      `}</style>
       <link href="https://fonts.googleapis.com/css2?family=Syne:wght@700;800&family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
 
       <div style={{ position: "fixed", inset: 0, zIndex: 0, pointerEvents: "none", overflow: "hidden" }}>
