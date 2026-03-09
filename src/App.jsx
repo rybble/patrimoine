@@ -2,9 +2,32 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer, AreaChart, Area, XAxis, YAxis, CartesianGrid, LineChart, Line } from "recharts";
 
 // ─── CONSTANTS ────────────────────────────────────────────────────────────────
-const LCW_KEY = "7ef42576-3d07-41e1-97be-e84b2b1ea0c1";
+const CG_KEY = "CG-awA3tjVWYZgAyyAngdNth8Ek";
 const FINNHUB_KEY = "d6m3vjpr01qi0ajkqmp0d6m3vjpr01qi0ajkqmpg";
-const ORA_REF_PRICE = 13.50; // Cours ORA.PA au 31/12/2025 (date du relevé Amundi)
+const ORA_REF_PRICE = 13.50;
+
+// Mapping code → CoinGecko ID
+const CG_IDS = {
+  ETH:  "ethereum",
+  BTC:  "bitcoin",
+  BNB:  "binancecoin",
+  SOL:  "solana",
+  TON:  "the-open-network",
+  HNT:  "helium",
+  USDC: "usd-coin",
+  FLUX: "flux",
+  ADA:  "cardano",
+  KAS:  "kaspa",
+  ETHW: "ethereum-pow-iou",
+  ERG:  "ergo",
+  ETC:  "ethereum-classic",
+  POL:  "matic-network",
+  RXD:  "radiant",
+  MLC:  "my-lovely-coin",
+};
+
+// Helper: fetch CoinGecko with API key header
+const cgFetch = (url) => fetch(url, { headers: { "x-cg-demo-api-key": CG_KEY } });
 
 // ─── HISTORY (localStorage) ───────────────────────────────────────────────────
 const HISTORY_KEY = "patrimoine_history_v1";
@@ -258,29 +281,29 @@ function Tag({ children, color }) {
 }
 
 // ─── OVERVIEW ─────────────────────────────────────────────────────────────────
-function Overview({ cryptoData, cryptoPrices, stocks, bank, savings, oraPrice, eurUsd, realestateTotal, scpiTotal, onNavigate, history }) {
+function Overview({ cryptoData, cryptoPrices, stocks, bank, savings, oraPrice, realestateTotal, scpiTotal, onNavigate, history }) {
   const getVl = (f) => (f.type === "ora_linked" && oraPrice > 0) ? f.manualVl * (oraPrice / ORA_REF_PRICE) : f.manualVl;
-  const cryptoTotal = cryptoData.reduce((s, c) => s + (cryptoPrices[c.code]?.usd || 0) * c.qty, 0);
+  const cryptoTotal = cryptoData.reduce((s, c) => s + (cryptoPrices[c.code]?.eur || 0) * c.qty, 0);
   const stocksTotal = stocks.reduce((s, st) => s + st.price * st.qty, 0);
   const savingsTotal = [...savings.peg, ...savings.percol].reduce((s, f) => s + getVl(f) * f.qty, 0);
   const bankTotal = bank.reduce((s, b) => s + b.balance, 0);
-  const grandTotal = cryptoTotal / eurUsd + stocksTotal + savingsTotal + bankTotal + realestateTotal + scpiTotal;
+  const grandTotal = cryptoTotal + stocksTotal + savingsTotal + bankTotal + realestateTotal + scpiTotal;
 
   const sections = [
-    { key: "crypto",      label: "Crypto",                        value: cryptoTotal / eurUsd, raw: cryptoTotal,     rawCur: "USD", color: "#818CF8", icon: "₿" },
-    { key: "stocks",      label: "Bourse (Trade Republic)",        value: stocksTotal,           raw: stocksTotal,     rawCur: "EUR", color: "#34D399", icon: "📈" },
-    { key: "savings",     label: "Épargne salariale (PEG / PER)",  value: savingsTotal,           raw: savingsTotal,    rawCur: "EUR", color: "#FBBF24", icon: "🟠" },
-    { key: "scpi",        label: "SCPI",                           value: scpiTotal,              raw: scpiTotal,       rawCur: "EUR", color: "#A78BFA", icon: "🏢" },
-    { key: "realestate",  label: "Immobilier",                     value: realestateTotal,        raw: realestateTotal, rawCur: "EUR", color: "#F472B6", icon: "🏠" },
-    { key: "bank",        label: "Banque",                         value: bankTotal,              raw: bankTotal,       rawCur: "EUR", color: "#60A5FA", icon: "🏦" },
+    { key: "crypto",      label: "Crypto",                        value: cryptoTotal,     color: "#818CF8", icon: "₿" },
+    { key: "stocks",      label: "Bourse (Trade Republic)",        value: stocksTotal,     color: "#34D399", icon: "📈" },
+    { key: "savings",     label: "Épargne salariale (PEG / PER)",  value: savingsTotal,    color: "#FBBF24", icon: "🟠" },
+    { key: "scpi",        label: "SCPI",                           value: scpiTotal,       color: "#A78BFA", icon: "🏢" },
+    { key: "realestate",  label: "Immobilier",                     value: realestateTotal, color: "#F472B6", icon: "🏠" },
+    { key: "bank",        label: "Banque",                         value: bankTotal,       color: "#60A5FA", icon: "🏦" },
   ];
 
   const pieData = sections.filter(s => s.value > 0).map(s => ({ name: s.label.split(" ")[0], value: s.value, color: s.color }));
 
-  // Stats
-  const scpiRevenuAnnuel = scpiTotal > 0 ? (scpiTotal * 0.083) : 0; // ~8.3% moyen
+  const scpiRevenuAnnuel = scpiTotal > 0 ? (scpiTotal * 0.083) : 0;
   const bankInteret = bank.reduce((s, b) => s + b.balance * (b.interestRate || 0) / 100, 0);
-  const revenuPassifTotal = scpiRevenuAnnuel + bankInteret;
+  const rentAnnuel = 363 * 12;
+  const revenuPassifTotal = scpiRevenuAnnuel + bankInteret + rentAnnuel;
   const tauxRendementGlobal = grandTotal > 0 ? (revenuPassifTotal / grandTotal) * 100 : 0;
   const diversification = sections.filter(s => s.value > 0).length;
 
@@ -293,17 +316,17 @@ function Overview({ cryptoData, cryptoPrices, stocks, bank, savings, oraPrice, e
         <div style={{ fontSize: 46, fontWeight: 800, color: "#F1F5F9", fontFamily: "'Syne', sans-serif", lineHeight: 1 }}>
           {fmt(grandTotal)}
         </div>
-        <div style={{ fontSize: 12, color: "#64748B", marginTop: 6, marginBottom: 14 }}>1 USD ≈ {(1 / eurUsd).toFixed(4)} EUR</div>
+        <div style={{ fontSize: 12, color: "#64748B", marginTop: 6, marginBottom: 14 }}>Prix crypto en EUR · CoinGecko live</div>
         <Variation history={history} dataKey="total" color="#818CF8" />
         <MiniAreaChart data={history} dataKey="total" color="#818CF8" height={80} />
       </Card>
 
       {/* Stats globales */}
       <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 16 }}>
-        <StatCard label="Revenus passifs /an" value={fmt(revenuPassifTotal)} sub="SCPI + intérêts livrets" color="#34D399" icon="💰" />
+        <StatCard label="Revenus passifs /an" value={fmt(revenuPassifTotal)} sub="SCPI + loyer + intérêts" color="#34D399" icon="💰" />
         <StatCard label="Rendement global" value={`${tauxRendementGlobal.toFixed(2)}%`} sub="Sur patrimoine total" color="#FBBF24" icon="📈" />
         <StatCard label="Diversification" value={`${diversification}/6`} sub="Classes d'actifs actives" color="#818CF8" icon="🎯" />
-        <StatCard label="Actifs liquides" value={fmt(cryptoTotal / eurUsd + stocksTotal + bankTotal)} sub="Crypto + Bourse + Banque" color="#60A5FA" icon="💧" />
+        <StatCard label="Actifs liquides" value={fmt(cryptoTotal + stocksTotal + bankTotal)} sub="Crypto + Bourse + Banque" color="#60A5FA" icon="💧" />
       </div>
 
       <div style={{ display: "grid", gridTemplateColumns: "1fr 260px", gap: 16, marginBottom: 20 }}>
@@ -323,7 +346,6 @@ function Overview({ cryptoData, cryptoPrices, stocks, bank, savings, oraPrice, e
               </div>
               <div style={{ textAlign: "right" }}>
                 <div style={{ fontSize: 19, fontWeight: 700, color: s.color }}>{fmt(s.value)}</div>
-                {s.rawCur === "USD" && <div style={{ fontSize: 11, color: "#64748B" }}>{fmt(s.raw, "USD")}</div>}
               </div>
             </Card>
           ))}
@@ -357,7 +379,7 @@ function Overview({ cryptoData, cryptoPrices, stocks, bank, savings, oraPrice, e
 }
 
 // ─── CRYPTO VIEW ──────────────────────────────────────────────────────────────
-function CryptoView({ cryptoData, setCryptoData, cryptoPrices, eurUsd, loading, history }) {
+function CryptoView({ cryptoData, setCryptoData, cryptoPrices, loading, history, cryptoHistory }) {
   const [editingCode, setEditingCode] = useState(null);
   const [editQty, setEditQty] = useState("");
 
@@ -370,8 +392,8 @@ function CryptoView({ cryptoData, setCryptoData, cryptoPrices, eurUsd, loading, 
   const [selectedCoin, setSelectedCoin] = useState(null);
   const [addQty, setAddQty] = useState("");
 
-  const totalUsd = cryptoData.reduce((s, c) => s + (cryptoPrices[c.code]?.usd || 0) * c.qty, 0);
-  const total = totalUsd; // kept for share calc
+  const totalEur = cryptoData.reduce((s, c) => s + (cryptoPrices[c.code]?.eur || 0) * c.qty, 0);
+  const total = totalEur;
 
   const saveEdit = (code) => {
     setCryptoData(prev => prev.map(c => c.code === code ? { ...c, qty: parseFloat(editQty) || c.qty } : c));
@@ -382,24 +404,22 @@ function CryptoView({ cryptoData, setCryptoData, cryptoPrices, eurUsd, loading, 
     setCryptoData(prev => prev.filter(c => c.code !== code));
   };
 
-  // Search LCW /coins/list
+  // Search via CoinGecko /search
   const searchCoins = async (q) => {
     if (!q || q.trim().length < 2) { setSearchResults([]); return; }
     setSearchLoading(true);
     setSearchError("");
     try {
-      const res = await fetch("https://api.livecoinwatch.com/coins/list", {
-        method: "POST",
-        headers: { "content-type": "application/json", "x-api-key": LCW_KEY },
-        body: JSON.stringify({ currency: "USD", sort: "rank", order: "ascending", offset: 0, limit: 100, meta: true }),
-      });
+      const res = await cgFetch(`https://api.coingecko.com/api/v3/search?query=${encodeURIComponent(q)}`);
       const data = await res.json();
-      if (!Array.isArray(data)) { setSearchError("Erreur API"); return; }
-      const q2 = q.toLowerCase();
-      const filtered = data.filter(c =>
-        c.code?.toLowerCase().includes(q2) || c.name?.toLowerCase().includes(q2)
-      ).slice(0, 8);
-      setSearchResults(filtered);
+      const coins = (data.coins || []).slice(0, 8).map(c => ({
+        code: c.symbol.toUpperCase(),
+        name: c.name,
+        cgId: c.id,
+        logo: c.large || c.thumb,
+        rank: c.market_cap_rank,
+      }));
+      setSearchResults(coins);
     } catch { setSearchError("Erreur réseau"); }
     finally { setSearchLoading(false); }
   };
@@ -439,27 +459,29 @@ function CryptoView({ cryptoData, setCryptoData, cryptoPrices, eurUsd, loading, 
 
   const sorted = [...cryptoData]
     .filter(c => c.qty > 0)
-    .sort((a, b) => (cryptoPrices[b.code]?.usd || 0) * b.qty - (cryptoPrices[a.code]?.usd || 0) * a.qty);
+    .sort((a, b) => (cryptoPrices[b.code]?.eur || 0) * b.qty - (cryptoPrices[a.code]?.eur || 0) * a.qty);
 
   return (
     <div>
-      <SectionTitle sub={`${fmt(totalUsd, "USD")} · ${eurUsd > 0 ? fmt(totalUsd / eurUsd) : "—"} · ${loading ? "⏳ sync…" : "✓ LiveCoinWatch live"}`}>
+      <SectionTitle sub={`Total : ${fmt(totalEur)} · ${loading ? "⏳ sync…" : "✓ CoinGecko live · EUR direct"}`}>
         Cryptomonnaies
       </SectionTitle>
 
       {/* Stats crypto */}
       <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 14 }}>
-        <StatCard label="Valeur totale" value={eurUsd > 0 ? fmt(totalUsd / eurUsd) : "—"} sub={fmt(totalUsd, "USD")} color="#818CF8" icon="₿" />
-        <StatCard label="Nb positions" value={cryptoData.length} sub="Actifs différents" color="#6366F1" icon="🎯" />
-        <StatCard label="Top position" value={(() => { const top = [...cryptoData].sort((a,b) => (cryptoPrices[b.code]?.usd||0)*b.qty - (cryptoPrices[a.code]?.usd||0)*a.qty)[0]; return top ? top.symbol : "—"; })()} sub={(() => { const top = [...cryptoData].sort((a,b) => (cryptoPrices[b.code]?.usd||0)*b.qty - (cryptoPrices[a.code]?.usd||0)*a.qty)[0]; return top && eurUsd > 0 ? fmt((cryptoPrices[top.code]?.usd||0)*top.qty/eurUsd) : ""; })()} color="#A78BFA" icon="🏆" />
-        <StatCard label="Stablecoins" value={fmt((cryptoPrices["USDC"]?.usd || 1) * (cryptoData.find(c => c.code === "USDC")?.qty || 0) / eurUsd)} sub="USDC · liquidités sûres" color="#2775CA" icon="🔒" />
+        <StatCard label="Valeur totale" value={fmt(totalEur)} sub={`${cryptoData.length} actifs`} color="#818CF8" icon="₿" />
+        <StatCard label="Top position" value={(() => { const top = [...cryptoData].sort((a,b) => (cryptoPrices[b.code]?.eur||0)*b.qty - (cryptoPrices[a.code]?.eur||0)*a.qty)[0]; return top ? top.symbol : "—"; })()} sub={(() => { const top = [...cryptoData].sort((a,b) => (cryptoPrices[b.code]?.eur||0)*b.qty - (cryptoPrices[a.code]?.eur||0)*a.qty)[0]; return top ? fmt((cryptoPrices[top.code]?.eur||0)*top.qty) : ""; })()} color="#A78BFA" icon="🏆" />
+        <StatCard label="Stablecoins" value={fmt((cryptoPrices["USDC"]?.eur || 1) * (cryptoData.find(c => c.code === "USDC")?.qty || 0))} sub="USDC · liquidités sûres" color="#2775CA" icon="🔒" />
+        <StatCard label="Nb positions" value={cryptoData.length} sub="Tokens différents" color="#6366F1" icon="🎯" />
       </div>
 
       {/* Graphique évolution */}
       <Card style={{ marginBottom: 14, padding: "14px 18px" }}>
-        <div style={{ fontSize: 12, color: "#64748B", marginBottom: 8 }}>Évolution Crypto (€)</div>
-        <Variation history={history} dataKey="crypto" color="#818CF8" />
-        <MiniAreaChart data={history} dataKey="crypto" color="#818CF8" height={90} />
+        <div style={{ fontSize: 12, color: "#64748B", marginBottom: 4 }}>Évolution Crypto (€) — 90 jours · ETH via CoinGecko</div>
+        {cryptoHistory && cryptoHistory.length > 1
+          ? <MiniAreaChart data={cryptoHistory} dataKey="crypto" color="#818CF8" height={100} />
+          : <><Variation history={history} dataKey="crypto" color="#818CF8" /><MiniAreaChart data={history} dataKey="crypto" color="#818CF8" height={90} /></>
+        }
       </Card>
 
       {/* Add crypto panel */}
@@ -546,9 +568,9 @@ function CryptoView({ cryptoData, setCryptoData, cryptoPrices, eurUsd, loading, 
 
       <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
         {sorted.map(c => {
-          const price = cryptoPrices[c.code]?.usd || 0;
+          const price = cryptoPrices[c.code]?.eur || 0;
           const value = price * c.qty;
-          const pct = cryptoPrices[c.code]?.usd_24h_change || 0;
+          const pct = cryptoPrices[c.code]?.eur_24h_change || 0;
           const share = total > 0 ? (value / total) * 100 : 0;
 
           return (
@@ -577,12 +599,12 @@ function CryptoView({ cryptoData, setCryptoData, cryptoPrices, eurUsd, loading, 
                 </div>
               </div>
               <div style={{ textAlign: "right", minWidth: 80 }}>
-                <div style={{ fontSize: 12, color: "#94A3B8" }}>{price > 0 ? fmt(price, "USD") : "—"}</div>
+                <div style={{ fontSize: 12, color: "#94A3B8" }}>{price > 0 ? fmt(price) : "—"}</div>
                 <div style={{ fontSize: 12, color: pctColor(pct), fontWeight: 600 }}>{fmtPct(pct)}</div>
               </div>
               <div style={{ textAlign: "right", minWidth: 100 }}>
-                <div style={{ fontSize: 16, fontWeight: 700, color: "#F1F5F9" }}>{price > 0 ? fmt(value / eurUsd) : "—"}</div>
-                <div style={{ fontSize: 11, color: "#475569" }}>{price > 0 ? fmt(value, "USD") : ""} · {share.toFixed(1)}%</div>
+                <div style={{ fontSize: 16, fontWeight: 700, color: "#F1F5F9" }}>{price > 0 ? fmt(value) : "—"}</div>
+                <div style={{ fontSize: 11, color: "#475569" }}>{share.toFixed(1)}%</div>
               </div>
               <button onClick={() => removeToken(c.code)}
                 title="Supprimer"
@@ -1440,32 +1462,45 @@ function AppContent() {
   const [savings, setSavings] = useState(INITIAL_SAVINGS);
   const [loading, setLoading] = useState(false);
   const [lastUpdate, setLastUpdate] = useState(null);
-  const [eurUsd, setEurUsd] = useState(1.08);
   const [oraPrice, setOraPrice] = useState(0);
   const [history, setHistory] = useState(() => loadHistory());
   const [marketHistory, setMarketHistory] = useState({ stocks: [], crypto: [] });
 
-  // Fetch 180 days of AAPL+TSLA history from Finnhub to build stocks market chart
+  // Fetch 90 days ETH history in EUR from CoinGecko for crypto chart
+  // Fetch 180 days AAPL+TSLA from Finnhub for stocks chart
   useEffect(() => {
     const fetchMarketHistory = async () => {
       try {
+        // Crypto: ETH 90 days in EUR — use as portfolio trend proxy
+        const ethRes = await cgFetch("https://api.coingecko.com/api/v3/coins/ethereum/market_chart?vs_currency=eur&days=90&interval=daily");
+        const ethData = await ethRes.json();
+        if (ethData.prices) {
+          // Scale ETH price to portfolio equivalent (ETH qty * price)
+          const ethQty = 1.0258;
+          const cryptoPoints = ethData.prices.map(([ts, price]) => ({
+            date: new Date(ts).toISOString().slice(0, 10),
+            crypto: Math.round(price * ethQty),
+          }));
+          setMarketHistory(prev => ({ ...prev, crypto: cryptoPoints }));
+        }
+      } catch (e) { console.error("Crypto history error:", e); }
+
+      try {
         const to = Math.floor(Date.now() / 1000);
         const from = to - 180 * 24 * 3600;
-        // Fetch AAPL as proxy for portfolio trend (most liquid US stock)
         const [rAAPL, rTSLA] = await Promise.all([
           fetch(`https://finnhub.io/api/v1/stock/candle?symbol=AAPL&resolution=W&from=${from}&to=${to}&token=${FINNHUB_KEY}`).then(r => r.json()),
           fetch(`https://finnhub.io/api/v1/stock/candle?symbol=TSLA&resolution=W&from=${from}&to=${to}&token=${FINNHUB_KEY}`).then(r => r.json()),
         ]);
         if (rAAPL.s === "ok" && rTSLA.s === "ok") {
-          // Build weighted portfolio history using actual qty and price ratios
-          const aaplQty = 0.0466, tslaQty = 0.012771;
+          const aaplQty = 0.0466, tslaQty = 0.012771, usdToEur = 0.92;
           const points = rAAPL.t.map((ts, i) => ({
             date: new Date(ts * 1000).toISOString().slice(0, 10),
-            stocks: Math.round((rAAPL.c[i] * aaplQty + (rTSLA.c[i] || 0) * tslaQty) * (1 / 1.08)),
+            stocks: Math.round((rAAPL.c[i] * aaplQty + (rTSLA.c[i] || 0) * tslaQty) * usdToEur),
           }));
           setMarketHistory(prev => ({ ...prev, stocks: points }));
         }
-      } catch (e) { console.error("Market history error:", e); }
+      } catch (e) { console.error("Stock history error:", e); }
     };
     fetchMarketHistory();
   }, []);
@@ -1480,57 +1515,41 @@ function AppContent() {
 
   const fetchPrices = useCallback(async () => {
     setLoading(true);
-    let eurUsdRate = eurUsd; // fallback sur la valeur courante
     try {
-      const codes = cryptoData.map(c => c.code);
+      // 1. Fetch all crypto prices in EUR via CoinGecko /simple/price
+      const cgIds = cryptoData.map(c => CG_IDS[c.code]).filter(Boolean);
+      const uniqueIds = [...new Set(cgIds)];
+      const priceRes = await cgFetch(
+        `https://api.coingecko.com/api/v3/simple/price?ids=${uniqueIds.join(",")}&vs_currencies=eur&include_24hr_change=true`
+      );
+      const priceData = await priceRes.json();
 
-      // 1. Fetch crypto prices in USD
-      const res = await fetch("https://api.livecoinwatch.com/coins/map", {
-        method: "POST",
-        headers: { "content-type": "application/json", "x-api-key": LCW_KEY },
-        body: JSON.stringify({ codes, currency: "USD", sort: "rank", order: "ascending", offset: 0, limit: 0, meta: false }),
-      });
-      const data = await res.json();
       const pricesMap = {};
-      if (Array.isArray(data)) {
-        data.forEach(coin => {
-          pricesMap[coin.code] = {
-            usd: coin.rate,
-            usd_24h_change: coin.delta?.day ? (coin.delta.day - 1) * 100 : 0,
+      cryptoData.forEach(c => {
+        const cgId = CG_IDS[c.code];
+        if (cgId && priceData[cgId]) {
+          pricesMap[c.code] = {
+            eur: priceData[cgId].eur || 0,
+            eur_24h_change: priceData[cgId].eur_24h_change || 0,
           };
-        });
-      }
+        }
+      });
       setCryptoPrices(pricesMap);
 
-      // 2. Fetch ETH in EUR to compute USD/EUR rate
-      // eurUsd = nb de USD pour 1 EUR (ex: 1.08)
-      // ETH_USD / ETH_EUR = USD/EUR
-      const eurRes = await fetch("https://api.livecoinwatch.com/coins/map", {
-        method: "POST",
-        headers: { "content-type": "application/json", "x-api-key": LCW_KEY },
-        body: JSON.stringify({ codes: ["ETH"], currency: "EUR", sort: "rank", order: "ascending", offset: 0, limit: 0, meta: false }),
-      });
-      const eurData = await eurRes.json();
-      if (Array.isArray(eurData) && eurData[0]?.rate && pricesMap["ETH"]?.usd) {
-        // ETH_EUR = eurData[0].rate, ETH_USD = pricesMap["ETH"].usd
-        // 1 EUR = ETH_USD/ETH_EUR USD → eurUsd = ETH_USD / ETH_EUR
-        const rate = pricesMap["ETH"].usd / eurData[0].rate;
-        eurUsdRate = rate;
-        setEurUsd(rate); // ex: 1.08 (1 EUR vaut 1.08 USD)
-      }
+      // 2. Stocks via Finnhub (USD → EUR via taux BCE)
+      const fxRes = await cgFetch("https://api.coingecko.com/api/v3/simple/price?ids=usd&vs_currencies=eur");
+      const fxData = await fxRes.json();
+      const usdToEur = fxData?.usd?.eur || 0.92;
 
-      // 3. Fetch stock prices via Finnhub (conversion USD→EUR pour les titres US)
       const stockSymbols = {
-        "BYD":    { finnSym: "HKEX:1211",  currency: "HKD" },
-        "CSPX":   { finnSym: "LSE:CSPX",   currency: "USD" }, // coté en USD sur LSE
-        "APOLLO": { finnSym: null,          currency: "EUR" },
-        "EQTF":   { finnSym: null,          currency: "EUR" },
-        "AAPL":   { finnSym: "AAPL",        currency: "USD" },
-        "TSLA":   { finnSym: "TSLA",        currency: "USD" },
+        "BYD":    { finnSym: null,   currency: "EUR" },
+        "CSPX":   { finnSym: null,   currency: "EUR" },
+        "APOLLO": { finnSym: null,   currency: "EUR" },
+        "EQTF":   { finnSym: null,   currency: "EUR" },
+        "AAPL":   { finnSym: "AAPL", currency: "USD" },
+        "TSLA":   { finnSym: "TSLA", currency: "USD" },
       };
       const stockUpdates = {};
-      // On récupère d'abord le taux EUR/USD frais
-      const usdToEur = eurUsdRate > 0 ? (1 / eurUsdRate) : (1 / 1.08);
       await Promise.all(
         Object.entries(stockSymbols).map(async ([sym, { finnSym, currency }]) => {
           if (!finnSym) return;
@@ -1538,12 +1557,7 @@ function AppContent() {
             const r = await fetch(`https://finnhub.io/api/v1/quote?symbol=${finnSym}&token=${FINNHUB_KEY}`);
             const q = await r.json();
             if (q.c && q.c > 0) {
-              // Convertir en EUR si nécessaire
-              if (currency === "USD") {
-                stockUpdates[sym] = q.c * usdToEur;
-              } else {
-                stockUpdates[sym] = q.c; // déjà en EUR ou on laisse tel quel
-              }
+              stockUpdates[sym] = currency === "USD" ? q.c * usdToEur : q.c;
             }
           } catch {}
         })
@@ -1568,20 +1582,20 @@ function AppContent() {
   }, []);
 
   const getVlSaving = (f) => (f.type === "ora_linked" && oraPrice > 0) ? f.manualVl * (oraPrice / ORA_REF_PRICE) : f.manualVl;
-  const cryptoTotal = cryptoData.reduce((s, c) => s + (cryptoPrices[c.code]?.usd || 0) * c.qty, 0);
+  const cryptoTotal = cryptoData.reduce((s, c) => s + (cryptoPrices[c.code]?.eur || 0) * c.qty, 0);
   const stocksTotal = stocks.reduce((s, st) => s + st.price * st.qty, 0);
   const savingsTotal = [...savings.peg, ...savings.percol].reduce((s, f) => s + getVlSaving(f) * f.qty, 0);
   const bankTotal = bank.reduce((s, b) => s + b.balance, 0);
   const realestateTotal = realestate.reduce((s, p) => s + p.estimatedPrice, 0);
   const scpiTotal = scpi.reduce((s, p) => s + p.pricePerPart * p.parts, 0);
-  const grandTotal = cryptoTotal / eurUsd + stocksTotal + savingsTotal + bankTotal + realestateTotal + scpiTotal;
+  const grandTotal = cryptoTotal + stocksTotal + savingsTotal + bankTotal + realestateTotal + scpiTotal;
 
   // Push history point whenever totals are meaningful
   useEffect(() => {
     if (grandTotal > 0 && cryptoPrices && Object.keys(cryptoPrices).length > 0) {
       const newHistory = pushHistoryPoint({
         total: Math.round(grandTotal),
-        crypto: Math.round(cryptoTotal / eurUsd),
+        crypto: Math.round(cryptoTotal),
         stocks: Math.round(stocksTotal),
         savings: Math.round(savingsTotal),
         bank: Math.round(bankTotal),
@@ -1653,8 +1667,8 @@ function AppContent() {
         )}
 
         {/* Views */}
-        {view === "overview"   && <Overview cryptoData={cryptoData} cryptoPrices={cryptoPrices} stocks={stocks} bank={bank} savings={savings} oraPrice={oraPrice} eurUsd={eurUsd} realestateTotal={realestateTotal} scpiTotal={scpiTotal} onNavigate={setView} history={history} />}
-        {view === "crypto"     && <CryptoView cryptoData={cryptoData} setCryptoData={setCryptoData} cryptoPrices={cryptoPrices} eurUsd={eurUsd} loading={loading} history={history} />}
+        {view === "overview"   && <Overview cryptoData={cryptoData} cryptoPrices={cryptoPrices} stocks={stocks} bank={bank} savings={savings} oraPrice={oraPrice} realestateTotal={realestateTotal} scpiTotal={scpiTotal} onNavigate={setView} history={history} />}
+        {view === "crypto"     && <CryptoView cryptoData={cryptoData} setCryptoData={setCryptoData} cryptoPrices={cryptoPrices} loading={loading} history={history} cryptoHistory={marketHistory.crypto} />}
         {view === "stocks"     && <StocksView stocks={stocks} setStocks={setStocks} history={history} marketHistory={marketHistory.stocks} />}
         {view === "savings"    && <SavingsView savings={savings} setSavings={setSavings} oraPrice={oraPrice} />}
         {view === "scpi"       && <ScpiView scpi={scpi} setScpi={setScpi} history={history} />}
