@@ -77,7 +77,7 @@ function MiniAreaChart({ data, dataKey, color, height = 60 }) {
         <YAxis tick={{ fontSize: 10, fill: "#64748B" }} tickLine={false} axisLine={false}
           tickFormatter={v => v >= 1000 ? `${(v/1000).toFixed(0)}k` : v} width={36} />
         <Tooltip
-          contentStyle={{ background: "#1E293B", border: `1px solid ${"#334155"}`, borderRadius: "10px", color: "#F1F5F9", fontSize: 12 }}
+          contentStyle={{ background: "#1E293B", border: `1px solid #334155`, borderRadius: "10px", color: "#F1F5F9", fontSize: 12 }}
           formatter={v => [fmt(v), "Valeur"]} labelFormatter={l => `📅 ${l}`}
         />
         <Area type="monotone" dataKey={dataKey} stroke={color} strokeWidth={1.5}
@@ -1636,8 +1636,8 @@ function AppContent() {
       <style>{`
 
         *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-        html, body, #root { width: 100%; min-height: 100vh; background: ${"#0B1120"}; }
-        ::-webkit-scrollbar { width: 4px; } ::-webkit-scrollbar-track { background: transparent; } ::-webkit-scrollbar-thumb { background: ${"#334155"}; border-radius: 4px; }
+        html, body, #root { width: 100%; min-height: 100vh; background: #0B1120; }
+        ::-webkit-scrollbar { width: 4px; } ::-webkit-scrollbar-track { background: transparent; } ::-webkit-scrollbar-thumb { background: #334155; border-radius: 4px; }
       `}</style>
 
       <div style={{ position: "relative", zIndex: 1, width: "100%", maxWidth: 1400, margin: "0 auto", padding: "0 40px 80px", boxSizing: "border-box" }}>
