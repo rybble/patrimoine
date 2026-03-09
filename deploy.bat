@@ -7,6 +7,9 @@ echo.
 
 cd /d C:\Users\rybbl\patrimoine
 
+echo [0/5] Nettoyage du build precedent...
+if exist dist rmdir /s /q dist
+
 echo [1/5] Compilation...
 call npm run build
 if errorlevel 1 ( echo ERREUR lors du build & pause & exit /b 1 )
