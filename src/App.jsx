@@ -287,6 +287,20 @@ function Pill({ label, active, onClick }) {
   );
 }
 
+function StatCard({ label, value, sub, color, icon }) {
+  return (
+    <div style={{
+      flex: "1 1 160px", background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)",
+      borderRadius: 16, padding: "16px 18px",
+    }}>
+      <div style={{ fontSize: 20, marginBottom: 6 }}>{icon}</div>
+      <div style={{ fontSize: 11, color: "#64748B", textTransform: "uppercase", letterSpacing: 1, marginBottom: 4 }}>{label}</div>
+      <div style={{ fontSize: 22, fontWeight: 800, color }}>{value}</div>
+      {sub && <div style={{ fontSize: 11, color: "#475569", marginTop: 3 }}>{sub}</div>}
+    </div>
+  );
+}
+
 function Tag({ children, color }) {
   return (
     <span style={{ background: color + "1A", color, border: `1px solid ${color}33`, borderRadius: "6px", padding: "2px 8px", fontSize: 11, fontWeight: 600 }}>
