@@ -67,21 +67,20 @@ function MiniAreaChart({ data, dataKey, color, height = 60 }) {
       <AreaChart data={data} margin={{ top: 4, right: 4, bottom: 0, left: 0 }}>
         <defs>
           <linearGradient id={`grad_${dataKey}`} x1="0" y1="0" x2="0" y2="1">
-            <stop offset="5%" stopColor={color} stopOpacity={0.3} />
+            <stop offset="5%" stopColor={color} stopOpacity={0.25} />
             <stop offset="95%" stopColor={color} stopOpacity={0} />
           </linearGradient>
         </defs>
-        <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.04)" />
-        <XAxis dataKey="date" tick={{ fontSize: 10, fill: "#475569" }} tickLine={false} axisLine={false}
+        <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.03)" />
+        <XAxis dataKey="date" tick={{ fontSize: 10, fill: "#64748B" }} tickLine={false} axisLine={false}
           tickFormatter={d => d.slice(5)} interval="preserveStartEnd" />
-        <YAxis tick={{ fontSize: 10, fill: "#475569" }} tickLine={false} axisLine={false}
-          tickFormatter={v => v >= 1000 ? `${(v/1000).toFixed(0)}k` : v} width={38} />
+        <YAxis tick={{ fontSize: 10, fill: "#64748B" }} tickLine={false} axisLine={false}
+          tickFormatter={v => v >= 1000 ? `${(v/1000).toFixed(0)}k` : v} width={36} />
         <Tooltip
-          contentStyle={{ background: "#1E293B", border: "1px solid #334155", borderRadius: 8, color: "#F1F5F9", fontSize: 12 }}
-          formatter={v => [fmt(v), "Valeur"]}
-          labelFormatter={l => `📅 ${l}`}
+          contentStyle={{ background: "#1E293B", border: `1px solid ${"#334155"}`, borderRadius: "10px", color: "#F1F5F9", fontSize: 12 }}
+          formatter={v => [fmt(v), "Valeur"]} labelFormatter={l => `📅 ${l}`}
         />
-        <Area type="monotone" dataKey={dataKey} stroke={color} strokeWidth={2}
+        <Area type="monotone" dataKey={dataKey} stroke={color} strokeWidth={1.5}
           fill={`url(#grad_${dataKey})`} dot={false} activeDot={{ r: 4, fill: color }} />
       </AreaChart>
     </ResponsiveContainer>
@@ -89,17 +88,6 @@ function MiniAreaChart({ data, dataKey, color, height = 60 }) {
 }
 
 // ─── STAT CARD ────────────────────────────────────────────────────────────────
-function StatCard({ label, value, sub, color = "#818CF8", icon }) {
-  return (
-    <div style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.07)", borderRadius: 14, padding: "14px 18px", flex: 1, minWidth: 140 }}>
-      <div style={{ fontSize: 11, color: "#64748B", textTransform: "uppercase", letterSpacing: 1, marginBottom: 6 }}>
-        {icon && <span style={{ marginRight: 5 }}>{icon}</span>}{label}
-      </div>
-      <div style={{ fontSize: 20, fontWeight: 800, color }}>{value}</div>
-      {sub && <div style={{ fontSize: 11, color: "#475569", marginTop: 3 }}>{sub}</div>}
-    </div>
-  );
-}
 
 // ─── VARIATION BADGE ─────────────────────────────────────────────────────────
 function Variation({ history, dataKey, color }) {
@@ -110,11 +98,11 @@ function Variation({ history, dataKey, color }) {
   const abs = last - first;
   const up = abs >= 0;
   return (
-    <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 10 }}>
+    <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 8, alignItems: "center" }}>
       <span style={{ fontSize: 13, color: up ? "#34D399" : "#F87171", fontWeight: 700 }}>
-        {up ? "▲" : "▼"} {up ? "+" : ""}{fmt(abs)} ({up ? "+" : ""}{pct.toFixed(1)}%)
+        {up ? "↑" : "↓"} {up ? "+" : ""}{fmt(abs)} ({up ? "+" : ""}{pct.toFixed(1)}%)
       </span>
-      <span style={{ fontSize: 12, color: "#475569" }}>depuis {history[0].date}</span>
+      <span style={{ fontSize: 11, color: "#64748B" }}>depuis {history[0].date}</span>
     </div>
   );
 }
@@ -233,17 +221,44 @@ const fmtPct = (n) => {
 
 const pctColor = (n) => (parseFloat(n) >= 0 ? "#34D399" : "#F87171");
 
+// ─── DESIGN TOKENS (Finary-inspired) ─────────────────────────────────────────
+const T = {
+  bg:        "#0F1117",
+  bgCard:    "#161B27",
+  bgCard2:   "#1C2333",
+  border:    "rgba(255,255,255,0.07)",
+  border2:   "rgba(255,255,255,0.12)",
+  text:      "#E8EDF5",
+  textMuted: "#6B7A99",
+  textDim:   "#3D4B66",
+  accent:    "#3DD68C",   // vert Finary signature
+  accentDim: "rgba(61,214,140,0.12)",
+  accentBorder: "rgba(61,214,140,0.28)",
+  blue:      "#5B8DEF",
+  blueDim:   "rgba(91,141,239,0.12)",
+  red:       "#F56565",
+  yellow:    "#F6C90E",
+  radius:    "16px",
+  radiusLg:  "20px",
+  radiusSm:  "10px",
+  shadow:    "0 4px 24px rgba(0,0,0,0.35)",
+};
+
 // ─── UI PRIMITIVES ────────────────────────────────────────────────────────────
 function Card({ children, style = {}, onClick }) {
   return (
     <div onClick={onClick} style={{
       background: "rgba(255,255,255,0.04)",
       border: "1px solid rgba(255,255,255,0.08)",
-      borderRadius: 16, padding: 20,
-      backdropFilter: "blur(8px)",
+      borderRadius: "16px",
+      padding: "18px 20px",
       cursor: onClick ? "pointer" : "default",
+      transition: onClick ? "border-color 0.15s, background 0.15s" : undefined,
       ...style,
-    }}>
+    }}
+    onMouseEnter={onClick ? e => { e.currentTarget.style.borderColor = "#334155"; e.currentTarget.style.background = "#1E293B"; } : undefined}
+    onMouseLeave={onClick ? e => { e.currentTarget.style.borderColor = "rgba(255,255,255,0.08)"; e.currentTarget.style.background = "rgba(255,255,255,0.04)"; } : undefined}
+    >
       {children}
     </div>
   );
@@ -251,9 +266,9 @@ function Card({ children, style = {}, onClick }) {
 
 function SectionTitle({ children, sub }) {
   return (
-    <div style={{ marginBottom: 20 }}>
-      <h2 style={{ margin: 0, fontSize: 22, fontWeight: 700, color: "#F1F5F9", fontFamily: "'Syne', sans-serif" }}>{children}</h2>
-      {sub && <p style={{ margin: "4px 0 0", fontSize: 13, color: "#64748B" }}>{sub}</p>}
+    <div style={{ marginBottom: 22 }}>
+      <h2 style={{ margin: 0, fontSize: 20, fontWeight: 700, color: "#F1F5F9", letterSpacing: "-0.3px" }}>{children}</h2>
+      {sub && <p style={{ margin: "5px 0 0", fontSize: 12, color: "#64748B", lineHeight: 1.5 }}>{sub}</p>}
     </div>
   );
 }
@@ -261,11 +276,11 @@ function SectionTitle({ children, sub }) {
 function Pill({ label, active, onClick }) {
   return (
     <button onClick={onClick} style={{
-      background: active ? "rgba(99,102,241,0.25)" : "rgba(255,255,255,0.05)",
-      border: active ? "1px solid rgba(99,102,241,0.6)" : "1px solid rgba(255,255,255,0.1)",
-      color: active ? "#A5B4FC" : "#94A3B8",
-      borderRadius: 24, padding: "6px 18px", fontSize: 13, fontWeight: 600,
-      cursor: "pointer", transition: "all 0.2s",
+      background: active ? "rgba(52,211,153,0.08)" : "rgba(255,255,255,0.04)",
+      border: active ? "1px solid rgba(52,211,153,0.2)" : "1px solid rgba(255,255,255,0.08)",
+      color: active ? "#34D399" : "#64748B",
+      borderRadius: 24, padding: "6px 16px", fontSize: 12, fontWeight: 600,
+      cursor: "pointer", transition: "all 0.15s",
     }}>
       {label}
     </button>
@@ -274,7 +289,7 @@ function Pill({ label, active, onClick }) {
 
 function Tag({ children, color }) {
   return (
-    <span style={{ background: color + "22", color, border: `1px solid ${color}44`, borderRadius: 6, padding: "2px 7px", fontSize: 11, fontWeight: 600 }}>
+    <span style={{ background: color + "1A", color, border: `1px solid ${color}33`, borderRadius: "6px", padding: "2px 8px", fontSize: 11, fontWeight: 600 }}>
       {children}
     </span>
   );
@@ -282,7 +297,7 @@ function Tag({ children, color }) {
 
 // ─── OVERVIEW ─────────────────────────────────────────────────────────────────
 function Overview({ cryptoData, cryptoPrices, stocks, bank, savings, oraPrice, realestateTotal, scpiTotal, onNavigate, history }) {
-  const getVl = (f) => (f.type === "ora_linked" && oraPrice > 0) ? f.manualVl * (oraPrice / ORA_REF_PRICE) : f.manualVl;
+  const getVl = (f) => (f.type === "ora_linked" && oraPrice > 0) ? oraPrice : f.manualVl;
   const cryptoTotal = cryptoData.reduce((s, c) => s + (cryptoPrices[c.code]?.eur || 0) * c.qty, 0);
   const stocksTotal = stocks.reduce((s, st) => s + st.price * st.qty, 0);
   const savingsTotal = [...savings.peg, ...savings.percol].reduce((s, f) => s + getVl(f) * f.qty, 0);
@@ -339,7 +354,7 @@ function Overview({ cryptoData, cryptoPrices, stocks, bank, savings, oraPrice, r
                 </div>
                 <div>
                   <div style={{ fontWeight: 700, color: "#F1F5F9", fontSize: 14 }}>{s.label}</div>
-                  <div style={{ fontSize: 11, color: "#475569" }}>
+                  <div style={{ fontSize: 11, color: "#64748B" }}>
                     {grandTotal > 0 ? ((s.value / grandTotal) * 100).toFixed(1) : 0}% · voir le détail →
                   </div>
                 </div>
@@ -358,7 +373,7 @@ function Overview({ cryptoData, cryptoPrices, stocks, bank, savings, oraPrice, r
               <Pie data={pieData} cx="50%" cy="50%" innerRadius={42} outerRadius={68} paddingAngle={3} dataKey="value">
                 {pieData.map((e, i) => <Cell key={i} fill={e.color} />)}
               </Pie>
-              <Tooltip formatter={(v) => fmt(v)} contentStyle={{ background: "#1E293B", border: "1px solid #334155", borderRadius: 8, color: "#F1F5F9", fontSize: 12 }} />
+              <Tooltip formatter={(v) => fmt(v)} contentStyle={{ background: "#1E293B", border: "1px solid #334155", borderRadius: "10px", color: "#F1F5F9", fontSize: 12 }} />
             </PieChart>
           </ResponsiveContainer>
           <div style={{ display: "flex", flexDirection: "column", gap: 5, width: "100%" }}>
@@ -366,7 +381,7 @@ function Overview({ cryptoData, cryptoPrices, stocks, bank, savings, oraPrice, r
               <div key={i} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", fontSize: 12 }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
                   <div style={{ width: 8, height: 8, borderRadius: 2, background: d.color }} />
-                  <span style={{ color: "#94A3B8" }}>{d.name}</span>
+                  <span style={{ color: "#64748B" }}>{d.name}</span>
                 </div>
                 <span style={{ color: "#F1F5F9", fontWeight: 600 }}>{fmt(d.value)}</span>
               </div>
@@ -496,14 +511,14 @@ function CryptoView({ cryptoData, setCryptoData, cryptoPrices, loading, history,
               onChange={e => handleSearchInput(e.target.value)}
               placeholder="Tape un nom ou ticker : Bitcoin, ETH, SOL…"
               autoFocus
-              style={{ width: "100%", boxSizing: "border-box", background: "#1E293B", border: "1px solid #4F46E5", borderRadius: 8, padding: "9px 14px", color: "#F1F5F9", fontSize: 14 }}
+              style={{ width: "100%", boxSizing: "border-box", background: "#1E293B", border: "1px solid #4F46E5", borderRadius: "10px", padding: "9px 14px", color: "#F1F5F9", fontSize: 14 }}
             />
             {searchLoading && (
               <div style={{ position: "absolute", right: 12, top: "50%", transform: "translateY(-50%)", fontSize: 12, color: "#64748B" }}>⏳</div>
             )}
             {/* Dropdown results */}
             {searchResults.length > 0 && (
-              <div style={{ position: "absolute", top: "110%", left: 0, right: 0, background: "#1E293B", border: "1px solid #334155", borderRadius: 10, zIndex: 100, overflow: "hidden", boxShadow: "0 8px 32px rgba(0,0,0,0.4)" }}>
+              <div style={{ position: "absolute", top: "110%", left: 0, right: 0, background: "#1E293B", border: "1px solid #334155", borderRadius: "10px", zIndex: 100, overflow: "hidden", boxShadow: "0 8px 32px rgba(0,0,0,0.4)" }}>
                 {searchResults.map(coin => (
                   <div key={coin.code} onClick={() => selectCoin(coin)}
                     style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 16px", cursor: "pointer", borderBottom: "1px solid rgba(255,255,255,0.05)", transition: "background 0.1s" }}
@@ -517,7 +532,7 @@ function CryptoView({ cryptoData, setCryptoData, cryptoPrices, loading, history,
                         <div style={{ fontSize: 11, color: "#64748B" }}>{coin.code} · Rang #{coin.rank}</div>
                       </div>
                     </div>
-                    <div style={{ fontSize: 13, color: "#94A3B8" }}>{coin.rate ? fmt(coin.rate, "USD") : "—"}</div>
+                    <div style={{ fontSize: 13, color: "#64748B" }}>{coin.rate ? fmt(coin.rate, "USD") : "—"}</div>
                   </div>
                 ))}
               </div>
@@ -526,8 +541,8 @@ function CryptoView({ cryptoData, setCryptoData, cryptoPrices, loading, history,
 
           {/* Selected coin confirmation */}
           {selectedCoin && (
-            <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 12, padding: "10px 14px", background: "rgba(99,102,241,0.1)", borderRadius: 8, border: "1px solid rgba(99,102,241,0.3)" }}>
-              {selectedCoin.png32 && <img src={selectedCoin.png32} alt="" style={{ width: 28, height: 28, borderRadius: 6 }} />}
+            <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 12, padding: "10px 14px", background: "rgba(99,102,241,0.1)", borderRadius: "10px", border: "1px solid rgba(99,102,241,0.3)" }}>
+              {selectedCoin.png32 && <img src={selectedCoin.png32} alt="" style={{ width: 28, height: 28, borderRadius: "6px" }} />}
               <div style={{ flex: 1 }}>
                 <div style={{ fontWeight: 700, color: "#F1F5F9" }}>{selectedCoin.name} <span style={{ color: "#64748B", fontWeight: 400 }}>({selectedCoin.code})</span></div>
                 <div style={{ fontSize: 12, color: "#64748B" }}>Prix actuel : {selectedCoin.rate ? fmt(selectedCoin.rate, "USD") : "—"}</div>
@@ -541,11 +556,11 @@ function CryptoView({ cryptoData, setCryptoData, cryptoPrices, loading, history,
                     onKeyDown={e => e.key === "Enter" && addCoin()}
                     placeholder="0.00"
                     autoFocus
-                    style={{ width: 100, background: "#1E293B", border: "1px solid #4F46E5", borderRadius: 6, padding: "5px 10px", color: "#F1F5F9", fontSize: 13 }}
+                    style={{ width: 100, background: "#1E293B", border: "1px solid #4F46E5", borderRadius: "6px", padding: "5px 10px", color: "#F1F5F9", fontSize: 13 }}
                   />
                 </div>
                 <button onClick={addCoin}
-                  style={{ marginTop: 16, background: "#4F46E5", border: "none", borderRadius: 8, color: "#fff", padding: "7px 18px", cursor: "pointer", fontWeight: 700, fontSize: 13 }}>
+                  style={{ marginTop: 16, background: "#4F46E5", border: "none", borderRadius: "10px", color: "#fff", padding: "7px 18px", cursor: "pointer", fontWeight: 700, fontSize: 13 }}>
                   ＋ Ajouter
                 </button>
               </div>
@@ -555,13 +570,13 @@ function CryptoView({ cryptoData, setCryptoData, cryptoPrices, loading, history,
           {searchError && <div style={{ fontSize: 12, color: "#F87171", marginBottom: 8 }}>⚠ {searchError}</div>}
 
           <button onClick={() => { setShowSearch(false); setSearchQuery(""); setSelectedCoin(null); setAddQty(""); setSearchResults([]); }}
-            style={{ background: "transparent", border: "1px solid #334155", borderRadius: 8, color: "#64748B", padding: "6px 16px", cursor: "pointer", fontSize: 12 }}>
+            style={{ background: "transparent", border: "1px solid #334155", borderRadius: "10px", color: "#64748B", padding: "6px 16px", cursor: "pointer", fontSize: 12 }}>
             Annuler
           </button>
         </Card>
       ) : (
         <button onClick={() => setShowSearch(true)}
-          style={{ width: "100%", marginBottom: 14, background: "rgba(99,102,241,0.08)", border: "1px dashed rgba(99,102,241,0.4)", borderRadius: 10, color: "#818CF8", padding: "10px", cursor: "pointer", fontSize: 13, fontWeight: 600 }}>
+          style={{ width: "100%", marginBottom: 14, background: "rgba(99,102,241,0.08)", border: "1px dashed rgba(99,102,241,0.4)", borderRadius: "10px", color: "#818CF8", padding: "10px", cursor: "pointer", fontSize: 13, fontWeight: 600 }}>
           ＋ Ajouter une crypto
         </button>
       )}
@@ -575,7 +590,7 @@ function CryptoView({ cryptoData, setCryptoData, cryptoPrices, loading, history,
 
           return (
             <Card key={c.code} style={{ display: "flex", alignItems: "center", gap: 14, padding: "13px 18px" }}>
-              <div style={{ width: 38, height: 38, borderRadius: 10, background: c.color + "28", border: `2px solid ${c.color}55`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: 800, color: c.color, flexShrink: 0 }}>
+              <div style={{ width: 38, height: 38, borderRadius: "10px", background: c.color + "28", border: `2px solid ${c.color}55`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: 800, color: c.color, flexShrink: 0 }}>
                 {c.symbol.slice(0, 4)}
               </div>
               <div style={{ flex: 1 }}>
@@ -586,7 +601,7 @@ function CryptoView({ cryptoData, setCryptoData, cryptoPrices, loading, history,
                       <input value={editQty} onChange={e => setEditQty(e.target.value)}
                         onKeyDown={e => e.key === "Enter" && saveEdit(c.code)}
                         autoFocus
-                        style={{ width: 110, background: "#1E293B", border: "1px solid #4F46E5", borderRadius: 6, padding: "2px 8px", color: "#F1F5F9", fontSize: 12 }} />
+                        style={{ width: 110, background: "#1E293B", border: "1px solid #4F46E5", borderRadius: "6px", padding: "2px 8px", color: "#F1F5F9", fontSize: 12 }} />
                       <button onClick={() => saveEdit(c.code)} style={{ background: "#4F46E5", border: "none", borderRadius: 4, color: "#fff", padding: "2px 8px", cursor: "pointer", fontSize: 11 }}>✓</button>
                       <button onClick={() => setEditingCode(null)} style={{ background: "transparent", border: "none", color: "#64748B", cursor: "pointer", fontSize: 11 }}>✕</button>
                     </span>
@@ -599,12 +614,12 @@ function CryptoView({ cryptoData, setCryptoData, cryptoPrices, loading, history,
                 </div>
               </div>
               <div style={{ textAlign: "right", minWidth: 80 }}>
-                <div style={{ fontSize: 12, color: "#94A3B8" }}>{price > 0 ? fmt(price) : "—"}</div>
+                <div style={{ fontSize: 12, color: "#64748B" }}>{price > 0 ? fmt(price) : "—"}</div>
                 <div style={{ fontSize: 12, color: pctColor(pct), fontWeight: 600 }}>{fmtPct(pct)}</div>
               </div>
               <div style={{ textAlign: "right", minWidth: 100 }}>
                 <div style={{ fontSize: 16, fontWeight: 700, color: "#F1F5F9" }}>{price > 0 ? fmt(value) : "—"}</div>
-                <div style={{ fontSize: 11, color: "#475569" }}>{share.toFixed(1)}%</div>
+                <div style={{ fontSize: 11, color: "#64748B" }}>{share.toFixed(1)}%</div>
               </div>
               <button onClick={() => removeToken(c.code)}
                 title="Supprimer"
@@ -690,7 +705,7 @@ function StocksView({ stocks, setStocks, history, marketHistory }) {
 
       <Card style={{ marginBottom: 14, padding: "14px 18px" }}>
         <div style={{ fontSize: 12, color: "#64748B", marginBottom: 4 }}>Évolution Bourse (€) — 6 mois · AAPL + TSLA via Finnhub</div>
-        <div style={{ fontSize: 11, color: "#475569", marginBottom: 8 }}>Courbe basée sur tes positions AAPL ({stocks.find(s=>s.symbol==="AAPL")?.qty} titres) et TSLA ({stocks.find(s=>s.symbol==="TSLA")?.qty} titres)</div>
+        <div style={{ fontSize: 11, color: "#64748B", marginBottom: 8 }}>Courbe basée sur tes positions AAPL ({stocks.find(s=>s.symbol==="AAPL")?.qty} titres) et TSLA ({stocks.find(s=>s.symbol==="TSLA")?.qty} titres)</div>
         {marketHistory && marketHistory.length > 1
           ? <MiniAreaChart data={marketHistory} dataKey="stocks" color="#34D399" height={100} />
           : <><Variation history={history} dataKey="stocks" color="#34D399" /><MiniAreaChart data={history} dataKey="stocks" color="#34D399" height={90} /></>
@@ -706,7 +721,7 @@ function StocksView({ stocks, setStocks, history, marketHistory }) {
               Trade Republic : Compte → Historique → Exporter · Colonnes attendues : Symbole, Nom, Quantité, Prix
             </div>
           </div>
-          <label style={{ background: "#34D399", color: "#0B1120", borderRadius: 8, padding: "7px 16px", cursor: "pointer", fontWeight: 700, fontSize: 13, flexShrink: 0 }}>
+          <label style={{ background: "#34D399", color: "#0B1120", borderRadius: "10px", padding: "7px 16px", cursor: "pointer", fontWeight: 700, fontSize: 13, flexShrink: 0 }}>
             📥 Importer CSV
             <input type="file" accept=".csv,.txt" onChange={handleCSV} style={{ display: "none" }} />
           </label>
@@ -721,25 +736,25 @@ function StocksView({ stocks, setStocks, history, marketHistory }) {
           return (
             <Card key={st.symbol} style={{ padding: "13px 18px" }}>
               <div style={{ display: "flex", alignItems: "flex-start", gap: 12 }}>
-                <div style={{ width: 42, height: 42, borderRadius: 10, background: "rgba(52,211,153,0.1)", border: "2px solid rgba(52,211,153,0.25)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: 800, color: "#34D399", flexShrink: 0 }}>
+                <div style={{ width: 42, height: 42, borderRadius: "10px", background: "rgba(52,211,153,0.1)", border: "2px solid rgba(52,211,153,0.25)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: 800, color: "#34D399", flexShrink: 0 }}>
                   {st.symbol.slice(0, 4)}
                 </div>
                 <div style={{ flex: 1 }}>
                   <div style={{ fontWeight: 700, color: "#F1F5F9", fontSize: 14 }}>{st.name}</div>
-                  <div style={{ fontSize: 11, color: "#475569", marginBottom: 4 }}>{st.isin}</div>
+                  <div style={{ fontSize: 11, color: "#64748B", marginBottom: 4 }}>{st.isin}</div>
                   {isEditing ? (
                     <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                       {[["Qté", "qty", 80], ["Prix €", "price", 90]].map(([label, key, w]) => (
                         <div key={key}>
                           <div style={{ fontSize: 10, color: "#64748B" }}>{label}</div>
                           <input value={form[key]} onChange={e => setForm(f => ({ ...f, [key]: e.target.value }))}
-                            style={{ width: w, background: "#1E293B", border: "1px solid #4F46E5", borderRadius: 6, padding: "4px 8px", color: "#F1F5F9", fontSize: 12 }} />
+                            style={{ width: w, background: "#1E293B", border: "1px solid #4F46E5", borderRadius: "6px", padding: "4px 8px", color: "#F1F5F9", fontSize: 12 }} />
                         </div>
                       ))}
                       <button onClick={() => { setStocks(p => p.map(s => s.symbol === st.symbol ? { ...s, qty: parseFloat(form.qty) || s.qty, price: parseFloat(form.price) || s.price } : s)); setEditing(null); }}
-                        style={{ alignSelf: "flex-end", background: "#4F46E5", border: "none", borderRadius: 6, color: "#fff", padding: "4px 12px", cursor: "pointer", fontSize: 12, fontWeight: 600 }}>✓ Sauver</button>
+                        style={{ alignSelf: "flex-end", background: "#4F46E5", border: "none", borderRadius: "6px", color: "#fff", padding: "4px 12px", cursor: "pointer", fontSize: 12, fontWeight: 600 }}>✓ Sauver</button>
                       <button onClick={() => setEditing(null)}
-                        style={{ alignSelf: "flex-end", background: "transparent", border: "1px solid #334155", borderRadius: 6, color: "#64748B", padding: "4px 10px", cursor: "pointer", fontSize: 12 }}>Annuler</button>
+                        style={{ alignSelf: "flex-end", background: "transparent", border: "1px solid #334155", borderRadius: "6px", color: "#64748B", padding: "4px 10px", cursor: "pointer", fontSize: 12 }}>Annuler</button>
                     </div>
                   ) : (
                     <div style={{ fontSize: 12, color: "#64748B" }}>
@@ -770,7 +785,7 @@ function StocksView({ stocks, setStocks, history, marketHistory }) {
               <div key={key}>
                 <div style={{ fontSize: 11, color: "#64748B", marginBottom: 4 }}>{label}</div>
                 <input value={newStock[key]} onChange={e => setNewStock(s => ({ ...s, [key]: e.target.value }))}
-                  style={{ width: w, background: "#1E293B", border: "1px solid #334155", borderRadius: 6, padding: "5px 10px", color: "#F1F5F9", fontSize: 13 }} />
+                  style={{ width: w, background: "#1E293B", border: "1px solid #334155", borderRadius: "6px", padding: "5px 10px", color: "#F1F5F9", fontSize: 13 }} />
               </div>
             ))}
             <button onClick={() => {
@@ -778,14 +793,14 @@ function StocksView({ stocks, setStocks, history, marketHistory }) {
               setStocks(p => [...p, { symbol: newStock.symbol.toUpperCase(), name: newStock.name || newStock.symbol, qty: parseFloat(newStock.qty) || 0, price: parseFloat(newStock.price) || 0, isin: newStock.isin }]);
               setNewStock({ symbol: "", name: "", qty: "", price: "", isin: "" });
               setAdding(false);
-            }} style={{ alignSelf: "flex-end", background: "#4F46E5", border: "none", borderRadius: 8, color: "#fff", padding: "7px 18px", cursor: "pointer", fontWeight: 600 }}>Ajouter</button>
+            }} style={{ alignSelf: "flex-end", background: "#4F46E5", border: "none", borderRadius: "10px", color: "#fff", padding: "7px 18px", cursor: "pointer", fontWeight: 600 }}>Ajouter</button>
             <button onClick={() => setAdding(false)}
-              style={{ alignSelf: "flex-end", background: "transparent", border: "1px solid #334155", borderRadius: 8, color: "#64748B", padding: "7px 14px", cursor: "pointer" }}>Annuler</button>
+              style={{ alignSelf: "flex-end", background: "transparent", border: "1px solid #334155", borderRadius: "10px", color: "#64748B", padding: "7px 14px", cursor: "pointer" }}>Annuler</button>
           </div>
         </Card>
       ) : (
         <button onClick={() => setAdding(true)}
-          style={{ width: "100%", background: "rgba(99,102,241,0.08)", border: "1px dashed rgba(99,102,241,0.4)", borderRadius: 10, color: "#818CF8", padding: "10px", cursor: "pointer", fontSize: 13, fontWeight: 600 }}>
+          style={{ width: "100%", background: "rgba(99,102,241,0.08)", border: "1px dashed rgba(99,102,241,0.4)", borderRadius: "10px", color: "#818CF8", padding: "10px", cursor: "pointer", fontSize: 13, fontWeight: 600 }}>
           ＋ Ajouter une ligne manuellement
         </button>
       )}
@@ -798,7 +813,7 @@ function SavingsView({ savings, setSavings, oraPrice }) {
   const [editingId, setEditingId] = useState(null);
   const [editForm, setEditForm] = useState({});
 
-  const getVl = (f) => (f.type === "ora_linked" && oraPrice > 0) ? f.manualVl * (oraPrice / ORA_REF_PRICE) : f.manualVl;
+  const getVl = (f) => (f.type === "ora_linked" && oraPrice > 0) ? oraPrice : f.manualVl;
   const pegTotal = savings.peg.reduce((s, f) => s + getVl(f) * f.qty, 0);
   const percolTotal = savings.percol.reduce((s, f) => s + getVl(f) * f.qty, 0);
 
@@ -820,7 +835,7 @@ function SavingsView({ savings, setSavings, oraPrice }) {
     return (
       <Card key={f.id} style={{ padding: "13px 18px" }}>
         <div style={{ display: "flex", alignItems: "flex-start", gap: 12 }}>
-          <div style={{ width: 40, height: 40, borderRadius: 10, background: "rgba(251,191,36,0.1)", border: "2px solid rgba(251,191,36,0.22)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18, flexShrink: 0 }}>
+          <div style={{ width: 40, height: 40, borderRadius: "10px", background: "rgba(251,191,36,0.1)", border: "2px solid rgba(251,191,36,0.22)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18, flexShrink: 0 }}>
             🟠
           </div>
           <div style={{ flex: 1 }}>
@@ -831,19 +846,19 @@ function SavingsView({ savings, setSavings, oraPrice }) {
                 <div>
                   <div style={{ fontSize: 10, color: "#64748B" }}>Quantité (parts)</div>
                   <input value={editForm.qty} onChange={e => setEditForm(p => ({ ...p, qty: e.target.value }))}
-                    style={{ width: 100, background: "#1E293B", border: "1px solid #4F46E5", borderRadius: 6, padding: "3px 8px", color: "#F1F5F9", fontSize: 12 }} />
+                    style={{ width: 100, background: "#1E293B", border: "1px solid #4F46E5", borderRadius: "6px", padding: "3px 8px", color: "#F1F5F9", fontSize: 12 }} />
                 </div>
                 {f.type === "manual" && (
                   <div>
                     <div style={{ fontSize: 10, color: "#64748B" }}>VL (€)</div>
                     <input value={editForm.vl} onChange={e => setEditForm(p => ({ ...p, vl: e.target.value }))}
-                      style={{ width: 80, background: "#1E293B", border: "1px solid #4F46E5", borderRadius: 6, padding: "3px 8px", color: "#F1F5F9", fontSize: 12 }} />
+                      style={{ width: 80, background: "#1E293B", border: "1px solid #4F46E5", borderRadius: "6px", padding: "3px 8px", color: "#F1F5F9", fontSize: 12 }} />
                   </div>
                 )}
                 <button onClick={() => saveEdit(section, f.id)}
-                  style={{ alignSelf: "flex-end", background: "#4F46E5", border: "none", borderRadius: 6, color: "#fff", padding: "4px 12px", cursor: "pointer", fontSize: 12, fontWeight: 600 }}>✓ Sauver</button>
+                  style={{ alignSelf: "flex-end", background: "#4F46E5", border: "none", borderRadius: "6px", color: "#fff", padding: "4px 12px", cursor: "pointer", fontSize: 12, fontWeight: 600 }}>✓ Sauver</button>
                 <button onClick={() => setEditingId(null)}
-                  style={{ alignSelf: "flex-end", background: "transparent", border: "1px solid #334155", borderRadius: 6, color: "#64748B", padding: "4px 10px", cursor: "pointer", fontSize: 12 }}>Annuler</button>
+                  style={{ alignSelf: "flex-end", background: "transparent", border: "1px solid #334155", borderRadius: "6px", color: "#64748B", padding: "4px 10px", cursor: "pointer", fontSize: 12 }}>Annuler</button>
               </div>
             ) : (
               <div style={{ fontSize: 12, color: "#64748B", marginTop: 2, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
@@ -873,7 +888,7 @@ function SavingsView({ savings, setSavings, oraPrice }) {
       {oraPrice > 0 ? (
         <Card style={{ background: "rgba(52,211,153,0.06)", border: "1px solid rgba(52,211,153,0.2)", marginBottom: 18, padding: "12px 18px" }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8, fontSize: 13 }}>
-            <span style={{ color: "#94A3B8" }}>🟠 Fonds Orange Actions : VL live via ORA.PA</span>
+            <span style={{ color: "#64748B" }}>🟠 Fonds Orange Actions : VL live via ORA.PA</span>
             <span style={{ fontWeight: 700, color: "#FBBF24" }}>
               ORA.PA : {fmt(oraPrice)}&nbsp;
               <span style={{ color: pctColor(((oraPrice - ORA_REF_PRICE) / ORA_REF_PRICE) * 100) }}>
@@ -883,7 +898,7 @@ function SavingsView({ savings, setSavings, oraPrice }) {
           </div>
         </Card>
       ) : (
-        <Card style={{ background: "rgba(251,191,36,0.06)", border: "1px solid rgba(251,191,36,0.2)", marginBottom: 18, padding: "12px 18px", fontSize: 13, color: "#FCD34D" }}>
+        <Card style={{ background: "rgba(251,191,36,0.06)", border: "1px solid rgba(251,191,36,0.2)", marginBottom: 18, padding: "12px 18px", fontSize: 13, color: "#FBBF24" }}>
           ⏳ ORA.PA en cours de chargement… Les fonds Amundi (Obligations / Actions Euro Monde) sont à mettre à jour manuellement à chaque relevé.
         </Card>
       )}
@@ -983,11 +998,11 @@ function ScpiView({ scpi, setScpi, history }) {
             ⚠ Prix à mettre à jour ({staleItems.length} SCPI)
           </div>
           {staleItems.map(p => (
-            <div key={p.id} style={{ fontSize: 12, color: "#94A3B8", display: "flex", alignItems: "center", gap: 8, marginBottom: 3 }}>
-              <span style={{ color: "#FCD34D" }}>• {p.name}</span>
+            <div key={p.id} style={{ fontSize: 12, color: "#64748B", display: "flex", alignItems: "center", gap: 8, marginBottom: 3 }}>
+              <span style={{ color: "#FBBF24" }}>• {p.name}</span>
               <span>— dernière mise à jour il y a <strong style={{ color: "#FBBF24" }}>{daysSince(p.lastPriceUpdate)} jours</strong> ({new Date(p.lastPriceUpdate).toLocaleDateString("fr-FR")})</span>
               <button onClick={() => { setEditingId(p.id); setForm({ parts: String(p.parts), pricePerPart: String(p.pricePerPart) }); }}
-                style={{ background: "rgba(251,191,36,0.15)", border: "1px solid rgba(251,191,36,0.4)", borderRadius: 6, color: "#FBBF24", fontSize: 11, cursor: "pointer", padding: "2px 10px", fontWeight: 600 }}>
+                style={{ background: "rgba(251,191,36,0.15)", border: "1px solid rgba(251,191,36,0.4)", borderRadius: "6px", color: "#FBBF24", fontSize: 11, cursor: "pointer", padding: "2px 10px", fontWeight: 600 }}>
                 Mettre à jour →
               </button>
             </div>
@@ -1024,7 +1039,7 @@ function ScpiView({ scpi, setScpi, history }) {
                     <Tag color={p.color}>{p.tdvm2025}% en 2025</Tag>
                     {isStale
                       ? <Tag color="#FBBF24">⚠ Prix {jours}j</Tag>
-                      : <Tag color="#475569">✓ À jour il y a {jours}j</Tag>
+                      : <Tag color="#64748B">✓ À jour il y a {jours}j</Tag>
                     }
                   </div>
                   <div style={{ fontSize: 12, color: "#6366F1", marginBottom: 6 }}>{p.manager} · {p.strategy}</div>
@@ -1034,13 +1049,13 @@ function ScpiView({ scpi, setScpi, history }) {
                         <div key={key}>
                           <div style={{ fontSize: 10, color: "#64748B", marginBottom: 2 }}>{label}</div>
                           <input value={form[key] || ""} onChange={e => setForm(f => ({ ...f, [key]: e.target.value }))}
-                            style={{ width: w, background: "#1E293B", border: "1px solid #4F46E5", borderRadius: 6, padding: "3px 8px", color: "#F1F5F9", fontSize: 12 }} />
+                            style={{ width: w, background: "#1E293B", border: "1px solid #4F46E5", borderRadius: "6px", padding: "3px 8px", color: "#F1F5F9", fontSize: 12 }} />
                         </div>
                       ))}
                       <button onClick={() => saveEdit(p.id)}
-                        style={{ alignSelf: "flex-end", background: "#4F46E5", border: "none", borderRadius: 6, color: "#fff", padding: "4px 14px", cursor: "pointer", fontSize: 12, fontWeight: 600 }}>✓ Sauver</button>
+                        style={{ alignSelf: "flex-end", background: "#4F46E5", border: "none", borderRadius: "6px", color: "#fff", padding: "4px 14px", cursor: "pointer", fontSize: 12, fontWeight: 600 }}>✓ Sauver</button>
                       <button onClick={() => setEditingId(null)}
-                        style={{ alignSelf: "flex-end", background: "transparent", border: "1px solid #334155", borderRadius: 6, color: "#64748B", padding: "4px 10px", cursor: "pointer", fontSize: 12 }}>Annuler</button>
+                        style={{ alignSelf: "flex-end", background: "transparent", border: "1px solid #334155", borderRadius: "6px", color: "#64748B", padding: "4px 10px", cursor: "pointer", fontSize: 12 }}>Annuler</button>
                     </div>
                   ) : (
                     <div style={{ display: "flex", gap: 16, flexWrap: "wrap", fontSize: 12, color: "#64748B", alignItems: "center" }}>
@@ -1069,15 +1084,15 @@ function ScpiView({ scpi, setScpi, history }) {
       <Card style={{ marginTop: 16, background: "rgba(167,139,250,0.07)", border: "1px solid rgba(167,139,250,0.2)", padding: "14px 20px" }}>
         <div style={{ display: "flex", justifyContent: "space-between", flexWrap: "wrap", gap: 12 }}>
           <div>
-            <div style={{ fontSize: 11, color: "#94A3B8", textTransform: "uppercase", letterSpacing: 1, marginBottom: 4 }}>Revenus bruts annuels</div>
+            <div style={{ fontSize: 11, color: "#64748B", textTransform: "uppercase", letterSpacing: 1, marginBottom: 4 }}>Revenus bruts annuels</div>
             <div style={{ fontSize: 22, fontWeight: 800, color: "#A78BFA" }}>{fmt(totalRevenu)}</div>
           </div>
           <div>
-            <div style={{ fontSize: 11, color: "#94A3B8", textTransform: "uppercase", letterSpacing: 1, marginBottom: 4 }}>Moyenne mensuelle</div>
+            <div style={{ fontSize: 11, color: "#64748B", textTransform: "uppercase", letterSpacing: 1, marginBottom: 4 }}>Moyenne mensuelle</div>
             <div style={{ fontSize: 22, fontWeight: 800, color: "#C4B5FD" }}>{fmt(totalRevenu / 12)}</div>
           </div>
           <div>
-            <div style={{ fontSize: 11, color: "#94A3B8", textTransform: "uppercase", letterSpacing: 1, marginBottom: 4 }}>Rendement moyen</div>
+            <div style={{ fontSize: 11, color: "#64748B", textTransform: "uppercase", letterSpacing: 1, marginBottom: 4 }}>Rendement moyen</div>
             <div style={{ fontSize: 22, fontWeight: 800, color: "#818CF8" }}>
               {total > 0 ? ((totalRevenu / total) * 100).toFixed(2) : 0}%
             </div>
@@ -1094,7 +1109,7 @@ function ScpiView({ scpi, setScpi, history }) {
               <div key={key}>
                 <div style={{ fontSize: 11, color: "#64748B", marginBottom: 4 }}>{label}</div>
                 <input value={newScpi[key]} onChange={e => setNewScpi(s => ({ ...s, [key]: e.target.value }))}
-                  style={{ width: w, background: "#1E293B", border: "1px solid #334155", borderRadius: 6, padding: "5px 10px", color: "#F1F5F9", fontSize: 13 }} />
+                  style={{ width: w, background: "#1E293B", border: "1px solid #334155", borderRadius: "6px", padding: "5px 10px", color: "#F1F5F9", fontSize: 13 }} />
               </div>
             ))}
           </div>
@@ -1102,13 +1117,13 @@ function ScpiView({ scpi, setScpi, history }) {
             💡 Si tu renseignes le TDVM mais pas le dividende, il sera calculé automatiquement (Prix × TDVM%).
           </div>
           <div style={{ display: "flex", gap: 8 }}>
-            <button onClick={addScpi} style={{ background: "#A78BFA", border: "none", borderRadius: 8, color: "#0B1120", padding: "7px 20px", cursor: "pointer", fontWeight: 700, fontSize: 13 }}>Ajouter</button>
-            <button onClick={() => setAdding(false)} style={{ background: "transparent", border: "1px solid #334155", borderRadius: 8, color: "#64748B", padding: "7px 14px", cursor: "pointer", fontSize: 13 }}>Annuler</button>
+            <button onClick={addScpi} style={{ background: "#A78BFA", border: "none", borderRadius: "10px", color: "#0B1120", padding: "7px 20px", cursor: "pointer", fontWeight: 700, fontSize: 13 }}>Ajouter</button>
+            <button onClick={() => setAdding(false)} style={{ background: "transparent", border: "1px solid #334155", borderRadius: "10px", color: "#64748B", padding: "7px 14px", cursor: "pointer", fontSize: 13 }}>Annuler</button>
           </div>
         </Card>
       ) : (
         <button onClick={() => setAdding(true)}
-          style={{ width: "100%", marginTop: 12, background: "rgba(167,139,250,0.08)", border: "1px dashed rgba(167,139,250,0.4)", borderRadius: 10, color: "#A78BFA", padding: "10px", cursor: "pointer", fontSize: 13, fontWeight: 600 }}>
+          style={{ width: "100%", marginTop: 12, background: "rgba(167,139,250,0.08)", border: "1px dashed rgba(167,139,250,0.4)", borderRadius: "10px", color: "#A78BFA", padding: "10px", cursor: "pointer", fontSize: 13, fontWeight: 600 }}>
           ＋ Ajouter une SCPI
         </button>
       )}
@@ -1225,11 +1240,11 @@ function RealEstateView({ realestate, setRealestate, history }) {
                         <div key={key}>
                           <div style={{ fontSize: 10, color: "#64748B", marginBottom: 2 }}>{label}</div>
                           <input value={form[key] ?? ""} onChange={e => setForm(f => ({ ...f, [key]: e.target.value }))}
-                            style={{ width: w, background: "#1E293B", border: "1px solid #4F46E5", borderRadius: 6, padding: "3px 8px", color: "#F1F5F9", fontSize: 12 }} />
+                            style={{ width: w, background: "#1E293B", border: "1px solid #4F46E5", borderRadius: "6px", padding: "3px 8px", color: "#F1F5F9", fontSize: 12 }} />
                         </div>
                       ))}
-                      <button onClick={() => saveEdit(p.id)} style={{ alignSelf: "flex-end", background: "#4F46E5", border: "none", borderRadius: 6, color: "#fff", padding: "4px 14px", cursor: "pointer", fontSize: 12, fontWeight: 600 }}>✓ Sauver</button>
-                      <button onClick={() => setEditingId(null)} style={{ alignSelf: "flex-end", background: "transparent", border: "1px solid #334155", borderRadius: 6, color: "#64748B", padding: "4px 10px", cursor: "pointer", fontSize: 12 }}>Annuler</button>
+                      <button onClick={() => saveEdit(p.id)} style={{ alignSelf: "flex-end", background: "#4F46E5", border: "none", borderRadius: "6px", color: "#fff", padding: "4px 14px", cursor: "pointer", fontSize: 12, fontWeight: 600 }}>✓ Sauver</button>
+                      <button onClick={() => setEditingId(null)} style={{ alignSelf: "flex-end", background: "transparent", border: "1px solid #334155", borderRadius: "6px", color: "#64748B", padding: "4px 10px", cursor: "pointer", fontSize: 12 }}>Annuler</button>
                     </div>
                   ) : (
                     <div style={{ display: "flex", gap: 14, flexWrap: "wrap", fontSize: 12, color: "#64748B", alignItems: "center" }}>
@@ -1245,20 +1260,20 @@ function RealEstateView({ realestate, setRealestate, history }) {
 
                   {/* Loyer */}
                   <div style={{ marginTop: 10, display: "flex", gap: 10, flexWrap: "wrap" }}>
-                    <div style={{ background: "rgba(251,191,36,0.1)", border: "1px solid rgba(251,191,36,0.25)", borderRadius: 10, padding: "8px 14px" }}>
-                      <div style={{ fontSize: 10, color: "#94A3B8", textTransform: "uppercase", letterSpacing: 1 }}>Loyer mensuel HC</div>
+                    <div style={{ background: "rgba(251,191,36,0.1)", border: "1px solid rgba(251,191,36,0.25)", borderRadius: "10px", padding: "8px 14px" }}>
+                      <div style={{ fontSize: 10, color: "#64748B", textTransform: "uppercase", letterSpacing: 1 }}>Loyer mensuel HC</div>
                       <div style={{ fontSize: 18, fontWeight: 800, color: "#FBBF24" }}>{fmt(p.monthlyRent || 0)}</div>
                     </div>
-                    <div style={{ background: "rgba(251,191,36,0.06)", border: "1px solid rgba(251,191,36,0.15)", borderRadius: 10, padding: "8px 14px" }}>
-                      <div style={{ fontSize: 10, color: "#94A3B8", textTransform: "uppercase", letterSpacing: 1 }}>Revenus annuels bruts</div>
-                      <div style={{ fontSize: 18, fontWeight: 800, color: "#FCD34D" }}>{fmt((p.monthlyRent || 0) * 12)}</div>
+                    <div style={{ background: "rgba(251,191,36,0.06)", border: "1px solid rgba(251,191,36,0.15)", borderRadius: "10px", padding: "8px 14px" }}>
+                      <div style={{ fontSize: 10, color: "#64748B", textTransform: "uppercase", letterSpacing: 1 }}>Revenus annuels bruts</div>
+                      <div style={{ fontSize: 18, fontWeight: 800, color: "#FBBF24" }}>{fmt((p.monthlyRent || 0) * 12)}</div>
                     </div>
-                    <div style={{ background: "rgba(244,114,182,0.06)", border: "1px solid rgba(244,114,182,0.15)", borderRadius: 10, padding: "8px 14px" }}>
-                      <div style={{ fontSize: 10, color: "#94A3B8", textTransform: "uppercase", letterSpacing: 1 }}>Rendement locatif brut</div>
+                    <div style={{ background: "rgba(244,114,182,0.06)", border: "1px solid rgba(244,114,182,0.15)", borderRadius: "10px", padding: "8px 14px" }}>
+                      <div style={{ fontSize: 10, color: "#64748B", textTransform: "uppercase", letterSpacing: 1 }}>Rendement locatif brut</div>
                       <div style={{ fontSize: 18, fontWeight: 800, color: "#F472B6" }}>{rendLocatif.toFixed(2)}%</div>
                     </div>
                     <button onClick={() => refreshPriceM2(p.id)} disabled={priceLoading}
-                      style={{ alignSelf: "center", background: "rgba(244,114,182,0.12)", border: "1px solid rgba(244,114,182,0.35)", borderRadius: 10, color: "#F472B6", padding: "8px 16px", cursor: "pointer", fontWeight: 700, fontSize: 12 }}>
+                      style={{ alignSelf: "center", background: "rgba(244,114,182,0.12)", border: "1px solid rgba(244,114,182,0.35)", borderRadius: "10px", color: "#F472B6", padding: "8px 16px", cursor: "pointer", fontWeight: 700, fontSize: 12 }}>
                       {priceLoading ? "⏳ Chargement…" : "🔄 Actualiser le prix"}
                     </button>
                   </div>
@@ -1299,24 +1314,24 @@ function BankView({ bank, setBank }) {
         <Card style={{ background: "rgba(96,165,250,0.06)", border: "1px solid rgba(96,165,250,0.2)", marginBottom: 18, padding: "14px 18px" }}>
           <div style={{ display: "flex", justifyContent: "space-between", flexWrap: "wrap", gap: 12 }}>
             <div>
-              <div style={{ fontSize: 11, color: "#94A3B8", textTransform: "uppercase", letterSpacing: 1, marginBottom: 4 }}>Intérêts annuels prévisionnels</div>
+              <div style={{ fontSize: 11, color: "#64748B", textTransform: "uppercase", letterSpacing: 1, marginBottom: 4 }}>Intérêts annuels prévisionnels</div>
               <div style={{ fontSize: 22, fontWeight: 800, color: "#60A5FA" }}>{fmt(totalInterets)}</div>
               <div style={{ fontSize: 11, color: "#64748B", marginTop: 2 }}>Sur la base des taux actuels (Livret A / LDDS : 1,5% depuis le 01/02/2026)</div>
             </div>
             <div>
-              <div style={{ fontSize: 11, color: "#94A3B8", textTransform: "uppercase", letterSpacing: 1, marginBottom: 4 }}>Déjà courus ({dayOfYear}j/{daysInYear}j)</div>
+              <div style={{ fontSize: 11, color: "#64748B", textTransform: "uppercase", letterSpacing: 1, marginBottom: 4 }}>Déjà courus ({dayOfYear}j/{daysInYear}j)</div>
               <div style={{ fontSize: 22, fontWeight: 800, color: "#93C5FD" }}>{fmt(totalInterets * prorataPct)}</div>
               <div style={{ fontSize: 11, color: "#64748B", marginTop: 2 }}>Estimé au {now.toLocaleDateString("fr-FR")}</div>
             </div>
             <div>
-              <div style={{ fontSize: 11, color: "#94A3B8", textTransform: "uppercase", letterSpacing: 1, marginBottom: 4 }}>Mensuel moyen</div>
+              <div style={{ fontSize: 11, color: "#64748B", textTransform: "uppercase", letterSpacing: 1, marginBottom: 4 }}>Mensuel moyen</div>
               <div style={{ fontSize: 22, fontWeight: 800, color: "#BFDBFE" }}>{fmt(totalInterets / 12)}</div>
             </div>
           </div>
         </Card>
       )}
 
-      <Card style={{ background: "rgba(250,204,21,0.05)", border: "1px solid rgba(250,204,21,0.18)", marginBottom: 18, padding: "12px 18px", fontSize: 13, color: "#FCD34D" }}>
+      <Card style={{ background: "rgba(250,204,21,0.05)", border: "1px solid rgba(250,204,21,0.18)", marginBottom: 18, padding: "12px 18px", fontSize: 13, color: "#FBBF24" }}>
         🔗 <strong>Open Banking</strong> — En attendant une connexion automatique, saisis tes soldes manuellement.
       </Card>
 
@@ -1344,13 +1359,13 @@ function BankView({ bank, setBank }) {
                   <input value={val} onChange={e => setVal(e.target.value)} placeholder="Solde €"
                     onKeyDown={e => { if (e.key === "Enter") { setBank(p => p.map(bk => bk.id === b.id ? { ...bk, balance: parseFloat(val) || 0 } : bk)); setEditing(null); } }}
                     autoFocus
-                    style={{ width: 110, background: "#1E293B", border: "1px solid #4F46E5", borderRadius: 8, padding: "6px 12px", color: "#F1F5F9", fontSize: 14 }} />
+                    style={{ width: 110, background: "#1E293B", border: "1px solid #4F46E5", borderRadius: "10px", padding: "6px 12px", color: "#F1F5F9", fontSize: 14 }} />
                   <button onClick={() => { setBank(p => p.map(bk => bk.id === b.id ? { ...bk, balance: parseFloat(val) || 0 } : bk)); setEditing(null); }}
-                    style={{ background: "#4F46E5", border: "none", borderRadius: 8, color: "#fff", padding: "6px 14px", cursor: "pointer", fontWeight: 600 }}>✓</button>
+                    style={{ background: "#4F46E5", border: "none", borderRadius: "10px", color: "#fff", padding: "6px 14px", cursor: "pointer", fontWeight: 600 }}>✓</button>
                 </div>
               ) : (
                 <div style={{ textAlign: "right" }}>
-                  <div style={{ fontSize: 22, fontWeight: 700, color: b.balance > 0 ? b.color : "#475569" }}>
+                  <div style={{ fontSize: 22, fontWeight: 700, color: b.balance > 0 ? b.color : "#64748B" }}>
                     {b.balance > 0 ? fmt(b.balance) : "—"}
                   </div>
                   <button onClick={() => { setEditing(b.id); setVal(String(b.balance)); }}
@@ -1417,7 +1432,7 @@ function LoginScreen({ onLogin }) {
           <div style={{ fontSize: 13, color: "#64748B" }}>Accès sécurisé · Usage privé</div>
         </div>
         <div style={{ marginBottom: 16 }}>
-          <div style={{ fontSize: 12, color: "#94A3B8", marginBottom: 6 }}>Mot de passe</div>
+          <div style={{ fontSize: 12, color: "#64748B", marginBottom: 6 }}>Mot de passe</div>
           <input
             type="password"
             value={pwd}
@@ -1425,14 +1440,14 @@ function LoginScreen({ onLogin }) {
             onKeyDown={e => e.key === "Enter" && tryLogin()}
             autoFocus
             placeholder="••••••••••••"
-            style={{ width: "100%", boxSizing: "border-box", background: error ? "rgba(248,113,113,0.1)" : "#1E293B", border: error ? "1px solid #F87171" : "1px solid #334155", borderRadius: 10, padding: "11px 14px", color: "#F1F5F9", fontSize: 15, outline: "none", transition: "border-color 0.2s" }}
+            style={{ width: "100%", boxSizing: "border-box", background: error ? "rgba(248,113,113,0.1)" : "#1E293B", border: error ? "1px solid #F87171" : "1px solid #334155", borderRadius: "10px", padding: "11px 14px", color: "#F1F5F9", fontSize: 15, outline: "none", transition: "border-color 0.2s" }}
           />
           {error && <div style={{ fontSize: 12, color: "#F87171", marginTop: 6 }}>Mot de passe incorrect</div>}
         </div>
-        <button onClick={tryLogin} style={{ width: "100%", background: "linear-gradient(135deg, #6366F1, #4F46E5)", border: "none", borderRadius: 10, color: "#fff", padding: "12px", cursor: "pointer", fontWeight: 700, fontSize: 15 }}>
+        <button onClick={tryLogin} style={{ width: "100%", background: "linear-gradient(135deg, #6366F1, #4F46E5)", border: "none", borderRadius: "10px", color: "#fff", padding: "12px", cursor: "pointer", fontWeight: 700, fontSize: 15 }}>
           Accéder →
         </button>
-        <div style={{ marginTop: 20, fontSize: 11, color: "#475569", textAlign: "center" }}>
+        <div style={{ marginTop: 20, fontSize: 11, color: "#64748B", textAlign: "center" }}>
           🔒 Données stockées localement dans votre navigateur
         </div>
       </div>
@@ -1581,7 +1596,7 @@ function AppContent() {
     return () => clearInterval(id);
   }, []);
 
-  const getVlSaving = (f) => (f.type === "ora_linked" && oraPrice > 0) ? f.manualVl * (oraPrice / ORA_REF_PRICE) : f.manualVl;
+  const getVlSaving = (f) => (f.type === "ora_linked" && oraPrice > 0) ? oraPrice : f.manualVl;
   const cryptoTotal = cryptoData.reduce((s, c) => s + (cryptoPrices[c.code]?.eur || 0) * c.qty, 0);
   const stocksTotal = stocks.reduce((s, st) => s + st.price * st.qty, 0);
   const savingsTotal = [...savings.peg, ...savings.percol].reduce((s, f) => s + getVlSaving(f) * f.qty, 0);
@@ -1619,49 +1634,48 @@ function AppContent() {
   return (
     <div style={{ minHeight: "100vh", background: "#0B1120", fontFamily: "'DM Sans', 'Segoe UI', sans-serif", color: "#F1F5F9", width: "100%" }}>
       <style>{`
-        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-        html, body, #root { width: 100%; min-height: 100vh; background: #0B1120; }
-      `}</style>
-      <link href="https://fonts.googleapis.com/css2?family=Syne:wght@700;800&family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
 
-      <div style={{ position: "fixed", inset: 0, zIndex: 0, pointerEvents: "none", overflow: "hidden" }}>
-        <div style={{ position: "absolute", top: -200, right: -100, width: 600, height: 600, borderRadius: "50%", background: "radial-gradient(circle, rgba(99,102,241,0.12) 0%, transparent 70%)" }} />
-        <div style={{ position: "absolute", bottom: -100, left: -100, width: 400, height: 400, borderRadius: "50%", background: "radial-gradient(circle, rgba(52,211,153,0.08) 0%, transparent 70%)" }} />
-      </div>
+        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+        html, body, #root { width: 100%; min-height: 100vh; background: ${"#0B1120"}; }
+        ::-webkit-scrollbar { width: 4px; } ::-webkit-scrollbar-track { background: transparent; } ::-webkit-scrollbar-thumb { background: ${"#334155"}; border-radius: 4px; }
+      `}</style>
 
       <div style={{ position: "relative", zIndex: 1, width: "100%", maxWidth: 1400, margin: "0 auto", padding: "0 40px 80px", boxSizing: "border-box" }}>
 
         {/* Header */}
         <div style={{ padding: "28px 0 20px", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 16 }}>
           <div>
-            <div style={{ fontFamily: "'Syne', sans-serif", fontSize: 26, fontWeight: 800, background: "linear-gradient(135deg, #818CF8, #34D399)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent" }}>
-              Patrimoine
+            <div style={{ fontSize: 22, fontWeight: 800, color: "#F1F5F9", letterSpacing: "-0.5px" }}>
+              Mon Patrimoine
             </div>
-            <div style={{ fontSize: 12, color: "#475569" }}>
+            <div style={{ fontSize: 12, color: "#64748B", marginTop: 3 }}>
               {lastUpdate ? `Actualisé à ${lastUpdate.toLocaleTimeString("fr-FR")}` : "Chargement…"} · toutes les 5 min
             </div>
           </div>
           <div style={{ textAlign: "right" }}>
-            <div style={{ fontSize: 28, fontWeight: 800, fontFamily: "'Syne', sans-serif", color: "#F1F5F9" }}>{fmt(grandTotal)}</div>
-            <button onClick={fetchPrices} disabled={loading}
-              style={{ marginTop: 4, background: "rgba(99,102,241,0.15)", border: "1px solid rgba(99,102,241,0.3)", borderRadius: 20, color: "#818CF8", padding: "4px 14px", fontSize: 12, cursor: "pointer", fontWeight: 600, opacity: loading ? 0.6 : 1 }}>
+            <div style={{ fontSize: 30, fontWeight: 800, color: "#F1F5F9", letterSpacing: "-1px" }}>{fmt(grandTotal)}</div>
+            <button onClick={fetchPrices} disabled={loading} style={{
+              marginTop: 6, background: "rgba(52,211,153,0.08)", border: "1px solid rgba(52,211,153,0.2)",
+              borderRadius: 20, color: "#34D399", padding: "4px 16px",
+              fontSize: 12, cursor: "pointer", fontWeight: 600, opacity: loading ? 0.6 : 1,
+            }}>
               {loading ? "⏳ Sync…" : "↻ Actualiser"}
             </button>
           </div>
         </div>
 
-        {/* Nav */}
-        <div style={{ display: "flex", gap: 8, marginBottom: 18, flexWrap: "wrap" }}>
+        {/* Nav tabs */}
+        <div style={{ display: "flex", gap: 6, marginBottom: 20, flexWrap: "wrap" }}>
           {navItems.map(n => <Pill key={n.key} label={`${n.icon} ${n.label}`} active={view === n.key} onClick={() => setView(n.key)} />)}
         </div>
 
-        {/* ORA.PA status */}
+        {/* ORA.PA status bar */}
         {oraPrice > 0 && (
-          <div style={{ marginBottom: 14, display: "flex", alignItems: "center", gap: 10, fontSize: 12, color: "#64748B" }}>
-            <span style={{ color: "#34D399" }}>● Finnhub</span>
+          <div style={{ marginBottom: 16, display: "flex", alignItems: "center", gap: 10, fontSize: 12, color: "#64748B" }}>
+            <span style={{ color: "#34D399" }}>●</span>
             <span>ORA.PA : <strong style={{ color: "#FBBF24" }}>{fmt(oraPrice)}</strong></span>
-            <span style={{ color: oraPrice > ORA_REF_PRICE ? "#34D399" : "#F87171" }}>
-              ({((oraPrice - ORA_REF_PRICE) / ORA_REF_PRICE * 100).toFixed(1)}% vs 31/12/2025)
+            <span style={{ color: pctColor((oraPrice - ORA_REF_PRICE) / ORA_REF_PRICE * 100) }}>
+              ({fmtPct((oraPrice - ORA_REF_PRICE) / ORA_REF_PRICE * 100)} vs 31/12/2025)
             </span>
           </div>
         )}
