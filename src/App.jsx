@@ -706,18 +706,92 @@ function StocksView({ stocks, setStocks, history, marketHistory }) {
     e.target.value = "";
   };
 
+  // Catégorisation des actifs
+  const CT_SYMBOLS   = ["AAPL", "TSLA", "BYD", "CSPX"]; // cotés Trade Republic Compte-Titres
+  const PEA_SYMBOLS  = [];                               // PEA Trade Republic (valeur manuelle)
+  const NON_COTE_SYMBOLS = ["APOLLO", "EQTF"];           // fonds privés / ELTIF non cotés
+
+  const stocksCT     = stocks.filter(s => CT_SYMBOLS.includes(s.symbol));
+  const stocksNonCote = stocks.filter(s => NON_COTE_SYMBOLS.includes(s.symbol));
+  const stocksOther  = stocks.filter(s => !CT_SYMBOLS.includes(s.symbol) && !NON_COTE_SYMBOLS.includes(s.symbol));
+
+  const totalCT      = stocksCT.reduce((s, st) => s + st.price * st.qty, 0);
+  const PEA_VALUE    = 549.89; // valeur PEA Trade Republic (manuelle)
+  const totalNonCote = stocksNonCote.reduce((s, st) => s + st.price * st.qty, 0);
+  const totalOther   = stocksOther.reduce((s, st) => s + st.price * st.qty, 0);
+
+  const renderStockCard = (st) => {
+    const value = st.price * st.qty;
+    const isEditing = editing === st.symbol;
+    return (
+      <Card key={st.symbol} style={{ padding: "13px 18px" }}>
+        <div style={{ display: "flex", alignItems: "flex-start", gap: 12 }}>
+          <div style={{ width: 42, height: 42, borderRadius: "10px", background: "rgba(52,211,153,0.1)", border: "2px solid rgba(52,211,153,0.25)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: 800, color: "#34D399", flexShrink: 0 }}>
+            {st.symbol.slice(0, 4)}
+          </div>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontWeight: 700, color: "#F1F5F9", fontSize: 14 }}>{st.name}</div>
+            <div style={{ fontSize: 11, color: "#64748B", marginBottom: 4 }}>{st.isin}</div>
+            {isEditing ? (
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                {[["Qté", "qty", 80], ["Prix €", "price", 90]].map(([label, key, w]) => (
+                  <div key={key}>
+                    <div style={{ fontSize: 10, color: "#64748B" }}>{label}</div>
+                    <input value={form[key]} onChange={e => setForm(f => ({ ...f, [key]: e.target.value }))}
+                      style={{ width: w, background: "#1E293B", border: "1px solid #4F46E5", borderRadius: "6px", padding: "4px 8px", color: "#F1F5F9", fontSize: 12 }} />
+                  </div>
+                ))}
+                <button onClick={() => { setStocks(p => p.map(s => s.symbol === st.symbol ? { ...s, qty: parseFloat(form.qty) || s.qty, price: parseFloat(form.price) || s.price } : s)); setEditing(null); }}
+                  style={{ alignSelf: "flex-end", background: "#4F46E5", border: "none", borderRadius: "6px", color: "#fff", padding: "4px 12px", cursor: "pointer", fontSize: 12, fontWeight: 600 }}>✓ Sauver</button>
+                <button onClick={() => setEditing(null)}
+                  style={{ alignSelf: "flex-end", background: "transparent", border: "1px solid #334155", borderRadius: "6px", color: "#64748B", padding: "4px 10px", cursor: "pointer", fontSize: 12 }}>Annuler</button>
+              </div>
+            ) : (
+              <div style={{ fontSize: 12, color: "#64748B" }}>
+                {st.qty} titres · {fmt(st.price)} / titre
+                <button onClick={() => { setEditing(st.symbol); setForm({ qty: String(st.qty), price: String(st.price) }); }}
+                  style={{ marginLeft: 10, background: "transparent", border: "none", color: "#6366F1", fontSize: 11, cursor: "pointer", textDecoration: "underline" }}>modifier</button>
+              </div>
+            )}
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <div style={{ fontSize: 17, fontWeight: 700, color: "#34D399", minWidth: 90, textAlign: "right" }}>{fmt(value)}</div>
+            <button onClick={() => setStocks(p => p.filter(s => s.symbol !== st.symbol))} title="Supprimer"
+              style={{ background: "transparent", border: "none", color: "#334155", cursor: "pointer", fontSize: 16, padding: "0 2px" }}
+              onMouseEnter={e => e.currentTarget.style.color = "#F87171"}
+              onMouseLeave={e => e.currentTarget.style.color = "#334155"}>✕</button>
+          </div>
+        </div>
+      </Card>
+    );
+  };
+
+  const SubSectionHeader = ({ title, subtitle, total: sTotal, color = "#34D399", badge }) => (
+    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10, marginTop: 4 }}>
+      <div>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <div style={{ width: 3, height: 18, borderRadius: 2, background: color }} />
+          <span style={{ fontWeight: 700, fontSize: 15, color: "#F1F5F9" }}>{title}</span>
+          {badge && <span style={{ fontSize: 11, color: "#64748B", background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 6, padding: "1px 8px" }}>{badge}</span>}
+        </div>
+        {subtitle && <div style={{ fontSize: 12, color: "#64748B", marginLeft: 11 }}>{subtitle}</div>}
+      </div>
+      <div style={{ fontSize: 17, fontWeight: 700, color }}>{fmt(sTotal)}</div>
+    </div>
+  );
+
   return (
     <div>
-      <SectionTitle sub={`Trade Republic · Total ${fmt(total)}`}>Compte-Titres</SectionTitle>
+      <SectionTitle sub={`Trade Republic · Total ${fmt(total + PEA_VALUE)}`}>Bourse</SectionTitle>
 
       <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 14 }}>
-        <StatCard label="Valeur totale" value={fmt(total)} sub={`${stocks.length} positions`} color="#34D399" icon="📈" />
-        <StatCard label="Meilleure position" value={(() => { const top = [...stocks].sort((a,b) => b.price*b.qty - a.price*a.qty)[0]; return top ? top.symbol : "—"; })()} sub={(() => { const top = [...stocks].sort((a,b) => b.price*b.qty - a.price*a.qty)[0]; return top ? fmt(top.price*top.qty) : ""; })()} color="#10B981" icon="🏆" />
-        <StatCard label="ETF / Indices" value={fmt(stocks.filter(s => ["CSPX","EQTF"].includes(s.symbol)).reduce((a,s) => a + s.price*s.qty, 0))} sub="CSPX + EQTF" color="#6EE7B7" icon="🌍" />
-        <StatCard label="Actions individuelles" value={fmt(stocks.filter(s => ["AAPL","TSLA","BYD","APOLLO"].includes(s.symbol)).reduce((a,s) => a + s.price*s.qty, 0))} sub="AAPL · TSLA · BYD · APOLLO" color="#A7F3D0" icon="🏢" />
+        <StatCard label="Total bourse" value={fmt(total + PEA_VALUE)} sub={`${stocks.length} positions`} color="#34D399" icon="📈" />
+        <StatCard label="Compte-Titres" value={fmt(totalCT)} sub="AAPL · TSLA · BYD · CSPX" color="#60A5FA" icon="📋" />
+        <StatCard label="PEA" value={fmt(PEA_VALUE)} sub="Trade Republic" color="#A78BFA" icon="🇫🇷" />
+        <StatCard label="Non cotés" value={fmt(totalNonCote)} sub="APOLLO · EQTF" color="#FBBF24" icon="🔒" />
       </div>
 
-      <Card style={{ marginBottom: 14, padding: "14px 18px" }}>
+      <Card style={{ marginBottom: 18, padding: "14px 18px" }}>
         <div style={{ fontSize: 12, color: "#64748B", marginBottom: 4 }}>Évolution Bourse (€) — 6 mois · AAPL + TSLA via Finnhub</div>
         <div style={{ fontSize: 11, color: "#64748B", marginBottom: 8 }}>Courbe basée sur tes positions AAPL ({stocks.find(s=>s.symbol==="AAPL")?.qty} titres) et TSLA ({stocks.find(s=>s.symbol==="TSLA")?.qty} titres)</div>
         {marketHistory && marketHistory.length > 1
@@ -725,6 +799,42 @@ function StocksView({ stocks, setStocks, history, marketHistory }) {
           : <><Variation history={history} dataKey="stocks" color="#34D399" /><MiniAreaChart data={history} dataKey="stocks" color="#34D399" height={90} /></>
         }
       </Card>
+
+      {/* ── COMPTE-TITRES ── */}
+      <div style={{ marginBottom: 22 }}>
+        <SubSectionHeader title="Compte-Titres" subtitle="Trade Republic · Actions cotées" total={totalCT} color="#60A5FA" />
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          {stocksCT.map(renderStockCard)}
+          {stocksOther.map(renderStockCard)}
+        </div>
+      </div>
+
+      {/* ── PEA ── */}
+      <div style={{ marginBottom: 22 }}>
+        <SubSectionHeader title="PEA" subtitle="Trade Republic · Plan d'Épargne en Actions" total={PEA_VALUE} color="#A78BFA" />
+        <Card style={{ padding: "16px 20px", background: "rgba(167,139,250,0.05)", border: "1px solid rgba(167,139,250,0.2)" }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 12 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+              <div style={{ width: 42, height: 42, borderRadius: "10px", background: "rgba(167,139,250,0.15)", border: "2px solid rgba(167,139,250,0.3)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 20, flexShrink: 0 }}>
+                🇫🇷
+              </div>
+              <div>
+                <div style={{ fontWeight: 700, color: "#F1F5F9", fontSize: 14 }}>PEA Trade Republic</div>
+                <div style={{ fontSize: 11, color: "#64748B", marginTop: 2 }}>Valeur liquidative au dernier relevé</div>
+              </div>
+            </div>
+            <div style={{ fontSize: 22, fontWeight: 800, color: "#A78BFA" }}>{fmt(PEA_VALUE)}</div>
+          </div>
+        </Card>
+      </div>
+
+      {/* ── NON COTÉS ── */}
+      <div style={{ marginBottom: 22 }}>
+        <SubSectionHeader title="Actifs non cotés / alternatifs" subtitle="Fonds privés · ELTIF · Prix manuels" total={totalNonCote} color="#FBBF24" />
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          {stocksNonCote.map(renderStockCard)}
+        </div>
+      </div>
 
       {/* Import CSV banner */}
       <Card style={{ marginBottom: 14, padding: "12px 18px", background: "rgba(52,211,153,0.05)", border: "1px solid rgba(52,211,153,0.2)" }}>
@@ -742,54 +852,6 @@ function StocksView({ stocks, setStocks, history, marketHistory }) {
         </div>
         {importStatus && <div style={{ marginTop: 8, fontSize: 13, color: importStatus.startsWith("✅") ? "#34D399" : "#F87171" }}>{importStatus}</div>}
       </Card>
-
-      <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 14 }}>
-        {stocks.map(st => {
-          const value = st.price * st.qty;
-          const isEditing = editing === st.symbol;
-          return (
-            <Card key={st.symbol} style={{ padding: "13px 18px" }}>
-              <div style={{ display: "flex", alignItems: "flex-start", gap: 12 }}>
-                <div style={{ width: 42, height: 42, borderRadius: "10px", background: "rgba(52,211,153,0.1)", border: "2px solid rgba(52,211,153,0.25)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: 800, color: "#34D399", flexShrink: 0 }}>
-                  {st.symbol.slice(0, 4)}
-                </div>
-                <div style={{ flex: 1 }}>
-                  <div style={{ fontWeight: 700, color: "#F1F5F9", fontSize: 14 }}>{st.name}</div>
-                  <div style={{ fontSize: 11, color: "#64748B", marginBottom: 4 }}>{st.isin}</div>
-                  {isEditing ? (
-                    <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                      {[["Qté", "qty", 80], ["Prix €", "price", 90]].map(([label, key, w]) => (
-                        <div key={key}>
-                          <div style={{ fontSize: 10, color: "#64748B" }}>{label}</div>
-                          <input value={form[key]} onChange={e => setForm(f => ({ ...f, [key]: e.target.value }))}
-                            style={{ width: w, background: "#1E293B", border: "1px solid #4F46E5", borderRadius: "6px", padding: "4px 8px", color: "#F1F5F9", fontSize: 12 }} />
-                        </div>
-                      ))}
-                      <button onClick={() => { setStocks(p => p.map(s => s.symbol === st.symbol ? { ...s, qty: parseFloat(form.qty) || s.qty, price: parseFloat(form.price) || s.price } : s)); setEditing(null); }}
-                        style={{ alignSelf: "flex-end", background: "#4F46E5", border: "none", borderRadius: "6px", color: "#fff", padding: "4px 12px", cursor: "pointer", fontSize: 12, fontWeight: 600 }}>✓ Sauver</button>
-                      <button onClick={() => setEditing(null)}
-                        style={{ alignSelf: "flex-end", background: "transparent", border: "1px solid #334155", borderRadius: "6px", color: "#64748B", padding: "4px 10px", cursor: "pointer", fontSize: 12 }}>Annuler</button>
-                    </div>
-                  ) : (
-                    <div style={{ fontSize: 12, color: "#64748B" }}>
-                      {st.qty} titres · {fmt(st.price)} / titre
-                      <button onClick={() => { setEditing(st.symbol); setForm({ qty: String(st.qty), price: String(st.price) }); }}
-                        style={{ marginLeft: 10, background: "transparent", border: "none", color: "#6366F1", fontSize: 11, cursor: "pointer", textDecoration: "underline" }}>modifier</button>
-                    </div>
-                  )}
-                </div>
-                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                  <div style={{ fontSize: 17, fontWeight: 700, color: "#34D399", minWidth: 90, textAlign: "right" }}>{fmt(value)}</div>
-                  <button onClick={() => setStocks(p => p.filter(s => s.symbol !== st.symbol))} title="Supprimer"
-                    style={{ background: "transparent", border: "none", color: "#334155", cursor: "pointer", fontSize: 16, padding: "0 2px" }}
-                    onMouseEnter={e => e.currentTarget.style.color = "#F87171"}
-                    onMouseLeave={e => e.currentTarget.style.color = "#334155"}>✕</button>
-                </div>
-              </div>
-            </Card>
-          );
-        })}
-      </div>
 
       {adding ? (
         <Card style={{ padding: 16 }}>
