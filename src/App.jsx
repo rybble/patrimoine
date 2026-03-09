@@ -53,14 +53,14 @@ const INITIAL_SAVINGS = {
 
 const BANK_RATES = {
   1: 0,    // Compte Courant
-  2: 2.4,  // Livret A (taux 2026)
-  3: 2.4,  // LDDS (taux 2026)
+  2: 1.5,  // Livret A (taux depuis 01/02/2026)
+  3: 1.5,  // LDDS (taux depuis 01/02/2026)
 };
 
 const INITIAL_BANK = [
   { id: 1, name: "Compte Courant", type: "current", balance: 0,     icon: "🏦", color: "#4F86F7", interestRate: 0 },
-  { id: 2, name: "Livret A",       type: "savings", balance: 22950, icon: "📗", color: "#34D399", interestRate: 2.4 },
-  { id: 3, name: "LDDS",           type: "savings", balance: 10500, icon: "📘", color: "#60A5FA", interestRate: 2.4 },
+  { id: 2, name: "Livret A",       type: "savings", balance: 22950, icon: "📗", color: "#34D399", interestRate: 1.5 },
+  { id: 3, name: "LDDS",           type: "savings", balance: 10500, icon: "📘", color: "#60A5FA", interestRate: 1.5 },
 ];
 
 const INITIAL_REALESTATE = [
@@ -72,7 +72,7 @@ const INITIAL_REALESTATE = [
     purchaseYear: 2024,
     estimatedPrice: 56000,
     pricePerM2: 3000,
-    surfaceM2: null,
+    surfaceM2: 18,
     color: "#F472B6",
   },
 ];
@@ -1058,7 +1058,7 @@ function BankView({ bank, setBank }) {
             <div>
               <div style={{ fontSize: 11, color: "#94A3B8", textTransform: "uppercase", letterSpacing: 1, marginBottom: 4 }}>Intérêts annuels prévisionnels</div>
               <div style={{ fontSize: 22, fontWeight: 800, color: "#60A5FA" }}>{fmt(totalInterets)}</div>
-              <div style={{ fontSize: 11, color: "#64748B", marginTop: 2 }}>Sur la base des taux actuels (Livret A / LDDS : 2,4%)</div>
+              <div style={{ fontSize: 11, color: "#64748B", marginTop: 2 }}>Sur la base des taux actuels (Livret A / LDDS : 1,5% depuis le 01/02/2026)</div>
             </div>
             <div>
               <div style={{ fontSize: 11, color: "#94A3B8", textTransform: "uppercase", letterSpacing: 1, marginBottom: 4 }}>Déjà courus ({dayOfYear}j/{daysInYear}j)</div>
@@ -1297,7 +1297,7 @@ function AppContent() {
   ];
 
   return (
-    <div style={{ minHeight: "100vh", background: "#0B1120", fontFamily: "'DM Sans', 'Segoe UI', sans-serif", color: "#F1F5F9" }}>
+    <div style={{ minHeight: "100vh", background: "#0B1120", fontFamily: "'DM Sans', 'Segoe UI', sans-serif", color: "#F1F5F9", width: "100%" }}>
       <link href="https://fonts.googleapis.com/css2?family=Syne:wght@700;800&family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
 
       <div style={{ position: "fixed", inset: 0, zIndex: 0, pointerEvents: "none", overflow: "hidden" }}>
@@ -1305,7 +1305,7 @@ function AppContent() {
         <div style={{ position: "absolute", bottom: -100, left: -100, width: 400, height: 400, borderRadius: "50%", background: "radial-gradient(circle, rgba(52,211,153,0.08) 0%, transparent 70%)" }} />
       </div>
 
-      <div style={{ position: "relative", zIndex: 1, maxWidth: 1400, margin: "0 auto", padding: "0 32px 80px" }}>
+      <div style={{ position: "relative", zIndex: 1, width: "100%", maxWidth: 1400, margin: "0 auto", padding: "0 40px 80px", boxSizing: "border-box" }}>
 
         {/* Header */}
         <div style={{ padding: "28px 0 20px", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 16 }}>
