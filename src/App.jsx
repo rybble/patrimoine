@@ -58,9 +58,9 @@ const BANK_RATES = {
 };
 
 const INITIAL_BANK = [
-  { id: 1, name: "Compte Courant", type: "current", balance: 0, icon: "🏦", color: "#4F86F7", interestRate: 0 },
-  { id: 2, name: "Livret A",       type: "savings", balance: 0, icon: "📗", color: "#34D399", interestRate: 2.4 },
-  { id: 3, name: "LDDS",           type: "savings", balance: 0, icon: "📘", color: "#60A5FA", interestRate: 2.4 },
+  { id: 1, name: "Compte Courant", type: "current", balance: 0,     icon: "🏦", color: "#4F86F7", interestRate: 0 },
+  { id: 2, name: "Livret A",       type: "savings", balance: 22950, icon: "📗", color: "#34D399", interestRate: 2.4 },
+  { id: 3, name: "LDDS",           type: "savings", balance: 10500, icon: "📘", color: "#60A5FA", interestRate: 2.4 },
 ];
 
 const INITIAL_REALESTATE = [
@@ -1305,7 +1305,7 @@ function AppContent() {
         <div style={{ position: "absolute", bottom: -100, left: -100, width: 400, height: 400, borderRadius: "50%", background: "radial-gradient(circle, rgba(52,211,153,0.08) 0%, transparent 70%)" }} />
       </div>
 
-      <div style={{ position: "relative", zIndex: 1, maxWidth: 920, margin: "0 auto", padding: "0 20px 80px" }}>
+      <div style={{ position: "relative", zIndex: 1, maxWidth: 1400, margin: "0 auto", padding: "0 32px 80px" }}>
 
         {/* Header */}
         <div style={{ padding: "28px 0 20px", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 16 }}>
