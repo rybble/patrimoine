@@ -1,12 +1,102 @@
-import { useState, useEffect, useCallback } from "react";
-import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer } from "recharts";
+import { useState, useEffect, useCallback, useRef } from "react";
+import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer, AreaChart, Area, XAxis, YAxis, CartesianGrid, LineChart, Line } from "recharts";
 
 // ─── CONSTANTS ────────────────────────────────────────────────────────────────
 const LCW_KEY = "7ef42576-3d07-41e1-97be-e84b2b1ea0c1";
 const FINNHUB_KEY = "d6m3vjpr01qi0ajkqmp0d6m3vjpr01qi0ajkqmpg";
 const ORA_REF_PRICE = 13.50; // Cours ORA.PA au 31/12/2025 (date du relevé Amundi)
 
-// ─── INITIAL DATA ─────────────────────────────────────────────────────────────
+// ─── HISTORY (localStorage) ───────────────────────────────────────────────────
+const HISTORY_KEY = "patrimoine_history_v1";
+const MAX_HISTORY = 365; // 1 an de données
+
+function loadHistory() {
+  try { return JSON.parse(localStorage.getItem(HISTORY_KEY) || "[]"); } catch { return []; }
+}
+
+function saveHistory(history) {
+  try { localStorage.setItem(HISTORY_KEY, JSON.stringify(history.slice(-MAX_HISTORY))); } catch {}
+}
+
+function pushHistoryPoint(totals) {
+  const history = loadHistory();
+  const today = new Date().toISOString().slice(0, 10);
+  const last = history[history.length - 1];
+  // On ne pousse qu'une fois par jour
+  if (last?.date === today) {
+    history[history.length - 1] = { date: today, ...totals };
+  } else {
+    history.push({ date: today, ...totals });
+  }
+  saveHistory(history);
+  return history;
+}
+
+// ─── MINI AREA CHART ──────────────────────────────────────────────────────────
+function MiniAreaChart({ data, dataKey, color, height = 60 }) {
+  if (!data || data.length < 2) return (
+    <div style={{ height, display: "flex", alignItems: "center", justifyContent: "center", color: "#334155", fontSize: 12 }}>
+      Pas encore assez de données historiques
+    </div>
+  );
+  return (
+    <ResponsiveContainer width="100%" height={height}>
+      <AreaChart data={data} margin={{ top: 4, right: 4, bottom: 0, left: 0 }}>
+        <defs>
+          <linearGradient id={`grad_${dataKey}`} x1="0" y1="0" x2="0" y2="1">
+            <stop offset="5%" stopColor={color} stopOpacity={0.3} />
+            <stop offset="95%" stopColor={color} stopOpacity={0} />
+          </linearGradient>
+        </defs>
+        <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.04)" />
+        <XAxis dataKey="date" tick={{ fontSize: 10, fill: "#475569" }} tickLine={false} axisLine={false}
+          tickFormatter={d => d.slice(5)} interval="preserveStartEnd" />
+        <YAxis tick={{ fontSize: 10, fill: "#475569" }} tickLine={false} axisLine={false}
+          tickFormatter={v => v >= 1000 ? `${(v/1000).toFixed(0)}k` : v} width={38} />
+        <Tooltip
+          contentStyle={{ background: "#1E293B", border: "1px solid #334155", borderRadius: 8, color: "#F1F5F9", fontSize: 12 }}
+          formatter={v => [fmt(v), "Valeur"]}
+          labelFormatter={l => `📅 ${l}`}
+        />
+        <Area type="monotone" dataKey={dataKey} stroke={color} strokeWidth={2}
+          fill={`url(#grad_${dataKey})`} dot={false} activeDot={{ r: 4, fill: color }} />
+      </AreaChart>
+    </ResponsiveContainer>
+  );
+}
+
+// ─── STAT CARD ────────────────────────────────────────────────────────────────
+function StatCard({ label, value, sub, color = "#818CF8", icon }) {
+  return (
+    <div style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.07)", borderRadius: 14, padding: "14px 18px", flex: 1, minWidth: 140 }}>
+      <div style={{ fontSize: 11, color: "#64748B", textTransform: "uppercase", letterSpacing: 1, marginBottom: 6 }}>
+        {icon && <span style={{ marginRight: 5 }}>{icon}</span>}{label}
+      </div>
+      <div style={{ fontSize: 20, fontWeight: 800, color }}>{value}</div>
+      {sub && <div style={{ fontSize: 11, color: "#475569", marginTop: 3 }}>{sub}</div>}
+    </div>
+  );
+}
+
+// ─── VARIATION BADGE ─────────────────────────────────────────────────────────
+function Variation({ history, dataKey, color }) {
+  if (!history || history.length < 2) return null;
+  const first = history[0][dataKey] || 0;
+  const last = history[history.length - 1][dataKey] || 0;
+  const pct = first > 0 ? ((last - first) / first) * 100 : 0;
+  const abs = last - first;
+  const up = abs >= 0;
+  return (
+    <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 10 }}>
+      <span style={{ fontSize: 13, color: up ? "#34D399" : "#F87171", fontWeight: 700 }}>
+        {up ? "▲" : "▼"} {up ? "+" : ""}{fmt(abs)} ({up ? "+" : ""}{pct.toFixed(1)}%)
+      </span>
+      <span style={{ fontSize: 12, color: "#475569" }}>depuis {history[0].date}</span>
+    </div>
+  );
+}
+
+
 const INITIAL_CRYPTO = [
   { code: "ETH",  symbol: "ETH",  qty: 1.0258,      color: "#627EEA" },
   { code: "BTC",  symbol: "BTC",  qty: 0.014986033, color: "#F7931A" },
@@ -167,7 +257,7 @@ function Tag({ children, color }) {
 }
 
 // ─── OVERVIEW ─────────────────────────────────────────────────────────────────
-function Overview({ cryptoData, cryptoPrices, stocks, bank, savings, oraPrice, eurUsd, realestateTotal, scpiTotal, onNavigate }) {
+function Overview({ cryptoData, cryptoPrices, stocks, bank, savings, oraPrice, eurUsd, realestateTotal, scpiTotal, onNavigate, history }) {
   const getVl = (f) => (f.type === "ora_linked" && oraPrice > 0) ? f.manualVl * (oraPrice / ORA_REF_PRICE) : f.manualVl;
   const cryptoTotal = cryptoData.reduce((s, c) => s + (cryptoPrices[c.code]?.usd || 0) * c.qty, 0);
   const stocksTotal = stocks.reduce((s, st) => s + st.price * st.qty, 0);
@@ -186,22 +276,39 @@ function Overview({ cryptoData, cryptoPrices, stocks, bank, savings, oraPrice, e
 
   const pieData = sections.filter(s => s.value > 0).map(s => ({ name: s.label.split(" ")[0], value: s.value, color: s.color }));
 
+  // Stats
+  const scpiRevenuAnnuel = scpiTotal > 0 ? (scpiTotal * 0.083) : 0; // ~8.3% moyen
+  const bankInteret = bank.reduce((s, b) => s + b.balance * (b.interestRate || 0) / 100, 0);
+  const revenuPassifTotal = scpiRevenuAnnuel + bankInteret;
+  const tauxRendementGlobal = grandTotal > 0 ? (revenuPassifTotal / grandTotal) * 100 : 0;
+  const diversification = sections.filter(s => s.value > 0).length;
+
   return (
     <div>
       <SectionTitle sub="Vue d'ensemble de ton patrimoine">Patrimoine Global</SectionTitle>
 
-      <Card style={{ marginBottom: 22, background: "linear-gradient(135deg, rgba(99,102,241,0.15), rgba(52,211,153,0.08))" }}>
+      <Card style={{ marginBottom: 16, background: "linear-gradient(135deg, rgba(99,102,241,0.15), rgba(52,211,153,0.08))" }}>
         <div style={{ fontSize: 12, color: "#64748B", textTransform: "uppercase", letterSpacing: 2, marginBottom: 6 }}>Patrimoine Total</div>
         <div style={{ fontSize: 46, fontWeight: 800, color: "#F1F5F9", fontFamily: "'Syne', sans-serif", lineHeight: 1 }}>
           {fmt(grandTotal)}
         </div>
-        <div style={{ fontSize: 12, color: "#64748B", marginTop: 8 }}>1 USD ≈ {(1 / eurUsd).toFixed(4)} EUR</div>
+        <div style={{ fontSize: 12, color: "#64748B", marginTop: 6, marginBottom: 14 }}>1 USD ≈ {(1 / eurUsd).toFixed(4)} EUR</div>
+        <Variation history={history} dataKey="total" color="#818CF8" />
+        <MiniAreaChart data={history} dataKey="total" color="#818CF8" height={80} />
       </Card>
+
+      {/* Stats globales */}
+      <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 16 }}>
+        <StatCard label="Revenus passifs /an" value={fmt(revenuPassifTotal)} sub="SCPI + intérêts livrets" color="#34D399" icon="💰" />
+        <StatCard label="Rendement global" value={`${tauxRendementGlobal.toFixed(2)}%`} sub="Sur patrimoine total" color="#FBBF24" icon="📈" />
+        <StatCard label="Diversification" value={`${diversification}/6`} sub="Classes d'actifs actives" color="#818CF8" icon="🎯" />
+        <StatCard label="Actifs liquides" value={fmt(cryptoTotal / eurUsd + stocksTotal + bankTotal)} sub="Crypto + Bourse + Banque" color="#60A5FA" icon="💧" />
+      </div>
 
       <div style={{ display: "grid", gridTemplateColumns: "1fr 260px", gap: 16, marginBottom: 20 }}>
         <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
           {sections.map(s => (
-            <Card key={s.key} onClick={() => onNavigate(s.key)} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "14px 18px" }}>
+            <Card key={s.key} onClick={() => onNavigate(s.key)} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "14px 18px", cursor: "pointer" }}>
               <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
                 <div style={{ width: 40, height: 40, borderRadius: 12, background: s.color + "22", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 19, flexShrink: 0 }}>
                   {s.icon}
@@ -249,7 +356,7 @@ function Overview({ cryptoData, cryptoPrices, stocks, bank, savings, oraPrice, e
 }
 
 // ─── CRYPTO VIEW ──────────────────────────────────────────────────────────────
-function CryptoView({ cryptoData, setCryptoData, cryptoPrices, eurUsd, loading }) {
+function CryptoView({ cryptoData, setCryptoData, cryptoPrices, eurUsd, loading, history }) {
   const [editingCode, setEditingCode] = useState(null);
   const [editQty, setEditQty] = useState("");
 
@@ -338,6 +445,21 @@ function CryptoView({ cryptoData, setCryptoData, cryptoPrices, eurUsd, loading }
       <SectionTitle sub={`${fmt(totalUsd, "USD")} · ${eurUsd > 0 ? fmt(totalUsd / eurUsd) : "—"} · ${loading ? "⏳ sync…" : "✓ LiveCoinWatch live"}`}>
         Cryptomonnaies
       </SectionTitle>
+
+      {/* Stats crypto */}
+      <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 14 }}>
+        <StatCard label="Valeur totale" value={eurUsd > 0 ? fmt(totalUsd / eurUsd) : "—"} sub={fmt(totalUsd, "USD")} color="#818CF8" icon="₿" />
+        <StatCard label="Nb positions" value={cryptoData.length} sub="Actifs différents" color="#6366F1" icon="🎯" />
+        <StatCard label="Top position" value={(() => { const top = [...cryptoData].sort((a,b) => (cryptoPrices[b.code]?.usd||0)*b.qty - (cryptoPrices[a.code]?.usd||0)*a.qty)[0]; return top ? top.symbol : "—"; })()} sub={(() => { const top = [...cryptoData].sort((a,b) => (cryptoPrices[b.code]?.usd||0)*b.qty - (cryptoPrices[a.code]?.usd||0)*a.qty)[0]; return top && eurUsd > 0 ? fmt((cryptoPrices[top.code]?.usd||0)*top.qty/eurUsd) : ""; })()} color="#A78BFA" icon="🏆" />
+        <StatCard label="Stablecoins" value={fmt((cryptoPrices["USDC"]?.usd || 1) * (cryptoData.find(c => c.code === "USDC")?.qty || 0) / eurUsd)} sub="USDC · liquidités sûres" color="#2775CA" icon="🔒" />
+      </div>
+
+      {/* Graphique évolution */}
+      <Card style={{ marginBottom: 14, padding: "14px 18px" }}>
+        <div style={{ fontSize: 12, color: "#64748B", marginBottom: 8 }}>Évolution Crypto (€)</div>
+        <Variation history={history} dataKey="crypto" color="#818CF8" />
+        <MiniAreaChart data={history} dataKey="crypto" color="#818CF8" height={90} />
+      </Card>
 
       {/* Add crypto panel */}
       {showSearch ? (
@@ -476,7 +598,7 @@ function CryptoView({ cryptoData, setCryptoData, cryptoPrices, eurUsd, loading }
 }
 
 // ─── STOCKS VIEW ──────────────────────────────────────────────────────────────
-function StocksView({ stocks, setStocks }) {
+function StocksView({ stocks, setStocks, history }) {
   const [editing, setEditing] = useState(null);
   const [form, setForm] = useState({});
   const [adding, setAdding] = useState(false);
@@ -535,6 +657,19 @@ function StocksView({ stocks, setStocks }) {
   return (
     <div>
       <SectionTitle sub={`Trade Republic · Total ${fmt(total)}`}>Compte-Titres</SectionTitle>
+
+      <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 14 }}>
+        <StatCard label="Valeur totale" value={fmt(total)} sub={`${stocks.length} positions`} color="#34D399" icon="📈" />
+        <StatCard label="Meilleure position" value={(() => { const top = [...stocks].sort((a,b) => b.price*b.qty - a.price*a.qty)[0]; return top ? top.symbol : "—"; })()} sub={(() => { const top = [...stocks].sort((a,b) => b.price*b.qty - a.price*a.qty)[0]; return top ? fmt(top.price*top.qty) : ""; })()} color="#10B981" icon="🏆" />
+        <StatCard label="ETF / Indices" value={fmt(stocks.filter(s => ["CSPX","EQTF"].includes(s.symbol)).reduce((a,s) => a + s.price*s.qty, 0))} sub="CSPX + EQTF" color="#6EE7B7" icon="🌍" />
+        <StatCard label="Actions individuelles" value={fmt(stocks.filter(s => ["AAPL","TSLA","BYD","APOLLO"].includes(s.symbol)).reduce((a,s) => a + s.price*s.qty, 0))} sub="AAPL · TSLA · BYD · APOLLO" color="#A7F3D0" icon="🏢" />
+      </div>
+
+      <Card style={{ marginBottom: 14, padding: "14px 18px" }}>
+        <div style={{ fontSize: 12, color: "#64748B", marginBottom: 8 }}>Évolution Bourse (€)</div>
+        <Variation history={history} dataKey="stocks" color="#34D399" />
+        <MiniAreaChart data={history} dataKey="stocks" color="#34D399" height={90} />
+      </Card>
 
       {/* Import CSV banner */}
       <Card style={{ marginBottom: 14, padding: "12px 18px", background: "rgba(52,211,153,0.05)", border: "1px solid rgba(52,211,153,0.2)" }}>
@@ -747,7 +882,7 @@ function SavingsView({ savings, setSavings, oraPrice }) {
 }
 
 // ─── SCPI VIEW ────────────────────────────────────────────────────────────────
-function ScpiView({ scpi, setScpi }) {
+function ScpiView({ scpi, setScpi, history }) {
   const [editingId, setEditingId] = useState(null);
   const [form, setForm] = useState({});
   const [adding, setAdding] = useState(false);
@@ -801,6 +936,19 @@ function ScpiView({ scpi, setScpi }) {
       <SectionTitle sub={`Valeur totale : ${fmt(total)} · Revenus annuels bruts estimés : ${fmt(totalRevenu)}`}>
         SCPI — Pierre Papier
       </SectionTitle>
+
+      <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 14 }}>
+        <StatCard label="Valeur totale" value={fmt(total)} sub={`${scpi.length} SCPI`} color="#A78BFA" icon="🏢" />
+        <StatCard label="Revenus annuels" value={fmt(totalRevenu)} sub={`${fmt(totalRevenu/12)}/mois`} color="#C4B5FD" icon="💰" />
+        <StatCard label="Rendement moyen" value={`${total > 0 ? ((totalRevenu/total)*100).toFixed(2) : 0}%`} sub="TDVM pondéré" color="#818CF8" icon="📊" />
+        <StatCard label="Nb parts total" value={scpi.reduce((s,p) => s + p.parts, 0)} sub="Toutes SCPI" color="#7C3AED" icon="📄" />
+      </div>
+
+      <Card style={{ marginBottom: 14, padding: "14px 18px" }}>
+        <div style={{ fontSize: 12, color: "#64748B", marginBottom: 8 }}>Évolution SCPI (€)</div>
+        <Variation history={history} dataKey="scpi" color="#A78BFA" />
+        <MiniAreaChart data={history} dataKey="scpi" color="#A78BFA" height={90} />
+      </Card>
 
       {/* Staleness alert */}
       {staleItems.length > 0 && (
@@ -1221,6 +1369,7 @@ function AppContent() {
   const [lastUpdate, setLastUpdate] = useState(null);
   const [eurUsd, setEurUsd] = useState(1.08);
   const [oraPrice, setOraPrice] = useState(0);
+  const [history, setHistory] = useState(() => loadHistory());
 
   const fetchOraPrice = useCallback(async () => {
     try {
@@ -1328,6 +1477,22 @@ function AppContent() {
   const scpiTotal = scpi.reduce((s, p) => s + p.pricePerPart * p.parts, 0);
   const grandTotal = cryptoTotal / eurUsd + stocksTotal + savingsTotal + bankTotal + realestateTotal + scpiTotal;
 
+  // Push history point whenever totals are meaningful
+  useEffect(() => {
+    if (grandTotal > 0 && cryptoPrices && Object.keys(cryptoPrices).length > 0) {
+      const newHistory = pushHistoryPoint({
+        total: Math.round(grandTotal),
+        crypto: Math.round(cryptoTotal / eurUsd),
+        stocks: Math.round(stocksTotal),
+        savings: Math.round(savingsTotal),
+        bank: Math.round(bankTotal),
+        scpi: Math.round(scpiTotal),
+        realestate: Math.round(realestateTotal),
+      });
+      setHistory(newHistory);
+    }
+  }, [grandTotal]);
+
   const navItems = [
     { key: "overview",    icon: "◈", label: "Vue globale" },
     { key: "crypto",      icon: "₿", label: "Crypto" },
@@ -1389,11 +1554,11 @@ function AppContent() {
         )}
 
         {/* Views */}
-        {view === "overview"   && <Overview cryptoData={cryptoData} cryptoPrices={cryptoPrices} stocks={stocks} bank={bank} savings={savings} oraPrice={oraPrice} eurUsd={eurUsd} realestateTotal={realestateTotal} scpiTotal={scpiTotal} onNavigate={setView} />}
-        {view === "crypto"     && <CryptoView cryptoData={cryptoData} setCryptoData={setCryptoData} cryptoPrices={cryptoPrices} eurUsd={eurUsd} loading={loading} />}
-        {view === "stocks"     && <StocksView stocks={stocks} setStocks={setStocks} />}
+        {view === "overview"   && <Overview cryptoData={cryptoData} cryptoPrices={cryptoPrices} stocks={stocks} bank={bank} savings={savings} oraPrice={oraPrice} eurUsd={eurUsd} realestateTotal={realestateTotal} scpiTotal={scpiTotal} onNavigate={setView} history={history} />}
+        {view === "crypto"     && <CryptoView cryptoData={cryptoData} setCryptoData={setCryptoData} cryptoPrices={cryptoPrices} eurUsd={eurUsd} loading={loading} history={history} />}
+        {view === "stocks"     && <StocksView stocks={stocks} setStocks={setStocks} history={history} />}
         {view === "savings"    && <SavingsView savings={savings} setSavings={setSavings} oraPrice={oraPrice} />}
-        {view === "scpi"       && <ScpiView scpi={scpi} setScpi={setScpi} />}
+        {view === "scpi"       && <ScpiView scpi={scpi} setScpi={setScpi} history={history} />}
         {view === "realestate" && <RealEstateView realestate={realestate} setRealestate={setRealestate} />}
         {view === "bank"       && <BankView bank={bank} setBank={setBank} />}
       </div>
