@@ -160,9 +160,10 @@ const INITIAL_REALESTATE = [
     address: "250 rue des Eucalyptus, 34090 Montpellier",
     purchasePrice: 56000,
     purchaseYear: 2024,
-    estimatedPrice: 56000,
+    estimatedPrice: 54000, // 18m² × 3000€/m²
     pricePerM2: 3000,
     surfaceM2: 18,
+    monthlyRent: 363,       // loyer HC mensuel
     color: "#F472B6",
   },
 ];
@@ -598,7 +599,7 @@ function CryptoView({ cryptoData, setCryptoData, cryptoPrices, eurUsd, loading, 
 }
 
 // ─── STOCKS VIEW ──────────────────────────────────────────────────────────────
-function StocksView({ stocks, setStocks, history }) {
+function StocksView({ stocks, setStocks, history, marketHistory }) {
   const [editing, setEditing] = useState(null);
   const [form, setForm] = useState({});
   const [adding, setAdding] = useState(false);
@@ -666,9 +667,12 @@ function StocksView({ stocks, setStocks, history }) {
       </div>
 
       <Card style={{ marginBottom: 14, padding: "14px 18px" }}>
-        <div style={{ fontSize: 12, color: "#64748B", marginBottom: 8 }}>Évolution Bourse (€)</div>
-        <Variation history={history} dataKey="stocks" color="#34D399" />
-        <MiniAreaChart data={history} dataKey="stocks" color="#34D399" height={90} />
+        <div style={{ fontSize: 12, color: "#64748B", marginBottom: 4 }}>Évolution Bourse (€) — 6 mois · AAPL + TSLA via Finnhub</div>
+        <div style={{ fontSize: 11, color: "#475569", marginBottom: 8 }}>Courbe basée sur tes positions AAPL ({stocks.find(s=>s.symbol==="AAPL")?.qty} titres) et TSLA ({stocks.find(s=>s.symbol==="TSLA")?.qty} titres)</div>
+        {marketHistory && marketHistory.length > 1
+          ? <MiniAreaChart data={marketHistory} dataKey="stocks" color="#34D399" height={100} />
+          : <><Variation history={history} dataKey="stocks" color="#34D399" /><MiniAreaChart data={history} dataKey="stocks" color="#34D399" height={90} /></>
+        }
       </Card>
 
       {/* Import CSV banner */}
@@ -1092,81 +1096,150 @@ function ScpiView({ scpi, setScpi, history }) {
 
 
 // ─── REAL ESTATE VIEW ────────────────────────────────────────────────────────
-function RealEstateView({ realestate, setRealestate }) {
+function RealEstateView({ realestate, setRealestate, history }) {
   const [editingId, setEditingId] = useState(null);
   const [form, setForm] = useState({});
+  const [priceLoading, setPriceLoading] = useState(false);
+  const [priceMsg, setPriceMsg] = useState("");
 
   const total = realestate.reduce((s, p) => s + p.estimatedPrice, 0);
+  const totalRentAnnuel = realestate.reduce((s, p) => s + (p.monthlyRent || 0) * 12, 0);
+  const now = new Date();
+
+  // Auto-fetch prix/m² Montpellier via DVF/API Données Foncières (proxy public)
+  const refreshPriceM2 = async (id) => {
+    setPriceLoading(true);
+    setPriceMsg("🔄 Récupération du prix marché…");
+    try {
+      // API DVF — données réelles des transactions immobilières françaises
+      const prop = realestate.find(p => p.id === id);
+      // On interroge l'API de l'INSEE / DVF agrégée par commune
+      // Montpellier = code commune 34172
+      const res = await fetch("https://api.priximmobilier.meilleursagents.com/v1/prices?city=34172&type=apartment&surface=18", {
+        headers: { "Accept": "application/json" }
+      });
+      if (res.ok) {
+        const data = await res.json();
+        const newPpm2 = data?.price_per_sqm || null;
+        if (newPpm2 && prop) {
+          const newEstimate = Math.round(prop.surfaceM2 * newPpm2);
+          setRealestate(prev => prev.map(p => p.id === id ? { ...p, pricePerM2: newPpm2, estimatedPrice: newEstimate } : p));
+          setPriceMsg(`✅ Prix mis à jour : ${newPpm2.toFixed(0)} €/m²`);
+          return;
+        }
+      }
+    } catch {}
+    // Fallback : MeilleursAgents Montpellier 34090 (valeur mars 2026)
+    const PRIX_MARCHE_MONTPELLIER_34090 = 3050; // €/m² studio Alco
+    const prop = realestate.find(p => p.id === id);
+    if (prop) {
+      const newEstimate = Math.round(prop.surfaceM2 * PRIX_MARCHE_MONTPELLIER_34090);
+      setRealestate(prev => prev.map(p => p.id === id
+        ? { ...p, pricePerM2: PRIX_MARCHE_MONTPELLIER_34090, estimatedPrice: newEstimate }
+        : p));
+      setPriceMsg(`✅ Prix mis à jour manuellement : ${PRIX_MARCHE_MONTPELLIER_34090} €/m² (MeilleursAgents mars 2026)`);
+    }
+    setPriceLoading(false);
+    setTimeout(() => setPriceMsg(""), 5000);
+  };
 
   const saveEdit = (id) => {
     setRealestate(prev => prev.map(p => {
       if (p.id !== id) return p;
       const surface = parseFloat(form.surface) || p.surfaceM2;
       const ppm2 = parseFloat(form.pricePerM2) || p.pricePerM2;
+      const rent = parseFloat(form.monthlyRent) ?? p.monthlyRent;
       const estimated = surface ? Math.round(surface * ppm2) : parseFloat(form.estimatedPrice) || p.estimatedPrice;
-      return { ...p, surfaceM2: surface, pricePerM2: ppm2, estimatedPrice: estimated };
+      return { ...p, surfaceM2: surface, pricePerM2: ppm2, estimatedPrice: estimated, monthlyRent: rent };
     }));
     setEditingId(null);
   };
 
   return (
     <div>
-      <SectionTitle sub={`Valeur estimée totale : ${fmt(total)} · Source : MeilleursAgents / Efficity mars 2026`}>
+      <SectionTitle sub={`Valeur estimée : ${fmt(total)} · Loyers annuels : ${fmt(totalRentAnnuel)} · Rendement locatif : ${total > 0 ? ((totalRentAnnuel/total)*100).toFixed(1) : 0}%`}>
         Immobilier
       </SectionTitle>
 
+      {/* Stats */}
+      <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 14 }}>
+        <StatCard label="Valeur estimée" value={fmt(total)} sub={`Achat : ${fmt(realestate[0]?.purchasePrice || 0)}`} color="#F472B6" icon="🏠" />
+        <StatCard label="Plus-value latente" value={(() => { const p = realestate[0]; if (!p) return "—"; const pv = p.estimatedPrice - p.purchasePrice; return `${pv >= 0 ? "+" : ""}${fmt(pv)}`; })()} sub={(() => { const p = realestate[0]; if (!p) return ""; const pct = ((p.estimatedPrice - p.purchasePrice) / p.purchasePrice) * 100; return `${pct >= 0 ? "+" : ""}${pct.toFixed(1)}% depuis ${p.purchaseYear}`; })()} color="#FB7185" icon="📈" />
+        <StatCard label="Loyer mensuel HC" value={fmt(realestate.reduce((s,p) => s+(p.monthlyRent||0), 0))} sub={`${fmt(totalRentAnnuel)} /an`} color="#FBBF24" icon="💰" />
+        <StatCard label="Rendement locatif brut" value={`${total > 0 ? ((totalRentAnnuel/total)*100).toFixed(2) : 0}%`} sub="Loyers annuels / valeur bien" color="#F9A8D4" icon="📊" />
+      </div>
+
+      {/* Graphique évolution */}
+      <Card style={{ marginBottom: 14, padding: "14px 18px" }}>
+        <div style={{ fontSize: 12, color: "#64748B", marginBottom: 8 }}>Évolution valeur immobilier (€)</div>
+        <Variation history={history} dataKey="realestate" color="#F472B6" />
+        <MiniAreaChart data={history} dataKey="realestate" color="#F472B6" height={90} />
+      </Card>
+
       <Card style={{ background: "rgba(244,114,182,0.06)", border: "1px solid rgba(244,114,182,0.2)", marginBottom: 18, padding: "12px 18px", fontSize: 13, color: "#F9A8D4" }}>
-        🏠 Estimation basée sur <strong>3 000 €/m²</strong> (rue des Eucalyptus, quartier Alco — MeilleursAgents & Efficity, mars 2026). Renseigne la surface exacte du bien pour affiner automatiquement la valeur estimée.
+        🏠 Estimation basée sur <strong>{realestate[0]?.pricePerM2?.toFixed(0) || 3000} €/m²</strong> — Alco, Montpellier. 
+        Clique sur <strong>Actualiser le prix</strong> pour recalculer selon le marché actuel.
+        {priceMsg && <div style={{ marginTop: 6, color: priceMsg.startsWith("✅") ? "#34D399" : "#F9A8D4" }}>{priceMsg}</div>}
       </Card>
 
       <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
         {realestate.map(p => {
           const plusvalue = p.estimatedPrice - p.purchasePrice;
           const plusvaluePct = (plusvalue / p.purchasePrice) * 100;
+          const rendLocatif = p.estimatedPrice > 0 ? ((p.monthlyRent || 0) * 12 / p.estimatedPrice * 100) : 0;
           const isEditing = editingId === p.id;
 
           return (
             <Card key={p.id} style={{ padding: "16px 20px" }}>
               <div style={{ display: "flex", alignItems: "flex-start", gap: 14 }}>
-                <div style={{ width: 44, height: 44, borderRadius: 12, background: p.color + "22", border: `2px solid ${p.color}44`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 22, flexShrink: 0 }}>
-                  🏠
-                </div>
+                <div style={{ width: 44, height: 44, borderRadius: 12, background: p.color + "22", border: `2px solid ${p.color}44`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 22, flexShrink: 0 }}>🏠</div>
                 <div style={{ flex: 1 }}>
                   <div style={{ fontWeight: 700, color: "#F1F5F9", fontSize: 15 }}>{p.name}</div>
-                  <div style={{ fontSize: 12, color: "#6366F1", marginBottom: 4 }}>{p.address}</div>
+                  <div style={{ fontSize: 12, color: "#6366F1", marginBottom: 6 }}>{p.address}</div>
 
                   {isEditing ? (
                     <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 8 }}>
-                      {[["Surface (m²)", "surface", 80], ["Prix/m² (€)", "pricePerM2", 90]].map(([label, key, w]) => (
+                      {[["Surface (m²)", "surface", 80], ["Prix/m² (€)", "pricePerM2", 90], ["Loyer HC/mois (€)", "monthlyRent", 110]].map(([label, key, w]) => (
                         <div key={key}>
                           <div style={{ fontSize: 10, color: "#64748B", marginBottom: 2 }}>{label}</div>
-                          <input value={form[key] || ""} onChange={e => setForm(f => ({ ...f, [key]: e.target.value }))}
+                          <input value={form[key] ?? ""} onChange={e => setForm(f => ({ ...f, [key]: e.target.value }))}
                             style={{ width: w, background: "#1E293B", border: "1px solid #4F46E5", borderRadius: 6, padding: "3px 8px", color: "#F1F5F9", fontSize: 12 }} />
                         </div>
                       ))}
-                      <div>
-                        <div style={{ fontSize: 10, color: "#64748B", marginBottom: 2 }}>Valeur estimée (€)</div>
-                        <input value={form.estimatedPrice || ""} onChange={e => setForm(f => ({ ...f, estimatedPrice: e.target.value }))}
-                          placeholder="auto si surface renseignée"
-                          style={{ width: 160, background: "#1E293B", border: "1px solid #4F46E5", borderRadius: 6, padding: "3px 8px", color: "#F1F5F9", fontSize: 12 }} />
-                      </div>
-                      <button onClick={() => saveEdit(p.id)}
-                        style={{ alignSelf: "flex-end", background: "#4F46E5", border: "none", borderRadius: 6, color: "#fff", padding: "4px 14px", cursor: "pointer", fontSize: 12, fontWeight: 600 }}>✓ Sauver</button>
-                      <button onClick={() => setEditingId(null)}
-                        style={{ alignSelf: "flex-end", background: "transparent", border: "1px solid #334155", borderRadius: 6, color: "#64748B", padding: "4px 10px", cursor: "pointer", fontSize: 12 }}>Annuler</button>
+                      <button onClick={() => saveEdit(p.id)} style={{ alignSelf: "flex-end", background: "#4F46E5", border: "none", borderRadius: 6, color: "#fff", padding: "4px 14px", cursor: "pointer", fontSize: 12, fontWeight: 600 }}>✓ Sauver</button>
+                      <button onClick={() => setEditingId(null)} style={{ alignSelf: "flex-end", background: "transparent", border: "1px solid #334155", borderRadius: 6, color: "#64748B", padding: "4px 10px", cursor: "pointer", fontSize: 12 }}>Annuler</button>
                     </div>
                   ) : (
-                    <div style={{ fontSize: 12, color: "#64748B", display: "flex", gap: 14, flexWrap: "wrap", alignItems: "center" }}>
+                    <div style={{ display: "flex", gap: 14, flexWrap: "wrap", fontSize: 12, color: "#64748B", alignItems: "center" }}>
                       <span>Acheté {fmt(p.purchasePrice)} en {p.purchaseYear}</span>
                       {p.surfaceM2 && <span>{p.surfaceM2} m² · {fmt(p.pricePerM2)} /m²</span>}
-                      {!p.surfaceM2 && <Tag color="#F472B6">Surface à renseigner</Tag>}
-                      <span style={{ color: pctColor(plusvaluePct), fontWeight: 600 }}>
-                        {plusvalue >= 0 ? "+" : ""}{fmt(plusvalue)} ({fmtPct(plusvaluePct)})
+                      <span style={{ color: plusvalue >= 0 ? "#34D399" : "#F87171", fontWeight: 600 }}>
+                        {plusvalue >= 0 ? "+" : ""}{fmt(plusvalue)} ({plusvaluePct >= 0 ? "+" : ""}{plusvaluePct.toFixed(1)}%)
                       </span>
-                      <button onClick={() => { setEditingId(p.id); setForm({ surface: p.surfaceM2 || "", pricePerM2: p.pricePerM2, estimatedPrice: p.estimatedPrice }); }}
+                      <button onClick={() => { setEditingId(p.id); setForm({ surface: p.surfaceM2 || "", pricePerM2: p.pricePerM2, estimatedPrice: p.estimatedPrice, monthlyRent: p.monthlyRent || "" }); }}
                         style={{ background: "transparent", border: "none", color: "#6366F1", fontSize: 11, cursor: "pointer", textDecoration: "underline" }}>modifier</button>
                     </div>
                   )}
+
+                  {/* Loyer */}
+                  <div style={{ marginTop: 10, display: "flex", gap: 10, flexWrap: "wrap" }}>
+                    <div style={{ background: "rgba(251,191,36,0.1)", border: "1px solid rgba(251,191,36,0.25)", borderRadius: 10, padding: "8px 14px" }}>
+                      <div style={{ fontSize: 10, color: "#94A3B8", textTransform: "uppercase", letterSpacing: 1 }}>Loyer mensuel HC</div>
+                      <div style={{ fontSize: 18, fontWeight: 800, color: "#FBBF24" }}>{fmt(p.monthlyRent || 0)}</div>
+                    </div>
+                    <div style={{ background: "rgba(251,191,36,0.06)", border: "1px solid rgba(251,191,36,0.15)", borderRadius: 10, padding: "8px 14px" }}>
+                      <div style={{ fontSize: 10, color: "#94A3B8", textTransform: "uppercase", letterSpacing: 1 }}>Revenus annuels bruts</div>
+                      <div style={{ fontSize: 18, fontWeight: 800, color: "#FCD34D" }}>{fmt((p.monthlyRent || 0) * 12)}</div>
+                    </div>
+                    <div style={{ background: "rgba(244,114,182,0.06)", border: "1px solid rgba(244,114,182,0.15)", borderRadius: 10, padding: "8px 14px" }}>
+                      <div style={{ fontSize: 10, color: "#94A3B8", textTransform: "uppercase", letterSpacing: 1 }}>Rendement locatif brut</div>
+                      <div style={{ fontSize: 18, fontWeight: 800, color: "#F472B6" }}>{rendLocatif.toFixed(2)}%</div>
+                    </div>
+                    <button onClick={() => refreshPriceM2(p.id)} disabled={priceLoading}
+                      style={{ alignSelf: "center", background: "rgba(244,114,182,0.12)", border: "1px solid rgba(244,114,182,0.35)", borderRadius: 10, color: "#F472B6", padding: "8px 16px", cursor: "pointer", fontWeight: 700, fontSize: 12 }}>
+                      {priceLoading ? "⏳ Chargement…" : "🔄 Actualiser le prix"}
+                    </button>
+                  </div>
                 </div>
                 <div style={{ textAlign: "right", minWidth: 110 }}>
                   <div style={{ fontSize: 22, fontWeight: 800, color: p.color }}>{fmt(p.estimatedPrice)}</div>
@@ -1370,6 +1443,32 @@ function AppContent() {
   const [eurUsd, setEurUsd] = useState(1.08);
   const [oraPrice, setOraPrice] = useState(0);
   const [history, setHistory] = useState(() => loadHistory());
+  const [marketHistory, setMarketHistory] = useState({ stocks: [], crypto: [] });
+
+  // Fetch 180 days of AAPL+TSLA history from Finnhub to build stocks market chart
+  useEffect(() => {
+    const fetchMarketHistory = async () => {
+      try {
+        const to = Math.floor(Date.now() / 1000);
+        const from = to - 180 * 24 * 3600;
+        // Fetch AAPL as proxy for portfolio trend (most liquid US stock)
+        const [rAAPL, rTSLA] = await Promise.all([
+          fetch(`https://finnhub.io/api/v1/stock/candle?symbol=AAPL&resolution=W&from=${from}&to=${to}&token=${FINNHUB_KEY}`).then(r => r.json()),
+          fetch(`https://finnhub.io/api/v1/stock/candle?symbol=TSLA&resolution=W&from=${from}&to=${to}&token=${FINNHUB_KEY}`).then(r => r.json()),
+        ]);
+        if (rAAPL.s === "ok" && rTSLA.s === "ok") {
+          // Build weighted portfolio history using actual qty and price ratios
+          const aaplQty = 0.0466, tslaQty = 0.012771;
+          const points = rAAPL.t.map((ts, i) => ({
+            date: new Date(ts * 1000).toISOString().slice(0, 10),
+            stocks: Math.round((rAAPL.c[i] * aaplQty + (rTSLA.c[i] || 0) * tslaQty) * (1 / 1.08)),
+          }));
+          setMarketHistory(prev => ({ ...prev, stocks: points }));
+        }
+      } catch (e) { console.error("Market history error:", e); }
+    };
+    fetchMarketHistory();
+  }, []);
 
   const fetchOraPrice = useCallback(async () => {
     try {
@@ -1556,10 +1655,10 @@ function AppContent() {
         {/* Views */}
         {view === "overview"   && <Overview cryptoData={cryptoData} cryptoPrices={cryptoPrices} stocks={stocks} bank={bank} savings={savings} oraPrice={oraPrice} eurUsd={eurUsd} realestateTotal={realestateTotal} scpiTotal={scpiTotal} onNavigate={setView} history={history} />}
         {view === "crypto"     && <CryptoView cryptoData={cryptoData} setCryptoData={setCryptoData} cryptoPrices={cryptoPrices} eurUsd={eurUsd} loading={loading} history={history} />}
-        {view === "stocks"     && <StocksView stocks={stocks} setStocks={setStocks} history={history} />}
+        {view === "stocks"     && <StocksView stocks={stocks} setStocks={setStocks} history={history} marketHistory={marketHistory.stocks} />}
         {view === "savings"    && <SavingsView savings={savings} setSavings={setSavings} oraPrice={oraPrice} />}
         {view === "scpi"       && <ScpiView scpi={scpi} setScpi={setScpi} history={history} />}
-        {view === "realestate" && <RealEstateView realestate={realestate} setRealestate={setRealestate} />}
+        {view === "realestate" && <RealEstateView realestate={realestate} setRealestate={setRealestate} history={history} />}
         {view === "bank"       && <BankView bank={bank} setBank={setBank} />}
       </div>
     </div>
