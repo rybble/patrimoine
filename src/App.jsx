@@ -1232,6 +1232,7 @@ function AppContent() {
 
   const fetchPrices = useCallback(async () => {
     setLoading(true);
+    let eurUsdRate = eurUsd; // fallback sur la valeur courante
     try {
       const codes = cryptoData.map(c => c.code);
 
@@ -1266,26 +1267,36 @@ function AppContent() {
         // ETH_EUR = eurData[0].rate, ETH_USD = pricesMap["ETH"].usd
         // 1 EUR = ETH_USD/ETH_EUR USD → eurUsd = ETH_USD / ETH_EUR
         const rate = pricesMap["ETH"].usd / eurData[0].rate;
+        eurUsdRate = rate;
         setEurUsd(rate); // ex: 1.08 (1 EUR vaut 1.08 USD)
       }
 
-      // 3. Fetch stock prices via Finnhub
+      // 3. Fetch stock prices via Finnhub (conversion USD→EUR pour les titres US)
       const stockSymbols = {
-        "BYD":    "HKEX:1211",
-        "CSPX":   "LSE:CSPX",
-        "APOLLO": null,
-        "EQTF":   null,
-        "AAPL":   "AAPL",
-        "TSLA":   "TSLA",
+        "BYD":    { finnSym: "HKEX:1211",  currency: "HKD" },
+        "CSPX":   { finnSym: "LSE:CSPX",   currency: "USD" }, // coté en USD sur LSE
+        "APOLLO": { finnSym: null,          currency: "EUR" },
+        "EQTF":   { finnSym: null,          currency: "EUR" },
+        "AAPL":   { finnSym: "AAPL",        currency: "USD" },
+        "TSLA":   { finnSym: "TSLA",        currency: "USD" },
       };
       const stockUpdates = {};
+      // On récupère d'abord le taux EUR/USD frais
+      const usdToEur = eurUsdRate > 0 ? (1 / eurUsdRate) : (1 / 1.08);
       await Promise.all(
-        Object.entries(stockSymbols).map(async ([sym, finnSym]) => {
+        Object.entries(stockSymbols).map(async ([sym, { finnSym, currency }]) => {
           if (!finnSym) return;
           try {
             const r = await fetch(`https://finnhub.io/api/v1/quote?symbol=${finnSym}&token=${FINNHUB_KEY}`);
             const q = await r.json();
-            if (q.c && q.c > 0) stockUpdates[sym] = q.c;
+            if (q.c && q.c > 0) {
+              // Convertir en EUR si nécessaire
+              if (currency === "USD") {
+                stockUpdates[sym] = q.c * usdToEur;
+              } else {
+                stockUpdates[sym] = q.c; // déjà en EUR ou on laisse tel quel
+              }
+            }
           } catch {}
         })
       );
