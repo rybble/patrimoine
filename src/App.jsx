@@ -1607,24 +1607,28 @@ function BudgetView() {
     if (!gsUrl) return;
     setGsLoading(true); setImportStatus("");
     try {
-      // Extract sheet ID and build export URL
-      const match = gsUrl.match(/\/d\/([a-zA-Z0-9_-]+)/);
-      if (!match) throw new Error("URL Google Sheets invalide");
-      const sheetId = match[1];
-      const gid = gsUrl.match(/gid=(\d+)/)?.[1] || "0";
-      // Use a CORS proxy to bypass browser restrictions
-      const exportUrl = `https://docs.google.com/spreadsheets/d/${sheetId}/export?format=csv&gid=${gid}`;
-      const proxyUrl  = `https://corsproxy.io/?${encodeURIComponent(exportUrl)}`;
+      let fetchUrl = gsUrl.trim();
+      // Cas /pub?output=csv → fetch direct (pas de reconstruction nécessaire)
+      if (!fetchUrl.includes("/pub")) {
+        const match = fetchUrl.match(/\/d\/([a-zA-Z0-9_-]+)/);
+        if (!match) throw new Error("URL non reconnue — utilise l'URL 'Publier sur le web'");
+        const gid = fetchUrl.match(/gid=(\d+)/)?.[1] || "0";
+        fetchUrl = `https://docs.google.com/spreadsheets/d/${match[1]}/pub?output=csv&gid=${gid}`;
+      }
+      if (!fetchUrl.includes("output=csv")) fetchUrl += (fetchUrl.includes("?") ? "&" : "?") + "output=csv";
 
-      const resp = await fetch(proxyUrl);
-      if (!resp.ok) throw new Error(`Erreur HTTP ${resp.status} — vérifie que la sheet est publique`);
+      const resp = await fetch(fetchUrl, { cache: "no-store" });
+      if (!resp.ok) throw new Error(`Erreur HTTP ${resp.status}`);
       const text = await resp.text();
+      if (text.includes("<!DOCTYPE") || text.includes("<html")) throw new Error("Google a renvoyé du HTML — la feuille n'est pas publiée en CSV");
       const parsed = parseBudgetCSV(text);
-      if (!parsed.length) throw new Error("Aucune donnée parsée — vérifie le format de ta sheet");
-      setTransactions(parsed);
+      if (!parsed.length) throw new Error("Aucune donnée parsée — vérifie le format de la feuille");
+      const newKeys = new Set(parsed.map(t => `${t.annee}-${t.mois}`));
+      const kept = transactions.filter(t => !newKeys.has(`${t.annee}-${t.mois}`));
+      setTransactions([...kept, ...parsed]);
       localStorage.setItem("patrimoine_gs_url", gsUrl);
-      setImportStatus(`✅ Google Sheets : ${parsed.length} transactions synchronisées`);
-      setTimeout(() => setImportStatus(""), 5000);
+      setImportStatus(`✅ ${parsed.length} transactions synchronisées depuis Google Sheets`);
+      setTimeout(() => setImportStatus(""), 6000);
     } catch (err) {
       setImportStatus(`❌ ${err.message}`);
     } finally { setGsLoading(false); }
@@ -1705,6 +1709,20 @@ function BudgetView() {
   const catMax     = catMonthly.length ? Math.max(...catMonthly.map(m=>m.total)) : 0;
   const catColor   = getColor(activeCatName, catStatEs);
 
+  // Données enrichies pour le graphique dual (montant + % du total sorties du mois)
+  const catMonthlyWithPct = catMonthly.map(m => {
+    // Calculer le total des sorties de ce mois-là (tous types confondus)
+    const [yr, mo] = m.key.split("-").map(Number);
+    const totalSortieMois = transactions.filter(t => t.annee===yr && t.mois===mo && t.es===catStatEs).reduce((s,t)=>s+t.montant, 0);
+    return { ...m, pct: totalSortieMois > 0 ? (m.total / totalSortieMois * 100) : 0 };
+  });
+  // Totaux par année pour comparaison
+  const catByYear = (() => {
+    const map = {};
+    catTxs.forEach(t => { map[t.annee] = (map[t.annee]||0) + t.montant; });
+    return Object.entries(map).map(([year, total]) => ({ year: parseInt(year), total })).sort((a,b)=>a.year-b.year);
+  })();
+
   // ── Shared styles ──────────────────────────────────────────────────────────
   const inpS = { background:"#1E293B", border:"1px solid #334155", borderRadius:8, padding:"7px 12px", color:"#F1F5F9", fontSize:13, width:"100%" };
   const lblS = { fontSize:11, color:"#64748B", marginBottom:4 };
@@ -1718,7 +1736,7 @@ function BudgetView() {
 
       {/* ── Nav tabs + year selector ── */}
       <div style={{ display:"flex", gap:6, marginBottom:18, flexWrap:"wrap", alignItems:"center" }}>
-        {[["overview","📊 Synthèse"],["detail","📋 Détail"],["categories","🏷 Catégories"],["add","➕ Ajouter"],["transactions","📝 Transactions"],["sync","🔗 Sources"]].map(([k,l]) => (
+        {[["overview","📊 Synthèse"],["detail","📋 Détail"],["catstat","🔬 Stats catégorie"],["categories","🏷 Catégories"],["add","➕ Ajouter"],["transactions","📝 Transactions"],["sync","🔗 Sources"]].map(([k,l]) => (
           <Pill key={k} label={l} active={activeTab===k} onClick={() => setActiveTab(k)} />
         ))}
         <div style={{ marginLeft:"auto", display:"flex", gap:6 }}>
@@ -1916,10 +1934,10 @@ function BudgetView() {
       {/* ══════════════════════════════════════════════════════════════════════
           TAB : STATS PAR CATÉGORIE
       ══════════════════════════════════════════════════════════════════════ */}
-      {(activeTab === "catstat" || activeTab === "catstat") && activeTab === "catstat" && (
+      {activeTab === "catstat" && (
         <div>
-          {/* Header filtre */}
-          <Card style={{ padding:"14px 20px", marginBottom:14 }}>
+          {/* ── Filtre entête ── */}
+          <Card style={{ padding:"14px 18px", marginBottom:14 }}>
             <div style={{ display:"flex", gap:12, flexWrap:"wrap", alignItems:"flex-end" }}>
               <div>
                 <div style={lblS}>Type</div>
@@ -1928,64 +1946,112 @@ function BudgetView() {
                   <option value="Entrée">📥 Entrées</option>
                 </select>
               </div>
-              <div style={{ flex:1, minWidth:200 }}>
+              <div style={{ flex:1, minWidth:220 }}>
                 <div style={lblS}>Catégorie</div>
                 <select value={activeCatName} onChange={e=>setCatStatName(e.target.value)} style={inpS}>
                   {allCatNames.map(n => <option key={n} value={n}>{n}</option>)}
                 </select>
               </div>
+              {activeCatName && (
+                <div style={{ display:"flex", gap:16, padding:"8px 16px", background:"rgba(255,255,255,0.04)", borderRadius:10, border:"1px solid rgba(255,255,255,0.08)", alignItems:"center" }}>
+                  <div style={{ display:"flex", alignItems:"center", gap:6 }}>
+                    <div style={{ width:10, height:10, borderRadius:"50%", background:catColor }} />
+                    <span style={{ fontSize:12, color:"#94A3B8" }}>Total</span>
+                    <span style={{ fontSize:14, fontWeight:700, color:catColor }}>{fmt(catTotal)}</span>
+                  </div>
+                  <div style={{ width:1, height:20, background:"rgba(255,255,255,0.1)" }} />
+                  <div>
+                    <span style={{ fontSize:12, color:"#94A3B8" }}>Moy/mois </span>
+                    <span style={{ fontSize:14, fontWeight:700, color:"#F1F5F9" }}>{fmt(catAvgMo)}</span>
+                  </div>
+                  <div style={{ width:1, height:20, background:"rgba(255,255,255,0.1)" }} />
+                  <div>
+                    <span style={{ fontSize:12, color:"#94A3B8" }}>% budget sortie </span>
+                    <span style={{ fontSize:14, fontWeight:700, color:"#FBBF24" }}>
+                      {totalS_yr > 0 ? (catTotal/totalS_yr*100).toFixed(1) : "—"}%
+                    </span>
+                  </div>
+                </div>
+              )}
             </div>
           </Card>
 
           {activeCatName && (
             <>
-              {/* KPIs catégorie */}
+              {/* KPIs */}
               <div style={{ display:"flex", gap:10, flexWrap:"wrap", marginBottom:14 }}>
-                <StatCard label="Total cumulé" value={fmt(catTotal)} sub={`${catTxs.length} transactions`} color={catColor} icon="💳" />
-                <StatCard label="Moyenne mensuelle" value={fmt(catAvgMo)} sub={`sur ${catMonthly.length} mois actifs`} color={catColor} icon="📅" />
-                <StatCard label="Mois le plus élevé" value={fmt(catMax)} sub={catMonthly.find(m=>m.total===catMax)?.label || ""} color={catColor} icon="📈" />
-                <StatCard label="Nb transactions" value={catTxs.length} sub={`Moy. ${(catTxs.length/Math.max(catMonthly.length,1)).toFixed(1)}/mois`} color={catColor} icon="🧾" />
+                <StatCard label="Total cumulé" value={fmt(catTotal)} sub={`${catTxs.length} transaction${catTxs.length>1?"s":""}`} color={catColor} icon="💳" />
+                <StatCard label="Moy. mensuelle" value={fmt(catAvgMo)} sub={`sur ${catMonthly.length} mois actifs`} color={catColor} icon="📅" />
+                <StatCard label="Mois max" value={fmt(catMax)} sub={catMonthly.find(m=>m.total===catMax)?.label||""} color={catColor} icon="📈" />
+                <StatCard label="Part du budget" value={`${totalS_yr>0?(catTotal/totalS_yr*100).toFixed(1):"0"}%`} sub="des sorties annuelles" color="#FBBF24" icon="🎯" />
               </div>
 
-              {/* Graphique évolution catégorie */}
+              {/* Graphique dual : valeur mensuelle + % budget global */}
               <Card style={{ marginBottom:14, padding:"16px 20px" }}>
-                <div style={{ fontSize:13, fontWeight:600, color:"#F1F5F9", marginBottom:12 }}>Évolution mensuelle — {activeCatName}</div>
-                <ResponsiveContainer width="100%" height={180}>
-                  <AreaChart data={catMonthly}>
-                    <defs>
-                      <linearGradient id="catGrad" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="5%" stopColor={catColor} stopOpacity={0.3}/>
-                        <stop offset="95%" stopColor={catColor} stopOpacity={0}/>
-                      </linearGradient>
-                    </defs>
+                <div style={{ fontSize:13, fontWeight:600, color:"#F1F5F9", marginBottom:4 }}>
+                  Évolution mensuelle — {activeCatName}
+                </div>
+                <div style={{ fontSize:11, color:"#64748B", marginBottom:12, display:"flex", gap:16 }}>
+                  <span><span style={{ color:catColor }}>━━</span> Montant mensuel (€)</span>
+                  <span><span style={{ color:"#FBBF24" }}>╌╌</span> % des sorties du mois</span>
+                </div>
+                <ResponsiveContainer width="100%" height={220}>
+                  <LineChart data={catMonthlyWithPct} margin={{ right:40 }}>
                     <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
                     <XAxis dataKey="label" tick={{ fill:"#64748B", fontSize:10 }} axisLine={false} tickLine={false} />
-                    <YAxis tick={{ fill:"#64748B", fontSize:10 }} axisLine={false} tickLine={false} tickFormatter={v=>`${v.toFixed(0)}€`} />
-                    <Tooltip contentStyle={{ background:"#1E293B", border:"1px solid #334155", borderRadius:8, fontSize:12 }} formatter={v=>[fmt(v), activeCatName]} />
-                    <Area type="monotone" dataKey="total" stroke={catColor} strokeWidth={2} fill="url(#catGrad)" dot={{ fill:catColor, r:3 }} />
-                  </AreaChart>
+                    <YAxis yAxisId="left" tick={{ fill:"#64748B", fontSize:10 }} axisLine={false} tickLine={false}
+                      tickFormatter={v=>`${v.toFixed(0)}€`} />
+                    <YAxis yAxisId="right" orientation="right" tick={{ fill:"#64748B", fontSize:10 }} axisLine={false} tickLine={false}
+                      tickFormatter={v=>`${v.toFixed(0)}%`} domain={[0, 100]} />
+                    <Tooltip contentStyle={{ background:"#1E293B", border:"1px solid #334155", borderRadius:8, fontSize:12 }}
+                      formatter={(v,n) => n==="pct" ? [`${v.toFixed(1)}%`, "% sorties mois"] : [fmt(v), "Montant"]} />
+                    <Line yAxisId="left" type="monotone" dataKey="total" stroke={catColor} strokeWidth={2.5}
+                      dot={{ fill:catColor, r:4, strokeWidth:0 }} activeDot={{ r:6 }} name="montant" />
+                    <Line yAxisId="right" type="monotone" dataKey="pct" stroke="#FBBF24" strokeWidth={1.5}
+                      strokeDasharray="5 3" dot={{ fill:"#FBBF24", r:3, strokeWidth:0 }} activeDot={{ r:5 }} name="pct" />
+                  </LineChart>
                 </ResponsiveContainer>
               </Card>
 
-              {/* Liste des transactions de cette catégorie */}
+              {/* Répartition par année */}
+              {catByYear.length > 1 && (
+                <Card style={{ marginBottom:14, padding:"16px 20px" }}>
+                  <div style={{ fontSize:13, fontWeight:600, color:"#F1F5F9", marginBottom:12 }}>Comparaison annuelle</div>
+                  <ResponsiveContainer width="100%" height={140}>
+                    <BarChart data={catByYear} barCategoryGap="35%">
+                      <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
+                      <XAxis dataKey="year" tick={{ fill:"#64748B", fontSize:11 }} axisLine={false} tickLine={false} />
+                      <YAxis tick={{ fill:"#64748B", fontSize:10 }} axisLine={false} tickLine={false} tickFormatter={v=>`${(v/1000).toFixed(1)}k`} />
+                      <Tooltip contentStyle={{ background:"#1E293B", border:"1px solid #334155", borderRadius:8, fontSize:12 }} formatter={v=>[fmt(v)]} />
+                      <Bar dataKey="total" fill={catColor} radius={[4,4,0,0]} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </Card>
+              )}
+
+              {/* Détail des transactions */}
               <Card style={{ padding:0, overflow:"hidden" }}>
-                <div style={{ padding:"12px 18px", borderBottom:"1px solid rgba(255,255,255,0.06)", fontSize:13, fontWeight:600, color:"#F1F5F9" }}>
-                  Toutes les transactions — {activeCatName}
+                <div style={{ padding:"12px 18px", borderBottom:"1px solid rgba(255,255,255,0.06)", fontSize:13, fontWeight:600, color:"#F1F5F9", display:"flex", justifyContent:"space-between" }}>
+                  <span>Toutes les transactions — {activeCatName}</span>
+                  <span style={{ color:"#64748B", fontWeight:400 }}>{catTxs.length} entrées</span>
                 </div>
-                {catTxs.sort((a,b)=>b.annee!==a.annee?b.annee-a.annee:b.mois-a.mois).slice(0,50).map((tx,i) => (
-                  <div key={tx.id} style={{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"9px 18px", borderBottom:"1px solid rgba(255,255,255,0.04)", background:i%2===0?"transparent":"rgba(255,255,255,0.02)" }}>
-                    <div style={{ display:"flex", gap:12, alignItems:"center" }}>
-                      <span style={{ fontSize:12, color:"#64748B", minWidth:60 }}>{MOIS_FR[tx.mois-1]} {tx.annee}</span>
-                      {tx.note && <span style={{ fontSize:12, color:"#475569" }}>{tx.note}</span>}
+                <div style={{ maxHeight:320, overflowY:"auto" }}>
+                  {[...catTxs].sort((a,b)=>b.annee!==a.annee?b.annee-a.annee:b.mois-a.mois).map((tx,i) => (
+                    <div key={tx.id} style={{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"9px 18px", borderBottom:"1px solid rgba(255,255,255,0.04)", background:i%2===0?"transparent":"rgba(255,255,255,0.02)" }}>
+                      <div style={{ display:"flex", gap:12, alignItems:"center" }}>
+                        <span style={{ fontSize:12, color:"#64748B", minWidth:72 }}>{MOIS_FR[tx.mois-1]} {tx.annee}</span>
+                        {tx.note && <span style={{ fontSize:12, color:"#475569", fontStyle:"italic" }}>{tx.note}</span>}
+                      </div>
+                      <span style={{ fontSize:13, fontWeight:700, color:catColor }}>{fmt(tx.montant)}</span>
                     </div>
-                    <span style={{ fontSize:13, fontWeight:700, color:catColor }}>{fmt(tx.montant)}</span>
-                  </div>
-                ))}
+                  ))}
+                </div>
               </Card>
             </>
           )}
         </div>
       )}
+
 
       {/* ══════════════════════════════════════════════════════════════════════
           TAB : GESTION DES CATÉGORIES
