@@ -1518,7 +1518,10 @@ function BudgetView() {
   const [selectedYear,  setSelectedYear]  = useState(null);
   const [selectedMonth, setSelectedMonth] = useState(null);
   const [importStatus,  setImportStatus]  = useState("");
+  const GS_DEFAULT_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vQXr9GNH7kNCitO5gHkrIQ0xt2zszMTkuZlNa0jInwAgQ6ip1viQ18HE2AQo6u3SEQ65K7XzP1VZDiM/pub?output=csv";
+  const [gsMode,        setGsMode]        = useState(localStorage.getItem("patrimoine_gs_mode") || "default"); // "default" | "custom"
   const [gsUrl,         setGsUrl]         = useState(localStorage.getItem("patrimoine_gs_url") || "");
+  const gsActiveUrl = gsMode === "default" ? GS_DEFAULT_URL : gsUrl;
   const [gsLoading,     setGsLoading]     = useState(false);
   const [activeTab,     setActiveTab]     = useState("overview");
 
@@ -1604,10 +1607,10 @@ function BudgetView() {
 
   // ── Google Sheets ──────────────────────────────────────────────────────────
   const syncGSheets = async () => {
-    if (!gsUrl) return;
+    if (!gsActiveUrl) return;
     setGsLoading(true); setImportStatus("");
     try {
-      let fetchUrl = gsUrl.trim();
+      let fetchUrl = gsActiveUrl.trim();
       // Cas /pub?output=csv → fetch direct (pas de reconstruction nécessaire)
       if (!fetchUrl.includes("/pub")) {
         const match = fetchUrl.match(/\/d\/([a-zA-Z0-9_-]+)/);
@@ -1626,7 +1629,8 @@ function BudgetView() {
       const newKeys = new Set(parsed.map(t => `${t.annee}-${t.mois}`));
       const kept = transactions.filter(t => !newKeys.has(`${t.annee}-${t.mois}`));
       setTransactions([...kept, ...parsed]);
-      localStorage.setItem("patrimoine_gs_url", gsUrl);
+      if (gsMode === "custom") localStorage.setItem("patrimoine_gs_url", gsUrl);
+      localStorage.setItem("patrimoine_gs_mode", gsMode);
       setImportStatus(`✅ ${parsed.length} transactions synchronisées depuis Google Sheets`);
       setTimeout(() => setImportStatus(""), 6000);
     } catch (err) {
@@ -2341,21 +2345,60 @@ function BudgetView() {
           </Card>
 
           <Card style={{ padding:20 }}>
-            <div style={{ fontSize:14, fontWeight:700, color:"#F1F5F9", marginBottom:6 }}>🔗 Google Sheets (sync live)</div>
-            <div style={{ fontSize:12, color:"#64748B", marginBottom:12 }}>
-              <strong style={{color:"#F1F5F9"}}>1.</strong> Ouvre ta Google Sheet → <strong style={{color:"#F1F5F9"}}>Fichier → Partager → Publier sur le web → Feuille → CSV → Publier</strong><br/>
-              <strong style={{color:"#F1F5F9"}}>2.</strong> Copie l'URL de publication (format <code style={{background:"rgba(255,255,255,0.06)",padding:"1px 5px",borderRadius:4}}>docs.google.com/spreadsheets/d/…/pub?…</code>)<br/>
-              <strong style={{color:"#F1F5F9"}}>3.</strong> Colle-la ci-dessous et clique Synchroniser.
-            </div>
-            <div style={{ display:"flex", gap:10, marginBottom:10 }}>
-              <input value={gsUrl} onChange={e=>setGsUrl(e.target.value)} placeholder="https://docs.google.com/spreadsheets/d/…/pub?output=csv"
-                style={{ flex:1, background:"#1E293B", border:"1px solid #334155", borderRadius:8, padding:"8px 12px", color:"#F1F5F9", fontSize:13 }} />
-              <button onClick={syncGSheets} disabled={!gsUrl||gsLoading}
-                style={{ background:"#4F46E5", border:"none", borderRadius:8, color:"#fff", padding:"8px 20px", cursor:"pointer", fontWeight:700, fontSize:13, opacity:(!gsUrl||gsLoading)?0.6:1, whiteSpace:"nowrap" }}>
-                {gsLoading ? "⏳ Sync…" : "🔄 Synchroniser"}
+            <div style={{ fontSize:14, fontWeight:700, color:"#F1F5F9", marginBottom:14 }}>🔗 Google Sheets (sync live)</div>
+
+            {/* Choix de la source */}
+            <div style={{ display:"flex", gap:8, marginBottom:16 }}>
+              <button onClick={()=>{ setGsMode("default"); localStorage.setItem("patrimoine_gs_mode","default"); }}
+                style={{ flex:1, padding:"10px 14px", borderRadius:10, cursor:"pointer", fontWeight:600, fontSize:13, border:"none",
+                  background: gsMode==="default" ? "linear-gradient(135deg,#6366F1,#4F46E5)" : "rgba(255,255,255,0.04)",
+                  color: gsMode==="default" ? "#fff" : "#64748B",
+                  outline: gsMode==="default" ? "none" : "1px solid rgba(255,255,255,0.08)" }}>
+                📌 Lien par défaut
+              </button>
+              <button onClick={()=>{ setGsMode("custom"); localStorage.setItem("patrimoine_gs_mode","custom"); }}
+                style={{ flex:1, padding:"10px 14px", borderRadius:10, cursor:"pointer", fontWeight:600, fontSize:13, border:"none",
+                  background: gsMode==="custom" ? "linear-gradient(135deg,#6366F1,#4F46E5)" : "rgba(255,255,255,0.04)",
+                  color: gsMode==="custom" ? "#fff" : "#64748B",
+                  outline: gsMode==="custom" ? "none" : "1px solid rgba(255,255,255,0.08)" }}>
+                ✏️ Lien personnalisé
               </button>
             </div>
-            {gsUrl && <div style={{ fontSize:11, color:"#475569" }}>URL enregistrée ✓</div>}
+
+            {/* Lien par défaut */}
+            {gsMode === "default" && (
+              <div style={{ marginBottom:14 }}>
+                <div style={{ fontSize:12, color:"#64748B", marginBottom:8 }}>Feuille configurée :</div>
+                <div style={{ display:"flex", alignItems:"center", gap:10, padding:"10px 14px", background:"rgba(99,102,241,0.08)", border:"1px solid rgba(99,102,241,0.2)", borderRadius:10 }}>
+                  <span style={{ fontSize:18 }}>📊</span>
+                  <div style={{ flex:1, overflow:"hidden" }}>
+                    <div style={{ fontSize:13, fontWeight:600, color:"#F1F5F9" }}>Budget personnel</div>
+                    <div style={{ fontSize:10, color:"#475569", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
+                      {GS_DEFAULT_URL.slice(0, 60)}…
+                    </div>
+                  </div>
+                  <span style={{ fontSize:11, color:"#34D399", fontWeight:600, flexShrink:0 }}>✓ Prêt</span>
+                </div>
+              </div>
+            )}
+
+            {/* Lien personnalisé */}
+            {gsMode === "custom" && (
+              <div style={{ marginBottom:14 }}>
+                <div style={{ fontSize:12, color:"#64748B", marginBottom:6 }}>
+                  <strong style={{color:"#F1F5F9"}}>Fichier → Partager → Publier sur le web → CSV</strong> puis colle l'URL :
+                </div>
+                <input value={gsUrl} onChange={e=>setGsUrl(e.target.value)}
+                  placeholder="https://docs.google.com/spreadsheets/d/…/pub?output=csv"
+                  style={{ width:"100%", boxSizing:"border-box", background:"#1E293B", border:"1px solid #334155", borderRadius:8, padding:"9px 12px", color:"#F1F5F9", fontSize:13, marginBottom:6 }} />
+                {gsUrl && <div style={{ fontSize:11, color:"#475569" }}>URL personnalisée enregistrée ✓</div>}
+              </div>
+            )}
+
+            <button onClick={syncGSheets} disabled={!gsActiveUrl || gsLoading}
+              style={{ width:"100%", background:"linear-gradient(135deg,#059669,#34D399)", border:"none", borderRadius:10, color:"#fff", padding:"11px", cursor:"pointer", fontWeight:700, fontSize:14, opacity:(!gsActiveUrl||gsLoading)?0.6:1 }}>
+              {gsLoading ? "⏳ Synchronisation…" : "🔄 Synchroniser depuis Google Sheets"}
+            </button>
           </Card>
 
           <Card style={{ padding:16, background:"rgba(99,102,241,0.05)", border:"1px solid rgba(99,102,241,0.2)" }}>
@@ -2380,72 +2423,271 @@ function BudgetView() {
 
 // ─── APP ──────────────────────────────────────────────────────────────────────
 // ─── MOT DE PASSE ─────────────────────────────────────────────────────────────
-const APP_PASSWORD_HASH = "8e5d3f2a1b9c6e4d7f0a2b5c8e1d4f7a"; // md5 de ton mot de passe
+const PWD_KEY      = "patrimoine_pwd_hash";
+const SQ_KEY       = "patrimoine_sq";      // { question, answerHash }
+const AUTH_SESSION = "patrimoine_auth_v2";
 
 function hashSimple(str) {
-  // Simple hash non-cryptographique — suffisant pour usage personnel
   let hash = 0;
   for (let i = 0; i < str.length; i++) {
-    const char = str.charCodeAt(i);
-    hash = ((hash << 5) - hash) + char;
+    const c = str.charCodeAt(i);
+    hash = ((hash << 5) - hash) + c;
     hash = hash & hash;
   }
   return Math.abs(hash).toString(16).padStart(8, "0");
 }
 
-// Change ce mot de passe ici :
-const MOT_DE_PASSE = "patrimoine2026";
+// Mot de passe initial codé en dur — sera écrasé par localStorage au 1er changement
+const DEFAULT_PWD = "patrimoine2026";
 
+function getStoredPwdHash() {
+  return localStorage.getItem(PWD_KEY) || hashSimple(DEFAULT_PWD);
+}
+function checkPassword(pwd) {
+  return hashSimple(pwd) === getStoredPwdHash();
+}
+function savePassword(pwd) {
+  localStorage.setItem(PWD_KEY, hashSimple(pwd));
+  sessionStorage.setItem(AUTH_SESSION, hashSimple(pwd));
+}
+
+function getSecretQuestion() {
+  try { return JSON.parse(localStorage.getItem(SQ_KEY)); } catch { return null; }
+}
+function saveSecretQuestion(question, answer) {
+  localStorage.setItem(SQ_KEY, JSON.stringify({ question, answerHash: hashSimple(answer.trim().toLowerCase()) }));
+}
+function checkSecretAnswer(answer) {
+  const sq = getSecretQuestion();
+  if (!sq) return false;
+  return hashSimple(answer.trim().toLowerCase()) === sq.answerHash;
+}
+
+// ── LoginScreen ────────────────────────────────────────────────────────────────
 function LoginScreen({ onLogin }) {
-  const [pwd, setPwd] = useState("");
-  const [error, setError] = useState(false);
-  const [shake, setShake] = useState(false);
+  const [mode, setMode]       = useState("login"); // login | change | forgot | setup_sq
+  const [pwd, setPwd]         = useState("");
+  const [oldPwd, setOldPwd]   = useState("");
+  const [newPwd, setNewPwd]   = useState("");
+  const [newPwd2, setNewPwd2] = useState("");
+  const [sqAnswer, setSqAnswer] = useState("");
+  const [sqNew, setSqNew]     = useState("");
+  const [sqAnsNew, setSqAnsNew] = useState("");
+  const [error, setError]     = useState("");
+  const [success, setSuccess] = useState("");
+  const [shake, setShake]     = useState(false);
+
+  const sq = getSecretQuestion();
+
+  const doShake = () => { setShake(true); setTimeout(() => setShake(false), 450); };
+  const showError = (msg) => { setError(msg); doShake(); setTimeout(() => setError(""), 3000); };
+  const showSuccess = (msg) => { setSuccess(msg); setTimeout(() => setSuccess(""), 3000); };
 
   const tryLogin = () => {
-    if (pwd === MOT_DE_PASSE) {
-      sessionStorage.setItem("patrimoine_auth", hashSimple(MOT_DE_PASSE));
-      onLogin();
-    } else {
-      setError(true);
-      setShake(true);
-      setTimeout(() => setShake(false), 500);
-      setTimeout(() => setError(false), 2000);
-    }
+    if (!checkPassword(pwd)) { showError("Mot de passe incorrect"); return; }
+    sessionStorage.setItem(AUTH_SESSION, getStoredPwdHash());
+    onLogin();
   };
 
+  const tryChangePassword = () => {
+    if (!checkPassword(oldPwd)) { showError("Ancien mot de passe incorrect"); return; }
+    if (newPwd.length < 6)      { showError("Nouveau mot de passe trop court (min. 6 caractères)"); return; }
+    if (newPwd !== newPwd2)     { showError("Les deux mots de passe ne correspondent pas"); return; }
+    savePassword(newPwd);
+    showSuccess("✅ Mot de passe changé ! Redirection…");
+    setTimeout(() => onLogin(), 1500);
+  };
+
+  const tryForgot = () => {
+    if (!sq) { showError("Aucune question secrète configurée"); return; }
+    if (!checkSecretAnswer(sqAnswer)) { showError("Réponse incorrecte"); return; }
+    // Unlock — let user set new password
+    setMode("reset_after_forgot");
+    setError(""); setSqAnswer("");
+  };
+
+  const tryResetAfterForgot = () => {
+    if (newPwd.length < 6)  { showError("Mot de passe trop court (min. 6 caractères)"); return; }
+    if (newPwd !== newPwd2) { showError("Les mots de passe ne correspondent pas"); return; }
+    savePassword(newPwd);
+    showSuccess("✅ Mot de passe réinitialisé ! Redirection…");
+    setTimeout(() => onLogin(), 1500);
+  };
+
+  const trySetupSQ = () => {
+    if (!checkPassword(oldPwd))  { showError("Mot de passe actuel incorrect"); return; }
+    if (!sqNew.trim())           { showError("Saisis une question secrète"); return; }
+    if (sqAnsNew.trim().length < 2) { showError("Réponse trop courte"); return; }
+    saveSecretQuestion(sqNew.trim(), sqAnsNew.trim());
+    showSuccess("✅ Question secrète enregistrée !");
+    setTimeout(() => setMode("login"), 1500);
+  };
+
+  const inp = (extra = {}) => ({
+    style: {
+      width:"100%", boxSizing:"border-box", background:"#1E293B",
+      border:`1px solid ${error ? "#F87171" : "#334155"}`, borderRadius:10,
+      padding:"11px 14px", color:"#F1F5F9", fontSize:14, outline:"none",
+      ...extra
+    }
+  });
+  const lbl = { fontSize:12, color:"#64748B", marginBottom:5, display:"block" };
+  const field = (label, el) => (
+    <div style={{ marginBottom:14 }}>
+      <span style={lbl}>{label}</span>
+      {el}
+    </div>
+  );
+
   return (
-    <div style={{ minHeight: "100vh", background: "#0B1120", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "'DM Sans', sans-serif" }}>
-      <style>{`@keyframes shake { 0%,100%{transform:translateX(0)} 20%{transform:translateX(-8px)} 40%{transform:translateX(8px)} 60%{transform:translateX(-8px)} 80%{transform:translateX(8px)} }`}</style>
-      <div style={{ position: "fixed", inset: 0, zIndex: 0, pointerEvents: "none" }}>
-        <div style={{ position: "absolute", top: -200, right: -100, width: 600, height: 600, borderRadius: "50%", background: "radial-gradient(circle, rgba(99,102,241,0.12) 0%, transparent 70%)" }} />
-        <div style={{ position: "absolute", bottom: -100, left: -100, width: 400, height: 400, borderRadius: "50%", background: "radial-gradient(circle, rgba(52,211,153,0.08) 0%, transparent 70%)" }} />
+    <div style={{ minHeight:"100vh", background:"#0B1120", display:"flex", alignItems:"center", justifyContent:"center", fontFamily:"'DM Sans', sans-serif" }}>
+      <style>{`
+        @keyframes shake { 0%,100%{transform:translateX(0)} 20%{transform:translateX(-8px)} 40%{transform:translateX(8px)} 60%{transform:translateX(-8px)} 80%{transform:translateX(8px)} }
+        @keyframes fadeIn { from{opacity:0;transform:translateY(10px)} to{opacity:1;transform:translateY(0)} }
+      `}</style>
+      {/* Bg glow */}
+      <div style={{ position:"fixed", inset:0, zIndex:0, pointerEvents:"none" }}>
+        <div style={{ position:"absolute", top:-200, right:-100, width:600, height:600, borderRadius:"50%", background:"radial-gradient(circle, rgba(99,102,241,0.12) 0%, transparent 70%)" }} />
+        <div style={{ position:"absolute", bottom:-100, left:-100, width:400, height:400, borderRadius:"50%", background:"radial-gradient(circle, rgba(52,211,153,0.08) 0%, transparent 70%)" }} />
       </div>
-      <div style={{ position: "relative", zIndex: 1, width: 340, padding: 36, background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 24, backdropFilter: "blur(12px)", animation: shake ? "shake 0.4s ease" : "none" }}>
-        <div style={{ textAlign: "center", marginBottom: 28 }}>
-          <div style={{ fontFamily: "'Syne', sans-serif", fontSize: 28, fontWeight: 800, background: "linear-gradient(135deg, #818CF8, #34D399)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent", marginBottom: 6 }}>
+
+      <div style={{ position:"relative", zIndex:1, width:360, padding:36,
+        background:"rgba(255,255,255,0.04)", border:"1px solid rgba(255,255,255,0.08)",
+        borderRadius:24, backdropFilter:"blur(12px)",
+        animation: shake ? "shake 0.4s ease" : "fadeIn 0.3s ease" }}>
+
+        {/* Logo */}
+        <div style={{ textAlign:"center", marginBottom:24 }}>
+          <div style={{ fontFamily:"'Syne', sans-serif", fontSize:28, fontWeight:800, background:"linear-gradient(135deg, #818CF8, #34D399)", WebkitBackgroundClip:"text", WebkitTextFillColor:"transparent", marginBottom:4 }}>
             Patrimoine
           </div>
-          <div style={{ fontSize: 13, color: "#64748B" }}>Accès sécurisé · Usage privé</div>
+          <div style={{ fontSize:12, color:"#64748B" }}>
+            {mode==="login"             && "Accès sécurisé · Usage privé"}
+            {mode==="change"            && "Changer le mot de passe"}
+            {mode==="forgot"            && "Mot de passe oublié"}
+            {mode==="reset_after_forgot"&& "Définir un nouveau mot de passe"}
+            {mode==="setup_sq"          && "Configurer la question secrète"}
+          </div>
         </div>
-        <div style={{ marginBottom: 16 }}>
-          <div style={{ fontSize: 12, color: "#64748B", marginBottom: 6 }}>Mot de passe</div>
-          <input
-            type="password"
-            value={pwd}
-            onChange={e => { setPwd(e.target.value); setError(false); }}
-            onKeyDown={e => e.key === "Enter" && tryLogin()}
-            autoFocus
-            placeholder="••••••••••••"
-            style={{ width: "100%", boxSizing: "border-box", background: error ? "rgba(248,113,113,0.1)" : "#1E293B", border: error ? "1px solid #F87171" : "1px solid #334155", borderRadius: "10px", padding: "11px 14px", color: "#F1F5F9", fontSize: 15, outline: "none", transition: "border-color 0.2s" }}
-          />
-          {error && <div style={{ fontSize: 12, color: "#F87171", marginTop: 6 }}>Mot de passe incorrect</div>}
-        </div>
-        <button onClick={tryLogin} style={{ width: "100%", background: "linear-gradient(135deg, #6366F1, #4F46E5)", border: "none", borderRadius: "10px", color: "#fff", padding: "12px", cursor: "pointer", fontWeight: 700, fontSize: 15 }}>
-          Accéder →
-        </button>
-        <div style={{ marginTop: 20, fontSize: 11, color: "#64748B", textAlign: "center" }}>
-          🔒 Données stockées localement dans votre navigateur
-        </div>
+
+        {/* Messages */}
+        {error   && <div style={{ marginBottom:12, padding:"8px 12px", borderRadius:8, background:"rgba(248,113,113,0.1)", border:"1px solid rgba(248,113,113,0.3)", color:"#F87171", fontSize:13 }}>{error}</div>}
+        {success && <div style={{ marginBottom:12, padding:"8px 12px", borderRadius:8, background:"rgba(52,211,153,0.1)", border:"1px solid rgba(52,211,153,0.3)", color:"#34D399", fontSize:13 }}>{success}</div>}
+
+        {/* ── MODE : LOGIN ── */}
+        {mode === "login" && (
+          <div>
+            {field("Mot de passe",
+              <input type="password" value={pwd} onChange={e=>{setPwd(e.target.value);setError("");}}
+                onKeyDown={e=>e.key==="Enter"&&tryLogin()} autoFocus placeholder="••••••••••••" {...inp()} />
+            )}
+            <button onClick={tryLogin} style={{ width:"100%", background:"linear-gradient(135deg,#6366F1,#4F46E5)", border:"none", borderRadius:10, color:"#fff", padding:"12px", cursor:"pointer", fontWeight:700, fontSize:15, marginBottom:16 }}>
+              Accéder →
+            </button>
+            <div style={{ display:"flex", justifyContent:"space-between", gap:8 }}>
+              <button onClick={()=>{setMode("change");setError("");}} style={{ flex:1, background:"transparent", border:"1px solid rgba(255,255,255,0.1)", borderRadius:8, color:"#64748B", padding:"8px", cursor:"pointer", fontSize:12 }}>
+                🔑 Changer le mdp
+              </button>
+              {sq ? (
+                <button onClick={()=>{setMode("forgot");setError("");}} style={{ flex:1, background:"transparent", border:"1px solid rgba(255,255,255,0.1)", borderRadius:8, color:"#64748B", padding:"8px", cursor:"pointer", fontSize:12 }}>
+                  ❓ Mot de passe oublié
+                </button>
+              ) : (
+                <button onClick={()=>{setMode("setup_sq");setError("");}} style={{ flex:1, background:"transparent", border:"1px solid rgba(99,102,241,0.3)", borderRadius:8, color:"#818CF8", padding:"8px", cursor:"pointer", fontSize:12 }}>
+                  🛡 Configurer récupération
+                </button>
+              )}
+            </div>
+            <div style={{ marginTop:16, fontSize:11, color:"#334155", textAlign:"center" }}>🔒 Données stockées localement</div>
+          </div>
+        )}
+
+        {/* ── MODE : CHANGER ── */}
+        {mode === "change" && (
+          <div>
+            {field("Mot de passe actuel",
+              <input type="password" value={oldPwd} onChange={e=>{setOldPwd(e.target.value);setError("");}} autoFocus placeholder="••••••••••••" {...inp()} />
+            )}
+            {field("Nouveau mot de passe",
+              <input type="password" value={newPwd} onChange={e=>{setNewPwd(e.target.value);setError("");}} placeholder="min. 6 caractères" {...inp()} />
+            )}
+            {field("Confirmer le nouveau mot de passe",
+              <input type="password" value={newPwd2} onChange={e=>{setNewPwd2(e.target.value);setError("");}} placeholder="••••••••••••"
+                onKeyDown={e=>e.key==="Enter"&&tryChangePassword()} {...inp()} />
+            )}
+            <button onClick={tryChangePassword} style={{ width:"100%", background:"linear-gradient(135deg,#6366F1,#4F46E5)", border:"none", borderRadius:10, color:"#fff", padding:"12px", cursor:"pointer", fontWeight:700, fontSize:14, marginBottom:10 }}>
+              ✓ Changer le mot de passe
+            </button>
+            <button onClick={()=>{setMode("login");setError("");setOldPwd("");setNewPwd("");setNewPwd2("");}} style={{ width:"100%", background:"transparent", border:"1px solid rgba(255,255,255,0.08)", borderRadius:10, color:"#64748B", padding:"9px", cursor:"pointer", fontSize:13 }}>
+              ← Retour
+            </button>
+          </div>
+        )}
+
+        {/* ── MODE : MOT DE PASSE OUBLIÉ ── */}
+        {mode === "forgot" && sq && (
+          <div>
+            <div style={{ marginBottom:14, padding:"12px 14px", borderRadius:10, background:"rgba(129,140,248,0.08)", border:"1px solid rgba(129,140,248,0.2)" }}>
+              <div style={{ fontSize:12, color:"#94A3B8", marginBottom:4 }}>Question secrète</div>
+              <div style={{ fontSize:14, fontWeight:600, color:"#F1F5F9" }}>{sq.question}</div>
+            </div>
+            {field("Votre réponse",
+              <input type="text" value={sqAnswer} onChange={e=>{setSqAnswer(e.target.value);setError("");}} autoFocus placeholder="Réponse (insensible à la casse)"
+                onKeyDown={e=>e.key==="Enter"&&tryForgot()} {...inp()} />
+            )}
+            <button onClick={tryForgot} style={{ width:"100%", background:"linear-gradient(135deg,#6366F1,#4F46E5)", border:"none", borderRadius:10, color:"#fff", padding:"12px", cursor:"pointer", fontWeight:700, fontSize:14, marginBottom:10 }}>
+              Valider la réponse →
+            </button>
+            <button onClick={()=>{setMode("login");setError("");setSqAnswer("");}} style={{ width:"100%", background:"transparent", border:"1px solid rgba(255,255,255,0.08)", borderRadius:10, color:"#64748B", padding:"9px", cursor:"pointer", fontSize:13 }}>
+              ← Retour
+            </button>
+          </div>
+        )}
+
+        {/* ── MODE : RESET APRÈS FORGOT ── */}
+        {mode === "reset_after_forgot" && (
+          <div>
+            <div style={{ marginBottom:14, padding:"10px 14px", borderRadius:10, background:"rgba(52,211,153,0.08)", border:"1px solid rgba(52,211,153,0.2)", fontSize:13, color:"#34D399" }}>
+              ✓ Identité vérifiée — définis ton nouveau mot de passe
+            </div>
+            {field("Nouveau mot de passe",
+              <input type="password" value={newPwd} onChange={e=>{setNewPwd(e.target.value);setError("");}} autoFocus placeholder="min. 6 caractères" {...inp()} />
+            )}
+            {field("Confirmer",
+              <input type="password" value={newPwd2} onChange={e=>{setNewPwd2(e.target.value);setError("");}} placeholder="••••••••••••"
+                onKeyDown={e=>e.key==="Enter"&&tryResetAfterForgot()} {...inp()} />
+            )}
+            <button onClick={tryResetAfterForgot} style={{ width:"100%", background:"linear-gradient(135deg,#6366F1,#4F46E5)", border:"none", borderRadius:10, color:"#fff", padding:"12px", cursor:"pointer", fontWeight:700, fontSize:14 }}>
+              ✓ Enregistrer le nouveau mot de passe
+            </button>
+          </div>
+        )}
+
+        {/* ── MODE : CONFIGURER QUESTION SECRÈTE ── */}
+        {mode === "setup_sq" && (
+          <div>
+            <div style={{ marginBottom:14, fontSize:13, color:"#64748B", lineHeight:1.5 }}>
+              La question secrète permet de réinitialiser ton mot de passe si tu l'oublies. La réponse est insensible à la casse.
+            </div>
+            {field("Mot de passe actuel (pour confirmer)",
+              <input type="password" value={oldPwd} onChange={e=>{setOldPwd(e.target.value);setError("");}} autoFocus placeholder="••••••••••••" {...inp()} />
+            )}
+            {field("Ta question secrète",
+              <input type="text" value={sqNew} onChange={e=>{setSqNew(e.target.value);setError("");}}
+                placeholder="Ex: Prénom de ta mère ? Ville de naissance ?" {...inp()} />
+            )}
+            {field("Ta réponse secrète",
+              <input type="text" value={sqAnsNew} onChange={e=>{setSqAnsNew(e.target.value);setError("");}} placeholder="Réponse mémorable"
+                onKeyDown={e=>e.key==="Enter"&&trySetupSQ()} {...inp()} />
+            )}
+            <button onClick={trySetupSQ} style={{ width:"100%", background:"linear-gradient(135deg,#6366F1,#4F46E5)", border:"none", borderRadius:10, color:"#fff", padding:"12px", cursor:"pointer", fontWeight:700, fontSize:14, marginBottom:10 }}>
+              🛡 Enregistrer la question secrète
+            </button>
+            <button onClick={()=>{setMode("login");setError("");setOldPwd("");setSqNew("");setSqAnsNew("");}} style={{ width:"100%", background:"transparent", border:"1px solid rgba(255,255,255,0.08)", borderRadius:10, color:"#64748B", padding:"9px", cursor:"pointer", fontSize:13 }}>
+              ← Retour
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -2453,12 +2695,10 @@ function LoginScreen({ onLogin }) {
 
 export default function App() {
   const [authenticated, setAuthenticated] = useState(() => {
-    const stored = sessionStorage.getItem("patrimoine_auth");
-    return stored === hashSimple(MOT_DE_PASSE);
+    const stored = sessionStorage.getItem(AUTH_SESSION);
+    return stored === getStoredPwdHash();
   });
-
   if (!authenticated) return <LoginScreen onLogin={() => setAuthenticated(true)} />;
-
   return <AppContent />;
 }
 
