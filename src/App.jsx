@@ -2680,19 +2680,26 @@ function AppContent({ user }) {
   }, []);
 
   const fetchOraPrice = useCallback(async () => {
-    // Essaie EURONEXT:ORA d'abord, puis ORA comme fallback
-    const symbols = ["EURONEXT:ORA", "ORA"];
-    for (const sym of symbols) {
+    // Yahoo Finance — ORA.PA (Euronext Paris) via proxy CORS public
+    const urls = [
+      // Option 1 : Yahoo Finance via allorigins (proxy CORS)
+      `https://api.allorigins.win/get?url=${encodeURIComponent("https://query1.finance.yahoo.com/v8/finance/chart/ORA.PA?interval=1d&range=1d")}`,
+      // Option 2 : Yahoo Finance v7 (fallback)
+      `https://api.allorigins.win/get?url=${encodeURIComponent("https://query2.finance.yahoo.com/v8/finance/chart/ORA.PA?interval=1d&range=1d")}`,
+    ];
+    for (const url of urls) {
       try {
-        const res = await fetch(`https://finnhub.io/api/v1/quote?symbol=${sym}&token=${FINNHUB_KEY}`);
-        const data = await res.json();
-        if (data.c && data.c > 0) {
-          setOraPrice(data.c);
-          return; // succès → stop
+        const res  = await fetch(url);
+        const wrap = await res.json();
+        const data = JSON.parse(wrap.contents);
+        const price = data?.chart?.result?.[0]?.meta?.regularMarketPrice;
+        if (price && price > 0 && price < 100) { // ORA.PA ~15-25€, sanity check
+          setOraPrice(price);
+          return;
         }
       } catch {}
     }
-    console.warn("ORA price unavailable from Finnhub");
+    console.warn("ORA.PA price unavailable");
   }, []);
 
   const fetchPrices = useCallback(async () => {
@@ -2723,15 +2730,14 @@ function AppContent({ user }) {
       const fxData = await fxRes.json();
       const usdToEur = fxData?.usd?.eur || 0.92;
 
-      const stockSymbols = {
-        "BYD":    { finnSym: "HKEX:1211", currency: "HKD" },  // BYD Hong Kong → HKD
-        "CSPX":   { finnSym: "LSE:CSPX",  currency: "GBp" },  // iShares S&P500 Londres → pence sterling
-        "APOLLO": { finnSym: null,         currency: "EUR" },  // ELTIF non coté — VL manuelle
-        "EQTF":   { finnSym: null,         currency: "EUR" },  // ELTIF non coté — VL manuelle
-        "AAPL":   { finnSym: "AAPL",       currency: "USD" },
-        "TSLA":   { finnSym: "TSLA",       currency: "USD" },
+      // Stocks: Yahoo Finance (BYD, CSPX) + Finnhub (AAPL, TSLA) — voir ci-dessous
+      // ── Yahoo Finance pour BYD (1211.HK) et CSPX (CSPX.L) ──────────────────
+      const yahooSymbols = {
+        "BYD":  { ticker: "1211.HK", currency: "HKD" },
+        "CSPX": { ticker: "CSPX.L",  currency: "GBp" },  // coté en pence sterling
       };
-      // Taux HKD→EUR et GBP→EUR via CoinGecko
+
+      // Taux HKD→EUR et GBP→EUR
       let hkdToEur = 0.12, gbpToEur = 1.18;
       try {
         const fxExtra = await cgFetch("https://api.coingecko.com/api/v3/simple/price?ids=hkd,gbp&vs_currencies=eur");
@@ -2741,20 +2747,40 @@ function AppContent({ user }) {
       } catch {}
 
       const stockUpdates = {};
+
+      // Fetch BYD + CSPX via Yahoo Finance (proxy CORS)
       await Promise.all(
-        Object.entries(stockSymbols).map(async ([sym, { finnSym, currency }]) => {
-          if (!finnSym) return;
+        Object.entries(yahooSymbols).map(async ([sym, { ticker, currency }]) => {
+          try {
+            const proxyUrl = `https://api.allorigins.win/get?url=${encodeURIComponent(
+              `https://query1.finance.yahoo.com/v8/finance/chart/${ticker}?interval=1d&range=1d`
+            )}`;
+            const res  = await fetch(proxyUrl);
+            const wrap = await res.json();
+            const data = JSON.parse(wrap.contents);
+            const price = data?.chart?.result?.[0]?.meta?.regularMarketPrice;
+            if (price && price > 0) {
+              let priceEur;
+              if (currency === "HKD") priceEur = price * hkdToEur;
+              else if (currency === "GBp") priceEur = (price / 100) * gbpToEur;
+              else priceEur = price;
+              stockUpdates[sym] = priceEur;
+            }
+          } catch {}
+        })
+      );
+
+      // Fetch AAPL + TSLA via Finnhub (USD)
+      const finnhubSymbols = {
+        "AAPL": { finnSym: "AAPL", currency: "USD" },
+        "TSLA": { finnSym: "TSLA", currency: "USD" },
+      };
+      await Promise.all(
+        Object.entries(finnhubSymbols).map(async ([sym, { finnSym }]) => {
           try {
             const r = await fetch(`https://finnhub.io/api/v1/quote?symbol=${finnSym}&token=${FINNHUB_KEY}`);
             const q = await r.json();
-            if (q.c && q.c > 0) {
-              let priceEur;
-              if (currency === "USD")  priceEur = q.c * usdToEur;
-              else if (currency === "HKD")  priceEur = q.c * hkdToEur;
-              else if (currency === "GBp")  priceEur = (q.c / 100) * gbpToEur; // pence → GBP → EUR
-              else priceEur = q.c;
-              stockUpdates[sym] = priceEur;
-            }
+            if (q.c && q.c > 0) stockUpdates[sym] = q.c * usdToEur;
           } catch {}
         })
       );
