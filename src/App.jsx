@@ -2680,11 +2680,19 @@ function AppContent({ user }) {
   }, []);
 
   const fetchOraPrice = useCallback(async () => {
-    try {
-      const res = await fetch(`https://finnhub.io/api/v1/quote?symbol=EURONEXT:ORA&token=${FINNHUB_KEY}`);
-      const data = await res.json();
-      if (data.c && data.c > 0) setOraPrice(data.c);
-    } catch (e) { console.error("Finnhub error:", e); }
+    // Essaie EURONEXT:ORA d'abord, puis ORA comme fallback
+    const symbols = ["EURONEXT:ORA", "ORA"];
+    for (const sym of symbols) {
+      try {
+        const res = await fetch(`https://finnhub.io/api/v1/quote?symbol=${sym}&token=${FINNHUB_KEY}`);
+        const data = await res.json();
+        if (data.c && data.c > 0) {
+          setOraPrice(data.c);
+          return; // succès → stop
+        }
+      } catch {}
+    }
+    console.warn("ORA price unavailable from Finnhub");
   }, []);
 
   const fetchPrices = useCallback(async () => {
@@ -2716,13 +2724,22 @@ function AppContent({ user }) {
       const usdToEur = fxData?.usd?.eur || 0.92;
 
       const stockSymbols = {
-        "BYD":    { finnSym: null,   currency: "EUR" },
-        "CSPX":   { finnSym: null,   currency: "EUR" },
-        "APOLLO": { finnSym: null,   currency: "EUR" },
-        "EQTF":   { finnSym: null,   currency: "EUR" },
-        "AAPL":   { finnSym: "AAPL", currency: "USD" },
-        "TSLA":   { finnSym: "TSLA", currency: "USD" },
+        "BYD":    { finnSym: "HKEX:1211", currency: "HKD" },  // BYD Hong Kong → HKD
+        "CSPX":   { finnSym: "LSE:CSPX",  currency: "GBp" },  // iShares S&P500 Londres → pence sterling
+        "APOLLO": { finnSym: null,         currency: "EUR" },  // ELTIF non coté — VL manuelle
+        "EQTF":   { finnSym: null,         currency: "EUR" },  // ELTIF non coté — VL manuelle
+        "AAPL":   { finnSym: "AAPL",       currency: "USD" },
+        "TSLA":   { finnSym: "TSLA",       currency: "USD" },
       };
+      // Taux HKD→EUR et GBP→EUR via CoinGecko
+      let hkdToEur = 0.12, gbpToEur = 1.18;
+      try {
+        const fxExtra = await cgFetch("https://api.coingecko.com/api/v3/simple/price?ids=hkd,gbp&vs_currencies=eur");
+        const fxExtra2 = await fxExtra.json();
+        if (fxExtra2?.hkd?.eur) hkdToEur = fxExtra2.hkd.eur;
+        if (fxExtra2?.gbp?.eur) gbpToEur = fxExtra2.gbp.eur;
+      } catch {}
+
       const stockUpdates = {};
       await Promise.all(
         Object.entries(stockSymbols).map(async ([sym, { finnSym, currency }]) => {
@@ -2731,7 +2748,12 @@ function AppContent({ user }) {
             const r = await fetch(`https://finnhub.io/api/v1/quote?symbol=${finnSym}&token=${FINNHUB_KEY}`);
             const q = await r.json();
             if (q.c && q.c > 0) {
-              stockUpdates[sym] = currency === "USD" ? q.c * usdToEur : q.c;
+              let priceEur;
+              if (currency === "USD")  priceEur = q.c * usdToEur;
+              else if (currency === "HKD")  priceEur = q.c * hkdToEur;
+              else if (currency === "GBp")  priceEur = (q.c / 100) * gbpToEur; // pence → GBP → EUR
+              else priceEur = q.c;
+              stockUpdates[sym] = priceEur;
             }
           } catch {}
         })
