@@ -1,5 +1,38 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer, AreaChart, Area, XAxis, YAxis, CartesianGrid, LineChart, Line, BarChart, Bar, Legend } from "recharts";
+import { initializeApp } from "firebase/app";
+import { getFirestore, doc, getDoc, setDoc } from "firebase/firestore";
+import { getAuth, signInWithEmailAndPassword, onAuthStateChanged, signOut } from "firebase/auth";
+
+// ─── FIREBASE ─────────────────────────────────────────────────────────────────
+const firebaseConfig = {
+  apiKey:            "AIzaSyAznyIUYKfWPMBDIfMpNKDf4gvYBlwH0J0",
+  authDomain:        "patrimoine-f2e19.firebaseapp.com",
+  projectId:         "patrimoine-f2e19",
+  storageBucket:     "patrimoine-f2e19.firebasestorage.app",
+  messagingSenderId: "692110467597",
+  appId:             "1:692110467597:web:7c6aada75fede7427beb44",
+};
+const fbApp = initializeApp(firebaseConfig);
+const db    = getFirestore(fbApp);
+const auth  = getAuth(fbApp);
+
+async function fbGet(uid, key) {
+  try {
+    const snap = await getDoc(doc(db, "patrimoine", uid, "data", key));
+    return snap.exists() ? snap.data().value : null;
+  } catch (e) { console.warn("fbGet error", key, e); return null; }
+}
+async function fbSet(uid, key, value) {
+  try {
+    await setDoc(doc(db, "patrimoine", uid, "data", key), { value, updatedAt: Date.now() });
+  } catch (e) { console.warn("fbSet error", key, e); }
+}
+function makeDebounced(fn, delay = 1500) {
+  let timer;
+  return (...args) => { clearTimeout(timer); timer = setTimeout(() => fn(...args), delay); };
+}
+
 
 // ─── CONSTANTS ────────────────────────────────────────────────────────────────
 const CG_KEY = "CG-awA3tjVWYZgAyyAngdNth8Ek";
@@ -1499,21 +1532,11 @@ function parseBudgetCSV(text) {
   return parsed;
 }
 
-function BudgetView() {
+function BudgetView({ uid }) {
   // ── State ────────────────────────────────────────────────────────────────
-  const [transactions, setTransactions] = useState(() => {
-    try {
-      const raw = JSON.parse(localStorage.getItem(BUDGET_KEY) || "[]");
-      // Ensure every tx has an id
-      return raw.map((t, i) => ({ id: t.id || `legacy-${i}`, ...t }));
-    } catch { return []; }
-  });
-  const [cats, setCats] = useState(() => {
-    try {
-      const stored = JSON.parse(localStorage.getItem(BUDGET_CATS_KEY));
-      return stored || { entree: DEFAULT_CATS_ENTREE, sortie: DEFAULT_CATS_SORTIE };
-    } catch { return { entree: DEFAULT_CATS_ENTREE, sortie: DEFAULT_CATS_SORTIE }; }
-  });
+  const [transactions, setTransactions] = useState([]);
+  const [cats, setCats] = useState({ entree: DEFAULT_CATS_ENTREE, sortie: DEFAULT_CATS_SORTIE });
+  const [budgetSynced, setBudgetSynced] = useState(false);
 
   const [selectedYear,  setSelectedYear]  = useState(null);
   const [selectedMonth, setSelectedMonth] = useState(null);
@@ -1546,9 +1569,29 @@ function BudgetView() {
   const [editingCat,   setEditingCat]  = useState(null);
   const [editCatForm,  setEditCatForm] = useState({});
 
-  // Persist
-  useEffect(() => { localStorage.setItem(BUDGET_KEY, JSON.stringify(transactions)); }, [transactions]);
-  useEffect(() => { localStorage.setItem(BUDGET_CATS_KEY, JSON.stringify(cats)); }, [cats]);
+  // ── Firebase sync budget ──────────────────────────────────────────────────
+  const saveBudgetTx   = useCallback(makeDebounced(v => uid && fbSet(uid, "budget_tx",   v), 1500), [uid]);
+  const saveBudgetCats = useCallback(makeDebounced(v => uid && fbSet(uid, "budget_cats", v), 1500), [uid]);
+
+  // Load budget from Firestore on mount
+  useEffect(() => {
+    if (!uid) return;
+    Promise.all([fbGet(uid, "budget_tx"), fbGet(uid, "budget_cats")]).then(([fbTx, fbCats]) => {
+      if (fbTx)   setTransactions(fbTx.map((t, i) => ({ id: t.id || `legacy-${i}`, ...t })));
+      else { // Fallback localStorage
+        try { const raw = JSON.parse(localStorage.getItem(BUDGET_KEY) || "[]"); if(raw.length) setTransactions(raw.map((t,i)=>({id:t.id||`lg-${i}`,...t}))); } catch {}
+      }
+      if (fbCats) setCats(fbCats);
+      else {
+        try { const c = JSON.parse(localStorage.getItem(BUDGET_CATS_KEY)); if(c) setCats(c); } catch {}
+      }
+      setBudgetSynced(true);
+    });
+  }, [uid]);
+
+  // Auto-save on change
+  useEffect(() => { if (budgetSynced) saveBudgetTx(transactions); }, [transactions, budgetSynced]);
+  useEffect(() => { if (budgetSynced) saveBudgetCats(cats); }, [cats, budgetSynced]);
 
   // ── Helpers ───────────────────────────────────────────────────────────────
   const getColor = (type, es) => {
@@ -2422,122 +2465,39 @@ function BudgetView() {
 }
 
 // ─── APP ──────────────────────────────────────────────────────────────────────
-// ─── MOT DE PASSE ─────────────────────────────────────────────────────────────
-const PWD_KEY      = "patrimoine_pwd_hash";
-const SQ_KEY       = "patrimoine_sq";      // { question, answerHash }
-const AUTH_SESSION = "patrimoine_auth_v2";
-
-function hashSimple(str) {
-  let hash = 0;
-  for (let i = 0; i < str.length; i++) {
-    const c = str.charCodeAt(i);
-    hash = ((hash << 5) - hash) + c;
-    hash = hash & hash;
-  }
-  return Math.abs(hash).toString(16).padStart(8, "0");
-}
-
-// Mot de passe initial codé en dur — sera écrasé par localStorage au 1er changement
-const DEFAULT_PWD = "patrimoine2026";
-
-function getStoredPwdHash() {
-  return localStorage.getItem(PWD_KEY) || hashSimple(DEFAULT_PWD);
-}
-function checkPassword(pwd) {
-  return hashSimple(pwd) === getStoredPwdHash();
-}
-function savePassword(pwd) {
-  localStorage.setItem(PWD_KEY, hashSimple(pwd));
-  sessionStorage.setItem(AUTH_SESSION, hashSimple(pwd));
-}
-
-function getSecretQuestion() {
-  try { return JSON.parse(localStorage.getItem(SQ_KEY)); } catch { return null; }
-}
-function saveSecretQuestion(question, answer) {
-  localStorage.setItem(SQ_KEY, JSON.stringify({ question, answerHash: hashSimple(answer.trim().toLowerCase()) }));
-}
-function checkSecretAnswer(answer) {
-  const sq = getSecretQuestion();
-  if (!sq) return false;
-  return hashSimple(answer.trim().toLowerCase()) === sq.answerHash;
-}
-
-// ── LoginScreen ────────────────────────────────────────────────────────────────
+// ─── AUTHENTIFICATION FIREBASE ────────────────────────────────────────────────
 function LoginScreen({ onLogin }) {
-  const [mode, setMode]       = useState("login"); // login | change | forgot | setup_sq
-  const [pwd, setPwd]         = useState("");
-  const [oldPwd, setOldPwd]   = useState("");
-  const [newPwd, setNewPwd]   = useState("");
-  const [newPwd2, setNewPwd2] = useState("");
-  const [sqAnswer, setSqAnswer] = useState("");
-  const [sqNew, setSqNew]     = useState("");
-  const [sqAnsNew, setSqAnsNew] = useState("");
-  const [error, setError]     = useState("");
-  const [success, setSuccess] = useState("");
-  const [shake, setShake]     = useState(false);
-
-  const sq = getSecretQuestion();
+  const [email,    setEmail]    = useState("");
+  const [pwd,      setPwd]      = useState("");
+  const [error,    setError]    = useState("");
+  const [loading,  setLoading]  = useState(false);
+  const [shake,    setShake]    = useState(false);
 
   const doShake = () => { setShake(true); setTimeout(() => setShake(false), 450); };
-  const showError = (msg) => { setError(msg); doShake(); setTimeout(() => setError(""), 3000); };
-  const showSuccess = (msg) => { setSuccess(msg); setTimeout(() => setSuccess(""), 3000); };
 
-  const tryLogin = () => {
-    if (!checkPassword(pwd)) { showError("Mot de passe incorrect"); return; }
-    sessionStorage.setItem(AUTH_SESSION, getStoredPwdHash());
-    onLogin();
+  const tryLogin = async () => {
+    if (!email || !pwd) { setError("Email et mot de passe requis"); doShake(); return; }
+    setLoading(true); setError("");
+    try {
+      await signInWithEmailAndPassword(auth, email.trim(), pwd);
+      onLogin();
+    } catch (e) {
+      const msg = {
+        "auth/user-not-found":   "Utilisateur introuvable",
+        "auth/wrong-password":   "Mot de passe incorrect",
+        "auth/invalid-email":    "Email invalide",
+        "auth/too-many-requests":"Trop de tentatives — réessaie plus tard",
+        "auth/invalid-credential": "Email ou mot de passe incorrect",
+      }[e.code] || "Erreur de connexion";
+      setError(msg); doShake();
+    } finally { setLoading(false); }
   };
 
-  const tryChangePassword = () => {
-    if (!checkPassword(oldPwd)) { showError("Ancien mot de passe incorrect"); return; }
-    if (newPwd.length < 6)      { showError("Nouveau mot de passe trop court (min. 6 caractères)"); return; }
-    if (newPwd !== newPwd2)     { showError("Les deux mots de passe ne correspondent pas"); return; }
-    savePassword(newPwd);
-    showSuccess("✅ Mot de passe changé ! Redirection…");
-    setTimeout(() => onLogin(), 1500);
+  const inpStyle = {
+    width:"100%", boxSizing:"border-box", background:"#1E293B",
+    border:`1px solid ${error ? "#F87171" : "#334155"}`, borderRadius:10,
+    padding:"11px 14px", color:"#F1F5F9", fontSize:14, outline:"none",
   };
-
-  const tryForgot = () => {
-    if (!sq) { showError("Aucune question secrète configurée"); return; }
-    if (!checkSecretAnswer(sqAnswer)) { showError("Réponse incorrecte"); return; }
-    // Unlock — let user set new password
-    setMode("reset_after_forgot");
-    setError(""); setSqAnswer("");
-  };
-
-  const tryResetAfterForgot = () => {
-    if (newPwd.length < 6)  { showError("Mot de passe trop court (min. 6 caractères)"); return; }
-    if (newPwd !== newPwd2) { showError("Les mots de passe ne correspondent pas"); return; }
-    savePassword(newPwd);
-    showSuccess("✅ Mot de passe réinitialisé ! Redirection…");
-    setTimeout(() => onLogin(), 1500);
-  };
-
-  const trySetupSQ = () => {
-    if (!checkPassword(oldPwd))  { showError("Mot de passe actuel incorrect"); return; }
-    if (!sqNew.trim())           { showError("Saisis une question secrète"); return; }
-    if (sqAnsNew.trim().length < 2) { showError("Réponse trop courte"); return; }
-    saveSecretQuestion(sqNew.trim(), sqAnsNew.trim());
-    showSuccess("✅ Question secrète enregistrée !");
-    setTimeout(() => setMode("login"), 1500);
-  };
-
-  const inp = (extra = {}) => ({
-    style: {
-      width:"100%", boxSizing:"border-box", background:"#1E293B",
-      border:`1px solid ${error ? "#F87171" : "#334155"}`, borderRadius:10,
-      padding:"11px 14px", color:"#F1F5F9", fontSize:14, outline:"none",
-      ...extra
-    }
-  });
-  const lbl = { fontSize:12, color:"#64748B", marginBottom:5, display:"block" };
-  const field = (label, el) => (
-    <div style={{ marginBottom:14 }}>
-      <span style={lbl}>{label}</span>
-      {el}
-    </div>
-  );
 
   return (
     <div style={{ minHeight:"100vh", background:"#0B1120", display:"flex", alignItems:"center", justifyContent:"center", fontFamily:"'DM Sans', sans-serif" }}>
@@ -2545,164 +2505,75 @@ function LoginScreen({ onLogin }) {
         @keyframes shake { 0%,100%{transform:translateX(0)} 20%{transform:translateX(-8px)} 40%{transform:translateX(8px)} 60%{transform:translateX(-8px)} 80%{transform:translateX(8px)} }
         @keyframes fadeIn { from{opacity:0;transform:translateY(10px)} to{opacity:1;transform:translateY(0)} }
       `}</style>
-      {/* Bg glow */}
-      <div style={{ position:"fixed", inset:0, zIndex:0, pointerEvents:"none" }}>
+      <div style={{ position:"fixed", inset:0, pointerEvents:"none" }}>
         <div style={{ position:"absolute", top:-200, right:-100, width:600, height:600, borderRadius:"50%", background:"radial-gradient(circle, rgba(99,102,241,0.12) 0%, transparent 70%)" }} />
         <div style={{ position:"absolute", bottom:-100, left:-100, width:400, height:400, borderRadius:"50%", background:"radial-gradient(circle, rgba(52,211,153,0.08) 0%, transparent 70%)" }} />
       </div>
-
       <div style={{ position:"relative", zIndex:1, width:360, padding:36,
         background:"rgba(255,255,255,0.04)", border:"1px solid rgba(255,255,255,0.08)",
         borderRadius:24, backdropFilter:"blur(12px)",
-        animation: shake ? "shake 0.4s ease" : "fadeIn 0.3s ease" }}>
+        animation: shake ? "shake 0.4s ease" : "fadeIn 0.4s ease" }}>
 
-        {/* Logo */}
-        <div style={{ textAlign:"center", marginBottom:24 }}>
+        <div style={{ textAlign:"center", marginBottom:28 }}>
           <div style={{ fontFamily:"'Syne', sans-serif", fontSize:28, fontWeight:800, background:"linear-gradient(135deg, #818CF8, #34D399)", WebkitBackgroundClip:"text", WebkitTextFillColor:"transparent", marginBottom:4 }}>
             Patrimoine
           </div>
-          <div style={{ fontSize:12, color:"#64748B" }}>
-            {mode==="login"             && "Accès sécurisé · Usage privé"}
-            {mode==="change"            && "Changer le mot de passe"}
-            {mode==="forgot"            && "Mot de passe oublié"}
-            {mode==="reset_after_forgot"&& "Définir un nouveau mot de passe"}
-            {mode==="setup_sq"          && "Configurer la question secrète"}
-          </div>
+          <div style={{ fontSize:12, color:"#64748B" }}>Accès sécurisé · Synchronisé sur tous vos appareils</div>
         </div>
 
-        {/* Messages */}
-        {error   && <div style={{ marginBottom:12, padding:"8px 12px", borderRadius:8, background:"rgba(248,113,113,0.1)", border:"1px solid rgba(248,113,113,0.3)", color:"#F87171", fontSize:13 }}>{error}</div>}
-        {success && <div style={{ marginBottom:12, padding:"8px 12px", borderRadius:8, background:"rgba(52,211,153,0.1)", border:"1px solid rgba(52,211,153,0.3)", color:"#34D399", fontSize:13 }}>{success}</div>}
-
-        {/* ── MODE : LOGIN ── */}
-        {mode === "login" && (
-          <div>
-            {field("Mot de passe",
-              <input type="password" value={pwd} onChange={e=>{setPwd(e.target.value);setError("");}}
-                onKeyDown={e=>e.key==="Enter"&&tryLogin()} autoFocus placeholder="••••••••••••" {...inp()} />
-            )}
-            <button onClick={tryLogin} style={{ width:"100%", background:"linear-gradient(135deg,#6366F1,#4F46E5)", border:"none", borderRadius:10, color:"#fff", padding:"12px", cursor:"pointer", fontWeight:700, fontSize:15, marginBottom:16 }}>
-              Accéder →
-            </button>
-            <div style={{ display:"flex", justifyContent:"space-between", gap:8 }}>
-              <button onClick={()=>{setMode("change");setError("");}} style={{ flex:1, background:"transparent", border:"1px solid rgba(255,255,255,0.1)", borderRadius:8, color:"#64748B", padding:"8px", cursor:"pointer", fontSize:12 }}>
-                🔑 Changer le mdp
-              </button>
-              {sq ? (
-                <button onClick={()=>{setMode("forgot");setError("");}} style={{ flex:1, background:"transparent", border:"1px solid rgba(255,255,255,0.1)", borderRadius:8, color:"#64748B", padding:"8px", cursor:"pointer", fontSize:12 }}>
-                  ❓ Mot de passe oublié
-                </button>
-              ) : (
-                <button onClick={()=>{setMode("setup_sq");setError("");}} style={{ flex:1, background:"transparent", border:"1px solid rgba(99,102,241,0.3)", borderRadius:8, color:"#818CF8", padding:"8px", cursor:"pointer", fontSize:12 }}>
-                  🛡 Configurer récupération
-                </button>
-              )}
-            </div>
-            <div style={{ marginTop:16, fontSize:11, color:"#334155", textAlign:"center" }}>🔒 Données stockées localement</div>
+        {error && (
+          <div style={{ marginBottom:14, padding:"9px 13px", borderRadius:8, background:"rgba(248,113,113,0.1)", border:"1px solid rgba(248,113,113,0.3)", color:"#F87171", fontSize:13 }}>
+            {error}
           </div>
         )}
 
-        {/* ── MODE : CHANGER ── */}
-        {mode === "change" && (
-          <div>
-            {field("Mot de passe actuel",
-              <input type="password" value={oldPwd} onChange={e=>{setOldPwd(e.target.value);setError("");}} autoFocus placeholder="••••••••••••" {...inp()} />
-            )}
-            {field("Nouveau mot de passe",
-              <input type="password" value={newPwd} onChange={e=>{setNewPwd(e.target.value);setError("");}} placeholder="min. 6 caractères" {...inp()} />
-            )}
-            {field("Confirmer le nouveau mot de passe",
-              <input type="password" value={newPwd2} onChange={e=>{setNewPwd2(e.target.value);setError("");}} placeholder="••••••••••••"
-                onKeyDown={e=>e.key==="Enter"&&tryChangePassword()} {...inp()} />
-            )}
-            <button onClick={tryChangePassword} style={{ width:"100%", background:"linear-gradient(135deg,#6366F1,#4F46E5)", border:"none", borderRadius:10, color:"#fff", padding:"12px", cursor:"pointer", fontWeight:700, fontSize:14, marginBottom:10 }}>
-              ✓ Changer le mot de passe
-            </button>
-            <button onClick={()=>{setMode("login");setError("");setOldPwd("");setNewPwd("");setNewPwd2("");}} style={{ width:"100%", background:"transparent", border:"1px solid rgba(255,255,255,0.08)", borderRadius:10, color:"#64748B", padding:"9px", cursor:"pointer", fontSize:13 }}>
-              ← Retour
-            </button>
-          </div>
-        )}
+        <div style={{ marginBottom:14 }}>
+          <div style={{ fontSize:12, color:"#64748B", marginBottom:6 }}>Email</div>
+          <input type="email" value={email} onChange={e=>{setEmail(e.target.value);setError("");}}
+            onKeyDown={e=>e.key==="Enter"&&tryLogin()} autoFocus placeholder="votre@email.com" style={inpStyle} />
+        </div>
+        <div style={{ marginBottom:20 }}>
+          <div style={{ fontSize:12, color:"#64748B", marginBottom:6 }}>Mot de passe</div>
+          <input type="password" value={pwd} onChange={e=>{setPwd(e.target.value);setError("");}}
+            onKeyDown={e=>e.key==="Enter"&&tryLogin()} placeholder="••••••••••••" style={inpStyle} />
+        </div>
 
-        {/* ── MODE : MOT DE PASSE OUBLIÉ ── */}
-        {mode === "forgot" && sq && (
-          <div>
-            <div style={{ marginBottom:14, padding:"12px 14px", borderRadius:10, background:"rgba(129,140,248,0.08)", border:"1px solid rgba(129,140,248,0.2)" }}>
-              <div style={{ fontSize:12, color:"#94A3B8", marginBottom:4 }}>Question secrète</div>
-              <div style={{ fontSize:14, fontWeight:600, color:"#F1F5F9" }}>{sq.question}</div>
-            </div>
-            {field("Votre réponse",
-              <input type="text" value={sqAnswer} onChange={e=>{setSqAnswer(e.target.value);setError("");}} autoFocus placeholder="Réponse (insensible à la casse)"
-                onKeyDown={e=>e.key==="Enter"&&tryForgot()} {...inp()} />
-            )}
-            <button onClick={tryForgot} style={{ width:"100%", background:"linear-gradient(135deg,#6366F1,#4F46E5)", border:"none", borderRadius:10, color:"#fff", padding:"12px", cursor:"pointer", fontWeight:700, fontSize:14, marginBottom:10 }}>
-              Valider la réponse →
-            </button>
-            <button onClick={()=>{setMode("login");setError("");setSqAnswer("");}} style={{ width:"100%", background:"transparent", border:"1px solid rgba(255,255,255,0.08)", borderRadius:10, color:"#64748B", padding:"9px", cursor:"pointer", fontSize:13 }}>
-              ← Retour
-            </button>
-          </div>
-        )}
+        <button onClick={tryLogin} disabled={loading}
+          style={{ width:"100%", background:"linear-gradient(135deg,#6366F1,#4F46E5)", border:"none", borderRadius:10, color:"#fff", padding:"12px", cursor:"pointer", fontWeight:700, fontSize:15, opacity:loading?0.7:1 }}>
+          {loading ? "⏳ Connexion…" : "Accéder →"}
+        </button>
 
-        {/* ── MODE : RESET APRÈS FORGOT ── */}
-        {mode === "reset_after_forgot" && (
-          <div>
-            <div style={{ marginBottom:14, padding:"10px 14px", borderRadius:10, background:"rgba(52,211,153,0.08)", border:"1px solid rgba(52,211,153,0.2)", fontSize:13, color:"#34D399" }}>
-              ✓ Identité vérifiée — définis ton nouveau mot de passe
-            </div>
-            {field("Nouveau mot de passe",
-              <input type="password" value={newPwd} onChange={e=>{setNewPwd(e.target.value);setError("");}} autoFocus placeholder="min. 6 caractères" {...inp()} />
-            )}
-            {field("Confirmer",
-              <input type="password" value={newPwd2} onChange={e=>{setNewPwd2(e.target.value);setError("");}} placeholder="••••••••••••"
-                onKeyDown={e=>e.key==="Enter"&&tryResetAfterForgot()} {...inp()} />
-            )}
-            <button onClick={tryResetAfterForgot} style={{ width:"100%", background:"linear-gradient(135deg,#6366F1,#4F46E5)", border:"none", borderRadius:10, color:"#fff", padding:"12px", cursor:"pointer", fontWeight:700, fontSize:14 }}>
-              ✓ Enregistrer le nouveau mot de passe
-            </button>
-          </div>
-        )}
-
-        {/* ── MODE : CONFIGURER QUESTION SECRÈTE ── */}
-        {mode === "setup_sq" && (
-          <div>
-            <div style={{ marginBottom:14, fontSize:13, color:"#64748B", lineHeight:1.5 }}>
-              La question secrète permet de réinitialiser ton mot de passe si tu l'oublies. La réponse est insensible à la casse.
-            </div>
-            {field("Mot de passe actuel (pour confirmer)",
-              <input type="password" value={oldPwd} onChange={e=>{setOldPwd(e.target.value);setError("");}} autoFocus placeholder="••••••••••••" {...inp()} />
-            )}
-            {field("Ta question secrète",
-              <input type="text" value={sqNew} onChange={e=>{setSqNew(e.target.value);setError("");}}
-                placeholder="Ex: Prénom de ta mère ? Ville de naissance ?" {...inp()} />
-            )}
-            {field("Ta réponse secrète",
-              <input type="text" value={sqAnsNew} onChange={e=>{setSqAnsNew(e.target.value);setError("");}} placeholder="Réponse mémorable"
-                onKeyDown={e=>e.key==="Enter"&&trySetupSQ()} {...inp()} />
-            )}
-            <button onClick={trySetupSQ} style={{ width:"100%", background:"linear-gradient(135deg,#6366F1,#4F46E5)", border:"none", borderRadius:10, color:"#fff", padding:"12px", cursor:"pointer", fontWeight:700, fontSize:14, marginBottom:10 }}>
-              🛡 Enregistrer la question secrète
-            </button>
-            <button onClick={()=>{setMode("login");setError("");setOldPwd("");setSqNew("");setSqAnsNew("");}} style={{ width:"100%", background:"transparent", border:"1px solid rgba(255,255,255,0.08)", borderRadius:10, color:"#64748B", padding:"9px", cursor:"pointer", fontSize:13 }}>
-              ← Retour
-            </button>
-          </div>
-        )}
+        <div style={{ marginTop:20, textAlign:"center", fontSize:11, color:"#334155" }}>
+          🔒 Données chiffrées · Firebase Europe
+        </div>
       </div>
     </div>
   );
 }
 
 export default function App() {
-  const [authenticated, setAuthenticated] = useState(() => {
-    const stored = sessionStorage.getItem(AUTH_SESSION);
-    return stored === getStoredPwdHash();
-  });
-  if (!authenticated) return <LoginScreen onLogin={() => setAuthenticated(true)} />;
-  return <AppContent />;
+  const [user,          setUser]          = useState(null);
+  const [authChecked,   setAuthChecked]   = useState(false);
+
+  useEffect(() => {
+    const unsub = onAuthStateChanged(auth, u => {
+      setUser(u);
+      setAuthChecked(true);
+    });
+    return unsub;
+  }, []);
+
+  if (!authChecked) return (
+    <div style={{ minHeight:"100vh", background:"#0B1120", display:"flex", alignItems:"center", justifyContent:"center" }}>
+      <div style={{ fontSize:13, color:"#64748B" }}>⏳ Vérification…</div>
+    </div>
+  );
+
+  if (!user) return <LoginScreen onLogin={() => {}} />;
+  return <AppContent user={user} />;
 }
 
-function AppContent() {
+function AppContent({ user }) {
   const [view, setView] = useState("overview");
   const [cryptoData, setCryptoData] = useState(INITIAL_CRYPTO);
   const [cryptoPrices, setCryptoPrices] = useState({});
@@ -2716,6 +2587,58 @@ function AppContent() {
   const [oraPrice, setOraPrice] = useState(0);
   const [history, setHistory] = useState(() => loadHistory());
   const [marketHistory, setMarketHistory] = useState({ stocks: [], crypto: [] });
+  const [fbSynced, setFbSynced] = useState(false);
+  const [fbStatus, setFbStatus] = useState(""); // "", "saving", "saved", "error"
+
+  // ── Firebase sync ─────────────────────────────────────────────────────────
+  const uid = user?.uid;
+
+  // Load all data from Firestore on mount
+  useEffect(() => {
+    if (!uid) return;
+    const loadAll = async () => {
+      try {
+        const [fbCrypto, fbStocks, fbBank, fbRealestate, fbScpi, fbSavings, fbHist] = await Promise.all([
+          fbGet(uid, "crypto"),
+          fbGet(uid, "stocks"),
+          fbGet(uid, "bank"),
+          fbGet(uid, "realestate"),
+          fbGet(uid, "scpi"),
+          fbGet(uid, "savings"),
+          fbGet(uid, "history"),
+        ]);
+        if (fbCrypto)    setCryptoData(fbCrypto);
+        if (fbStocks)    setStocks(fbStocks);
+        if (fbBank)      setBank(fbBank);
+        if (fbRealestate) setRealestate(fbRealestate);
+        if (fbScpi)      setScpi(fbScpi);
+        if (fbSavings)   setSavings(fbSavings);
+        if (fbHist)      setHistory(fbHist);
+        setFbSynced(true);
+      } catch(e) { console.error("Firebase load error:", e); setFbSynced(true); }
+    };
+    loadAll();
+  }, [uid]);
+
+  // Debounced save helpers
+  const saveToFb = useCallback(makeDebounced(async (key, value) => {
+    if (!uid) return;
+    setFbStatus("saving");
+    try {
+      await fbSet(uid, key, value);
+      setFbStatus("saved");
+      setTimeout(() => setFbStatus(""), 2000);
+    } catch(e) { setFbStatus("error"); }
+  }, 1500), [uid]);
+
+  // Auto-save whenever data changes (after initial load)
+  useEffect(() => { if (fbSynced && uid) saveToFb("crypto", cryptoData); }, [cryptoData, fbSynced]);
+  useEffect(() => { if (fbSynced && uid) saveToFb("stocks", stocks); }, [stocks, fbSynced]);
+  useEffect(() => { if (fbSynced && uid) saveToFb("bank", bank); }, [bank, fbSynced]);
+  useEffect(() => { if (fbSynced && uid) saveToFb("realestate", realestate); }, [realestate, fbSynced]);
+  useEffect(() => { if (fbSynced && uid) saveToFb("scpi", scpi); }, [scpi, fbSynced]);
+  useEffect(() => { if (fbSynced && uid) saveToFb("savings", savings); }, [savings, fbSynced]);
+  useEffect(() => { if (fbSynced && uid) saveToFb("history", history); }, [history, fbSynced]);
 
   // Fetch 90 days ETH history in EUR from CoinGecko for crypto chart
   // Fetch 180 days AAPL+TSLA from Finnhub for stocks chart
@@ -2885,8 +2808,15 @@ function AppContent() {
             <div style={{ fontSize: 22, fontWeight: 800, color: "#F1F5F9", letterSpacing: "-0.5px" }}>
               Mon Patrimoine
             </div>
-            <div style={{ fontSize: 12, color: "#64748B", marginTop: 3 }}>
-              {lastUpdate ? `Actualisé à ${lastUpdate.toLocaleTimeString("fr-FR")}` : "Chargement…"} · toutes les 5 min
+            <div style={{ fontSize: 12, color: "#64748B", marginTop: 3, display:"flex", alignItems:"center", gap:8 }}>
+              <span>{lastUpdate ? `Actualisé à ${lastUpdate.toLocaleTimeString("fr-FR")}` : "Chargement…"} · toutes les 5 min</span>
+              {fbStatus === "saving" && <span style={{ color:"#818CF8" }}>☁ Sauvegarde…</span>}
+              {fbStatus === "saved"  && <span style={{ color:"#34D399" }}>☁ Sauvegardé</span>}
+              {fbStatus === "error"  && <span style={{ color:"#F87171" }}>☁ Erreur sync</span>}
+              {!fbSynced             && <span style={{ color:"#FBBF24" }}>⏳ Chargement Firebase…</span>}
+            </div>
+            <div style={{ fontSize: 11, color: "#334155", marginTop: 2 }}>
+              {user?.email} · <button onClick={() => signOut(auth)} style={{ background:"none", border:"none", color:"#475569", cursor:"pointer", fontSize:11, padding:0, textDecoration:"underline" }}>Déconnexion</button>
             </div>
           </div>
           <div style={{ textAlign: "right" }}>
@@ -2925,7 +2855,7 @@ function AppContent() {
         {view === "scpi"       && <ScpiView scpi={scpi} setScpi={setScpi} history={history} />}
         {view === "realestate" && <RealEstateView realestate={realestate} setRealestate={setRealestate} history={history} />}
         {view === "bank"       && <BankView bank={bank} setBank={setBank} />}
-        {view === "budget"     && <BudgetView />}
+        {view === "budget"     && <BudgetView uid={user?.uid} />}
       </div>
     </div>
   );
