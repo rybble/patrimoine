@@ -1569,18 +1569,25 @@ function BudgetView({ uid }) {
   const [editingCat,   setEditingCat]  = useState(null);
   const [editCatForm,  setEditCatForm] = useState({});
 
-  // ── Firebase sync budget — useRef pour timer stable ─────────────────────
-  const budgetTimers = useRef({});
+  // ── Firebase sync budget ─────────────────────────────────────────────────
+  const budgetSyncedRef = useRef(false);
+  const budgetTimers    = useRef({});
   const saveBudgetTx = useCallback((v) => {
-    if (!uid || !budgetSynced) return;
+    if (!uid || !budgetSyncedRef.current) return;
     clearTimeout(budgetTimers.current.tx);
-    budgetTimers.current.tx = setTimeout(() => uid && fbSet(uid, "budget_tx", v), 1500);
-  }, [uid, budgetSynced]);
+    budgetTimers.current.tx = setTimeout(async () => {
+      console.log("[FB] saving budget_tx");
+      await fbSet(uid, "budget_tx", v);
+    }, 1500);
+  }, [uid]);
   const saveBudgetCats = useCallback((v) => {
-    if (!uid || !budgetSynced) return;
+    if (!uid || !budgetSyncedRef.current) return;
     clearTimeout(budgetTimers.current.cats);
-    budgetTimers.current.cats = setTimeout(() => uid && fbSet(uid, "budget_cats", v), 1500);
-  }, [uid, budgetSynced]);
+    budgetTimers.current.cats = setTimeout(async () => {
+      console.log("[FB] saving budget_cats");
+      await fbSet(uid, "budget_cats", v);
+    }, 1500);
+  }, [uid]);
 
   // Load budget from Firestore on mount
   useEffect(() => {
@@ -1594,6 +1601,7 @@ function BudgetView({ uid }) {
       else {
         try { const c = JSON.parse(localStorage.getItem(BUDGET_CATS_KEY)); if(c) setCats(c); } catch {}
       }
+      budgetSyncedRef.current = true;
       setBudgetSynced(true);
     });
   }, [uid]);
@@ -2602,10 +2610,43 @@ function AppContent({ user }) {
   // ── Firebase sync ─────────────────────────────────────────────────────────
   const uid = user?.uid;
 
+  // Refs stables pour uid et fbSynced — accessibles dans les timers sans closure stale
+  const uidRef      = useRef(uid);
+  const syncedRef   = useRef(false);
+  const saveTimers  = useRef({});
+  useEffect(() => { uidRef.current = uid; }, [uid]);
+
+  // Sauvegarde directe (pas de debounce) — appelle fbSet immediatement
+  const saveToFb = useCallback(async (key, value) => {
+    const currentUid = uidRef.current;
+    if (!currentUid || !syncedRef.current) {
+      console.log("[FB] saveToFb skipped — uid:", currentUid, "synced:", syncedRef.current);
+      return;
+    }
+    console.log("[FB] saving", key);
+    setFbStatus("saving");
+    try {
+      await fbSet(currentUid, key, value);
+      setFbStatus("saved");
+      console.log("[FB] saved", key);
+      setTimeout(() => setFbStatus(""), 2000);
+    } catch(e) {
+      console.error("[FB] save error", key, e);
+      setFbStatus("error");
+    }
+  }, []);
+
+  // Debounce wrapper — evite les ecritures trop frequentes
+  const debouncedSave = useCallback((key, value) => {
+    clearTimeout(saveTimers.current[key]);
+    saveTimers.current[key] = setTimeout(() => saveToFb(key, value), 1500);
+  }, [saveToFb]);
+
   // Load all data from Firestore on mount
   useEffect(() => {
     if (!uid) return;
     const loadAll = async () => {
+      console.log("[FB] loading all for uid:", uid);
       try {
         const [fbCrypto, fbStocks, fbBank, fbRealestate, fbScpi, fbSavings, fbHist] = await Promise.all([
           fbGet(uid, "crypto"),
@@ -2616,42 +2657,34 @@ function AppContent({ user }) {
           fbGet(uid, "savings"),
           fbGet(uid, "history"),
         ]);
-        if (fbCrypto)    setCryptoData(fbCrypto);
-        if (fbStocks)    setStocks(fbStocks);
-        if (fbBank)      setBank(fbBank);
+        console.log("[FB] loaded — crypto:", !!fbCrypto, "stocks:", !!fbStocks);
+        if (fbCrypto)     setCryptoData(fbCrypto);
+        if (fbStocks)     setStocks(fbStocks);
+        if (fbBank)       setBank(fbBank);
         if (fbRealestate) setRealestate(fbRealestate);
-        if (fbScpi)      setScpi(fbScpi);
-        if (fbSavings)   setSavings(fbSavings);
-        if (fbHist)      setHistory(fbHist);
+        if (fbScpi)       setScpi(fbScpi);
+        if (fbSavings)    setSavings(fbSavings);
+        if (fbHist)       setHistory(fbHist);
+        syncedRef.current = true;
         setFbSynced(true);
-      } catch(e) { console.error("Firebase load error:", e); setFbSynced(true); }
+        console.log("[FB] sync ready");
+      } catch(e) {
+        console.error("[FB] load error:", e);
+        syncedRef.current = true;
+        setFbSynced(true);
+      }
     };
     loadAll();
   }, [uid]);
 
-  // Debounced save — useRef garantit un timer stable entre les renders
-  const saveTimers = useRef({});
-  const saveToFb = useCallback((key, value) => {
-    if (!uid || !fbSynced) return;
-    clearTimeout(saveTimers.current[key]);
-    saveTimers.current[key] = setTimeout(async () => {
-      setFbStatus("saving");
-      try {
-        await fbSet(uid, key, value);
-        setFbStatus("saved");
-        setTimeout(() => setFbStatus(""), 2000);
-      } catch(e) { setFbStatus("error"); }
-    }, 1500);
-  }, [uid, fbSynced]);
-
-  // Auto-save des qu'une donnee change (apres chargement initial)
-  useEffect(() => { saveToFb("crypto",     cryptoData);  }, [cryptoData,  fbSynced, uid]);
-  useEffect(() => { saveToFb("stocks",     stocks);      }, [stocks,      fbSynced, uid]);
-  useEffect(() => { saveToFb("bank",       bank);        }, [bank,        fbSynced, uid]);
-  useEffect(() => { saveToFb("realestate", realestate);  }, [realestate,  fbSynced, uid]);
-  useEffect(() => { saveToFb("scpi",       scpi);        }, [scpi,        fbSynced, uid]);
-  useEffect(() => { saveToFb("savings",    savings);     }, [savings,     fbSynced, uid]);
-  useEffect(() => { saveToFb("history",    history);     }, [history,     fbSynced, uid]);
+  // Auto-save des qu'une donnee change (seulement apres chargement initial)
+  useEffect(() => { if (fbSynced) debouncedSave("crypto",     cryptoData);  }, [cryptoData]);
+  useEffect(() => { if (fbSynced) debouncedSave("stocks",     stocks);      }, [stocks]);
+  useEffect(() => { if (fbSynced) debouncedSave("bank",       bank);        }, [bank]);
+  useEffect(() => { if (fbSynced) debouncedSave("realestate", realestate);  }, [realestate]);
+  useEffect(() => { if (fbSynced) debouncedSave("scpi",       scpi);        }, [scpi]);
+  useEffect(() => { if (fbSynced) debouncedSave("savings",    savings);     }, [savings]);
+  useEffect(() => { if (fbSynced) debouncedSave("history",    history);     }, [history]);
 
   // Fetch 90 days ETH history in EUR from CoinGecko for crypto chart
   // Fetch 180 days AAPL+TSLA from Finnhub for stocks chart
