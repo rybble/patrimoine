@@ -2731,10 +2731,10 @@ function AppContent({ user }) {
       const usdToEur = fxData?.usd?.eur || 0.92;
 
       // Stocks: Yahoo Finance (BYD, CSPX) + Finnhub (AAPL, TSLA) — voir ci-dessous
-      // ── Yahoo Finance pour BYD (1211.HK) et CSPX (CSPX.L) ──────────────────
+      // ── Yahoo Finance pour BYD (1211.HK) et CSPX (CSPX.AS) ─────────────────
       const yahooSymbols = {
         "BYD":  { ticker: "1211.HK", currency: "HKD" },
-        "CSPX": { ticker: "CSPX.L",  currency: "GBp" },  // coté en pence sterling
+        "CSPX": { ticker: "CSPX.AS", currency: "EUR" },  // iShares Core S&P500 USD Acc — coté en EUR sur Euronext Amsterdam
       };
 
       // Taux HKD→EUR et GBP→EUR
@@ -2763,6 +2763,7 @@ function AppContent({ user }) {
               let priceEur;
               if (currency === "HKD") priceEur = price * hkdToEur;
               else if (currency === "GBp") priceEur = (price / 100) * gbpToEur;
+              else if (currency === "USD") priceEur = price * usdToEur;
               else priceEur = price;
               stockUpdates[sym] = priceEur;
             }
