@@ -89,34 +89,83 @@ function pushHistoryPoint(totals) {
 }
 
 // ─── MINI AREA CHART ──────────────────────────────────────────────────────────
-function MiniAreaChart({ data, dataKey, color, height = 60 }) {
-  if (!data || data.length < 2) return (
+const PERIODS = [
+  { key:"24h",  label:"24h",   days:1   },
+  { key:"7d",   label:"7j",    days:7   },
+  { key:"30d",  label:"30j",   days:30  },
+  { key:"12m",  label:"12m",   days:365 },
+  { key:"all",  label:"Tout",  days:null },
+];
+
+function filterByPeriod(data, periodKey) {
+  if (!data || !data.length) return data;
+  const p = PERIODS.find(x => x.key === periodKey);
+  if (!p || p.days === null) return data;
+  const cutoff = new Date();
+  cutoff.setDate(cutoff.getDate() - p.days);
+  const cutoffStr = cutoff.toISOString().slice(0, 10);
+  const filtered = data.filter(d => d.date >= cutoffStr);
+  return filtered.length >= 2 ? filtered : data.slice(-2);
+}
+
+function PeriodSelector({ value, onChange }) {
+  return (
+    <div style={{ display:"flex", gap:4, marginBottom:8 }}>
+      {PERIODS.map(p => (
+        <button key={p.key} onClick={() => onChange(p.key)}
+          style={{ background: value===p.key ? "rgba(129,140,248,0.2)" : "transparent",
+            border: `1px solid ${value===p.key ? "#818CF8" : "rgba(255,255,255,0.08)"}`,
+            borderRadius:6, color: value===p.key ? "#818CF8" : "#64748B",
+            padding:"3px 9px", fontSize:11, cursor:"pointer", fontWeight: value===p.key ? 700 : 400 }}>
+          {p.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function MiniAreaChart({ data, dataKey, color, height = 60, showPeriodSelector = false }) {
+  const [period, setPeriod] = useState("all");
+  const filtered = showPeriodSelector ? filterByPeriod(data, period) : data;
+
+  if (!filtered || filtered.length < 2) return (
     <div style={{ height, display: "flex", alignItems: "center", justifyContent: "center", color: "#334155", fontSize: 12 }}>
       Pas encore assez de données historiques
     </div>
   );
+
+  // Domaine dynamique : Y part de la valeur min (pas de 0)
+  const vals = filtered.map(d => d[dataKey]).filter(Boolean);
+  const minVal = Math.min(...vals);
+  const maxVal = Math.max(...vals);
+  const padding = (maxVal - minVal) * 0.1 || 10;
+  const yDomain = [Math.floor(minVal - padding), Math.ceil(maxVal + padding)];
+
   return (
-    <ResponsiveContainer width="100%" height={height}>
-      <AreaChart data={data} margin={{ top: 4, right: 4, bottom: 0, left: 0 }}>
-        <defs>
-          <linearGradient id={`grad_${dataKey}`} x1="0" y1="0" x2="0" y2="1">
-            <stop offset="5%" stopColor={color} stopOpacity={0.25} />
-            <stop offset="95%" stopColor={color} stopOpacity={0} />
-          </linearGradient>
-        </defs>
-        <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.03)" />
-        <XAxis dataKey="date" tick={{ fontSize: 10, fill: "#64748B" }} tickLine={false} axisLine={false}
-          tickFormatter={d => d.slice(5)} interval="preserveStartEnd" />
-        <YAxis tick={{ fontSize: 10, fill: "#64748B" }} tickLine={false} axisLine={false}
-          tickFormatter={v => v >= 1000 ? `${(v/1000).toFixed(0)}k` : v} width={36} />
-        <Tooltip
-          contentStyle={{ background: "#1E293B", border: `1px solid #334155`, borderRadius: "10px", color: "#F1F5F9", fontSize: 12 }}
-          formatter={v => [fmt(v), "Valeur"]} labelFormatter={l => `📅 ${l}`}
-        />
-        <Area type="monotone" dataKey={dataKey} stroke={color} strokeWidth={1.5}
-          fill={`url(#grad_${dataKey})`} dot={false} activeDot={{ r: 4, fill: color }} />
-      </AreaChart>
-    </ResponsiveContainer>
+    <div>
+      {showPeriodSelector && <PeriodSelector value={period} onChange={setPeriod} />}
+      <ResponsiveContainer width="100%" height={height}>
+        <AreaChart data={filtered} margin={{ top: 4, right: 4, bottom: 0, left: 0 }}>
+          <defs>
+            <linearGradient id={`grad_${dataKey}_${period}`} x1="0" y1="0" x2="0" y2="1">
+              <stop offset="5%" stopColor={color} stopOpacity={0.25} />
+              <stop offset="95%" stopColor={color} stopOpacity={0} />
+            </linearGradient>
+          </defs>
+          <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.03)" />
+          <XAxis dataKey="date" tick={{ fontSize: 10, fill: "#64748B" }} tickLine={false} axisLine={false}
+            tickFormatter={d => d.slice(5)} interval="preserveStartEnd" />
+          <YAxis domain={yDomain} tick={{ fontSize: 10, fill: "#64748B" }} tickLine={false} axisLine={false}
+            tickFormatter={v => v >= 1000 ? `${(v/1000).toFixed(0)}k` : v} width={36} />
+          <Tooltip
+            contentStyle={{ background: "#1E293B", border: `1px solid #334155`, borderRadius: "10px", color: "#F1F5F9", fontSize: 12 }}
+            formatter={v => [fmt(v), "Valeur"]} labelFormatter={l => `📅 ${l}`}
+          />
+          <Area type="monotone" dataKey={dataKey} stroke={color} strokeWidth={1.5}
+            fill={`url(#grad_${dataKey}_${period})`} dot={false} activeDot={{ r: 4, fill: color }} />
+        </AreaChart>
+      </ResponsiveContainer>
+    </div>
   );
 }
 
@@ -380,7 +429,7 @@ function Overview({ cryptoData, cryptoPrices, stocks, bank, savings, oraPrice, r
         </div>
         <div style={{ fontSize: 12, color: "#64748B", marginTop: 6, marginBottom: 14 }}>Prix crypto en EUR · CoinGecko live</div>
         <Variation history={history} dataKey="total" color="#818CF8" />
-        <MiniAreaChart data={history} dataKey="total" color="#818CF8" height={80} />
+        <MiniAreaChart data={history} dataKey="total" color="#818CF8" height={80} showPeriodSelector={true} showPeriodSelector={true} />
       </Card>
 
       {/* Stats globales */}
@@ -541,8 +590,8 @@ function CryptoView({ cryptoData, setCryptoData, cryptoPrices, loading, history,
       <Card style={{ marginBottom: 14, padding: "14px 18px" }}>
         <div style={{ fontSize: 12, color: "#64748B", marginBottom: 4 }}>Évolution Crypto (€) — 90 jours · ETH via CoinGecko</div>
         {cryptoHistory && cryptoHistory.length > 1
-          ? <MiniAreaChart data={cryptoHistory} dataKey="crypto" color="#818CF8" height={100} />
-          : <><Variation history={history} dataKey="crypto" color="#818CF8" /><MiniAreaChart data={history} dataKey="crypto" color="#818CF8" height={90} /></>
+          ? <MiniAreaChart data={cryptoHistory} dataKey="crypto" color="#818CF8" height={100} showPeriodSelector={true} />
+          : <><Variation history={history} dataKey="crypto" color="#818CF8" /><MiniAreaChart data={history} dataKey="crypto" color="#818CF8" height={90} showPeriodSelector={true} /></>
         }
       </Card>
 
@@ -828,8 +877,8 @@ function StocksView({ stocks, setStocks, history, marketHistory }) {
         <div style={{ fontSize: 12, color: "#64748B", marginBottom: 4 }}>Évolution Bourse (€) — 6 mois · AAPL + TSLA via Finnhub</div>
         <div style={{ fontSize: 11, color: "#64748B", marginBottom: 8 }}>Courbe basée sur tes positions AAPL ({stocks.find(s=>s.symbol==="AAPL")?.qty} titres) et TSLA ({stocks.find(s=>s.symbol==="TSLA")?.qty} titres)</div>
         {marketHistory && marketHistory.length > 1
-          ? <MiniAreaChart data={marketHistory} dataKey="stocks" color="#34D399" height={100} />
-          : <><Variation history={history} dataKey="stocks" color="#34D399" /><MiniAreaChart data={history} dataKey="stocks" color="#34D399" height={90} /></>
+          ? <MiniAreaChart data={marketHistory} dataKey="stocks" color="#34D399" height={100} showPeriodSelector={true} />
+          : <><Variation history={history} dataKey="stocks" color="#34D399" /><MiniAreaChart data={history} dataKey="stocks" color="#34D399" height={90} showPeriodSelector={true} /></>
         }
       </Card>
 
@@ -1097,7 +1146,7 @@ function ScpiView({ scpi, setScpi, history }) {
       <Card style={{ marginBottom: 14, padding: "14px 18px" }}>
         <div style={{ fontSize: 12, color: "#64748B", marginBottom: 8 }}>Évolution SCPI (€)</div>
         <Variation history={history} dataKey="scpi" color="#A78BFA" />
-        <MiniAreaChart data={history} dataKey="scpi" color="#A78BFA" height={90} />
+        <MiniAreaChart data={history} dataKey="scpi" color="#A78BFA" height={90} showPeriodSelector={true} />
       </Card>
 
       {/* Staleness alert */}
@@ -1319,7 +1368,7 @@ function RealEstateView({ realestate, setRealestate, history }) {
       <Card style={{ marginBottom: 14, padding: "14px 18px" }}>
         <div style={{ fontSize: 12, color: "#64748B", marginBottom: 8 }}>Évolution valeur immobilier (€)</div>
         <Variation history={history} dataKey="realestate" color="#F472B6" />
-        <MiniAreaChart data={history} dataKey="realestate" color="#F472B6" height={90} />
+        <MiniAreaChart data={history} dataKey="realestate" color="#F472B6" height={90} showPeriodSelector={true} />
       </Card>
 
       <Card style={{ background: "rgba(244,114,182,0.06)", border: "1px solid rgba(244,114,182,0.2)", marginBottom: 18, padding: "12px 18px", fontSize: 13, color: "#F9A8D4" }}>
@@ -1532,7 +1581,7 @@ function parseBudgetCSV(text) {
   return parsed;
 }
 
-function BudgetView({ uid }) {
+function BudgetView({ uid, quickAddTx, setQuickAddTx, onCatsChange }) {
   // ── State ────────────────────────────────────────────────────────────────
   const [transactions, setTransactions] = useState([]);
   const [cats, setCats] = useState({ entree: DEFAULT_CATS_ENTREE, sortie: DEFAULT_CATS_SORTIE });
@@ -1550,6 +1599,7 @@ function BudgetView({ uid }) {
 
   // Add form
   const [form, setForm] = useState({ es:"Sortie", type:"", montant:"", note:"", annee: new Date().getFullYear(), mois: new Date().getMonth()+1 });
+  const [budgetPeriod, setBudgetPeriod] = useState("12m");
 
   // Edit transactions
   const [editingTx,   setEditingTx]   = useState(null); // id
@@ -1608,7 +1658,19 @@ function BudgetView({ uid }) {
 
   // Auto-save on change
   useEffect(() => { if (budgetSynced) saveBudgetTx(transactions); }, [transactions, budgetSynced]);
-  useEffect(() => { if (budgetSynced) saveBudgetCats(cats); }, [cats, budgetSynced]);
+
+  // Absorber les transactions ajoutées via le bouton flottant
+  useEffect(() => {
+    if (!quickAddTx || quickAddTx.length === 0) return;
+    setTransactions(prev => [...prev, ...quickAddTx]);
+    if (setQuickAddTx) setQuickAddTx([]);
+  }, [quickAddTx]);
+  useEffect(() => {
+    if (budgetSynced) {
+      saveBudgetCats(cats);
+      if (onCatsChange) onCatsChange(cats);
+    }
+  }, [cats, budgetSynced]);
 
   // ── Helpers ───────────────────────────────────────────────────────────────
   const getColor = (type, es) => {
@@ -1832,9 +1894,12 @@ function BudgetView({ uid }) {
           </div>
 
           <Card style={{ marginBottom:14, padding:"16px 20px" }}>
-            <div style={{ fontSize:13, fontWeight:600, color:"#F1F5F9", marginBottom:12 }}>Évolution mensuelle {curYear}</div>
+            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:8 }}>
+              <div style={{ fontSize:13, fontWeight:600, color:"#F1F5F9" }}>Évolution mensuelle</div>
+              <PeriodSelector value={budgetPeriod} onChange={setBudgetPeriod} />
+            </div>
             <ResponsiveContainer width="100%" height={200}>
-              <BarChart data={evol} barGap={2} barCategoryGap="25%">
+              <BarChart data={evolFiltered} barGap={2} barCategoryGap="25%">
                 <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
                 <XAxis dataKey="label" tick={{ fill:"#64748B", fontSize:11 }} axisLine={false} tickLine={false} />
                 <YAxis tick={{ fill:"#64748B", fontSize:10 }} axisLine={false} tickLine={false} tickFormatter={v=>`${(v/1000).toFixed(0)}k`} />
@@ -1847,22 +1912,29 @@ function BudgetView({ uid }) {
           </Card>
 
           <Card style={{ marginBottom:14, padding:"16px 20px" }}>
-            <div style={{ fontSize:13, fontWeight:600, color:"#F1F5F9", marginBottom:12 }}>Solde mensuel {curYear}</div>
-            <ResponsiveContainer width="100%" height={130}>
-              <AreaChart data={evol}>
-                <defs>
-                  <linearGradient id="soldeGrad" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="#818CF8" stopOpacity={0.3}/>
-                    <stop offset="95%" stopColor="#818CF8" stopOpacity={0}/>
-                  </linearGradient>
-                </defs>
-                <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
-                <XAxis dataKey="label" tick={{ fill:"#64748B", fontSize:11 }} axisLine={false} tickLine={false} />
-                <YAxis tick={{ fill:"#64748B", fontSize:10 }} axisLine={false} tickLine={false} tickFormatter={v=>`${(v/1000).toFixed(1)}k`} />
-                <Tooltip contentStyle={{ background:"#1E293B", border:"1px solid #334155", borderRadius:8, fontSize:12 }} formatter={v=>[fmt(v),"Solde"]} />
-                <Area type="monotone" dataKey="solde" stroke="#818CF8" strokeWidth={2} fill="url(#soldeGrad)" dot={{ fill:"#818CF8", r:3 }} />
-              </AreaChart>
-            </ResponsiveContainer>
+            <div style={{ fontSize:13, fontWeight:600, color:"#F1F5F9", marginBottom:12 }}>Solde mensuel</div>
+            {(() => {
+              const soldes = evolFiltered.map(d => d.solde).filter(Boolean);
+              const minS = Math.min(...soldes), maxS = Math.max(...soldes);
+              const padS = (maxS - minS) * 0.15 || 50;
+              return (
+                <ResponsiveContainer width="100%" height={130}>
+                  <AreaChart data={evolFiltered}>
+                    <defs>
+                      <linearGradient id="soldeGrad" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%" stopColor="#818CF8" stopOpacity={0.3}/>
+                        <stop offset="95%" stopColor="#818CF8" stopOpacity={0}/>
+                      </linearGradient>
+                    </defs>
+                    <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
+                    <XAxis dataKey="label" tick={{ fill:"#64748B", fontSize:11 }} axisLine={false} tickLine={false} />
+                    <YAxis domain={[Math.floor(minS-padS), Math.ceil(maxS+padS)]} tick={{ fill:"#64748B", fontSize:10 }} axisLine={false} tickLine={false} tickFormatter={v=>`${(v/1000).toFixed(1)}k`} />
+                    <Tooltip contentStyle={{ background:"#1E293B", border:"1px solid #334155", borderRadius:8, fontSize:12 }} formatter={v=>[fmt(v),"Solde"]} />
+                    <Area type="monotone" dataKey="solde" stroke="#818CF8" strokeWidth={2} fill="url(#soldeGrad)" dot={{ fill:"#818CF8", r:3 }} />
+                  </AreaChart>
+                </ResponsiveContainer>
+              );
+            })()}
           </Card>
 
           <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:14, marginBottom:14 }}>
@@ -2568,6 +2640,128 @@ function LoginScreen({ onLogin }) {
   );
 }
 
+// ─── QUICK ADD MODAL ──────────────────────────────────────────────────────────
+function QuickAddModal({ onClose, onAdd, cats }) {
+  const now = new Date();
+  const [es,      setEs]      = useState("Sortie");
+  const [cat,     setCat]     = useState("");
+  const [montant, setMontant] = useState("");
+  const [note,    setNote]    = useState("");
+  const [annee,   setAnnee]   = useState(now.getFullYear());
+  const [mois,    setMois]    = useState(now.getMonth() + 1);
+  const [saved,   setSaved]   = useState(false);
+
+  const catList = es === "Entrée" ? (cats?.entree || []) : (cats?.sortie || []);
+
+  // Sélection auto de la première catégorie quand on change de type
+  useEffect(() => { if (catList.length) setCat(catList[0].name); }, [es]);
+
+  const doAdd = () => {
+    if (!cat || !montant) return;
+    onAdd({ id:`tx-${Date.now()}`, annee:parseInt(annee), mois:parseInt(mois), es, type:cat, montant:parseFloat(montant), note });
+    setMontant(""); setNote("");
+    setSaved(true); setTimeout(() => setSaved(false), 1200);
+  };
+
+  const inp = { background:"#1E293B", border:"1px solid #334155", borderRadius:8,
+    padding:"10px 14px", color:"#F1F5F9", fontSize:15, outline:"none", width:"100%", boxSizing:"border-box" };
+
+  // Raccourcis clavier
+  useEffect(() => {
+    const handler = (e) => { if (e.key === "Escape") onClose(); };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, []);
+
+  return (
+    <div style={{ position:"fixed", inset:0, zIndex:1000, display:"flex", alignItems:"flex-end", justifyContent:"center" }}
+      onClick={e => e.target === e.currentTarget && onClose()}>
+      {/* Backdrop */}
+      <div style={{ position:"absolute", inset:0, background:"rgba(0,0,0,0.6)", backdropFilter:"blur(4px)" }} onClick={onClose} />
+
+      {/* Panel bas de page */}
+      <div style={{ position:"relative", zIndex:1, width:"100%", maxWidth:520,
+        background:"#0F172A", border:"1px solid rgba(255,255,255,0.1)", borderBottom:"none",
+        borderRadius:"24px 24px 0 0", padding:"20px 20px 32px",
+        animation:"slideUp 0.25s ease" }}>
+        <style>{`@keyframes slideUp { from{transform:translateY(100%)} to{transform:translateY(0)} }`}</style>
+
+        {/* Handle */}
+        <div style={{ width:40, height:4, background:"#334155", borderRadius:2, margin:"0 auto 18px" }} />
+
+        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:16 }}>
+          <div style={{ fontSize:16, fontWeight:700, color:"#F1F5F9" }}>Nouvelle transaction</div>
+          <button onClick={onClose} style={{ background:"rgba(255,255,255,0.06)", border:"none", borderRadius:8,
+            color:"#64748B", width:32, height:32, cursor:"pointer", fontSize:16 }}>✕</button>
+        </div>
+
+        {/* Toggle Sortie / Entrée */}
+        <div style={{ display:"flex", gap:8, marginBottom:14 }}>
+          {["Sortie","Entrée"].map(t => (
+            <button key={t} onClick={() => setEs(t)}
+              style={{ flex:1, padding:"9px 0", borderRadius:10, border:"none", cursor:"pointer", fontWeight:700, fontSize:14,
+                background: es===t ? (t==="Sortie"?"#F87171":"#34D399") : "rgba(255,255,255,0.06)",
+                color: es===t ? "#0B1120" : "#64748B" }}>
+              {t === "Sortie" ? "📤 Dépense" : "📥 Entrée"}
+            </button>
+          ))}
+        </div>
+
+        {/* Montant — gros et centré */}
+        <div style={{ marginBottom:14, textAlign:"center" }}>
+          <div style={{ position:"relative", display:"inline-flex", alignItems:"center", width:"100%" }}>
+            <span style={{ position:"absolute", left:14, fontSize:20, color:"#64748B", pointerEvents:"none" }}>€</span>
+            <input type="number" step="0.01" autoFocus value={montant}
+              onChange={e => setMontant(e.target.value)}
+              onKeyDown={e => e.key === "Enter" && doAdd()}
+              placeholder="0.00"
+              style={{ ...inp, fontSize:24, fontWeight:700, textAlign:"center", paddingLeft:32,
+                color: es==="Sortie" ? "#F87171" : "#34D399",
+                border:`1px solid ${es==="Sortie" ? "rgba(248,113,113,0.3)" : "rgba(52,211,153,0.3)"}` }} />
+          </div>
+        </div>
+
+        {/* Catégorie — scroll horizontal sur mobile */}
+        <div style={{ display:"flex", gap:6, overflowX:"auto", marginBottom:12, paddingBottom:4 }}>
+          {catList.map(c => (
+            <button key={c.name} onClick={() => setCat(c.name)}
+              style={{ flexShrink:0, padding:"6px 12px", borderRadius:20, border:"none", cursor:"pointer", fontSize:12, fontWeight:600,
+                background: cat===c.name ? c.color : "rgba(255,255,255,0.06)",
+                color: cat===c.name ? "#0B1120" : "#94A3B8" }}>
+              {c.name}
+            </button>
+          ))}
+        </div>
+
+        {/* Ligne date + note */}
+        <div style={{ display:"grid", gridTemplateColumns:"80px 80px 1fr", gap:8, marginBottom:16 }}>
+          <select value={mois} onChange={e=>setMois(e.target.value)}
+            style={{ ...inp, fontSize:13, padding:"8px 10px" }}>
+            {["Jan","Fév","Mar","Avr","Mai","Jun","Jul","Aoû","Sep","Oct","Nov","Déc"].map((m,i)=>
+              <option key={i+1} value={i+1}>{m}</option>)}
+          </select>
+          <select value={annee} onChange={e=>setAnnee(e.target.value)}
+            style={{ ...inp, fontSize:13, padding:"8px 10px" }}>
+            {[2024,2025,2026,2027].map(y=><option key={y} value={y}>{y}</option>)}
+          </select>
+          <input value={note} onChange={e=>setNote(e.target.value)}
+            onKeyDown={e=>e.key==="Enter"&&doAdd()}
+            placeholder="Note (Carrefour, Amazon…)" style={{ ...inp, fontSize:13 }} />
+        </div>
+
+        {/* Bouton valider */}
+        <button onClick={doAdd} disabled={!cat || !montant}
+          style={{ width:"100%", padding:"13px", borderRadius:12, border:"none", cursor:"pointer",
+            background: !cat||!montant ? "#1E293B" : "linear-gradient(135deg,#6366F1,#4F46E5)",
+            color: !cat||!montant ? "#475569" : "#fff", fontSize:15, fontWeight:700,
+            transition:"all 0.2s" }}>
+          {saved ? "✅ Ajouté !" : "✓ Ajouter"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export default function App() {
   const [user,          setUser]          = useState(null);
   const [authChecked,   setAuthChecked]   = useState(false);
@@ -2605,7 +2799,10 @@ function AppContent({ user }) {
   const [history, setHistory] = useState(() => loadHistory());
   const [marketHistory, setMarketHistory] = useState({ stocks: [], crypto: [] });
   const [fbSynced, setFbSynced] = useState(false);
-  const [fbStatus, setFbStatus] = useState(""); // "", "saving", "saved", "error"
+  const [fbStatus, setFbStatus] = useState("");
+  const [showQuickAdd, setShowQuickAdd] = useState(false);
+  const [quickAddCats, setQuickAddCats] = useState({ entree:[], sortie:[] });
+  const [quickAddTx,   setQuickAddTx]   = useState([]); // "", "saving", "saved", "error"
 
   // ── Firebase sync ─────────────────────────────────────────────────────────
   const uid = user?.uid;
@@ -2817,17 +3014,19 @@ function AppContent({ user }) {
         })
       );
 
-      // Fetch AAPL + TSLA via Finnhub (USD)
-      const finnhubSymbols = {
-        "AAPL": { finnSym: "AAPL", currency: "USD" },
-        "TSLA": { finnSym: "TSLA", currency: "USD" },
-      };
+      // Fetch AAPL + TSLA via Yahoo Finance (USD → EUR)
+      const usStocks = { "AAPL": "AAPL", "TSLA": "TSLA" };
       await Promise.all(
-        Object.entries(finnhubSymbols).map(async ([sym, { finnSym }]) => {
+        Object.entries(usStocks).map(async ([sym, ticker]) => {
           try {
-            const r = await fetch(`https://finnhub.io/api/v1/quote?symbol=${finnSym}&token=${FINNHUB_KEY}`);
-            const q = await r.json();
-            if (q.c && q.c > 0) stockUpdates[sym] = q.c * usdToEur;
+            const proxyUrl = `https://api.allorigins.win/get?url=${encodeURIComponent(
+              `https://query1.finance.yahoo.com/v8/finance/chart/${ticker}?interval=1d&range=1d`
+            )}`;
+            const res  = await fetch(proxyUrl);
+            const wrap = await res.json();
+            const data = JSON.parse(wrap.contents);
+            const price = data?.chart?.result?.[0]?.meta?.regularMarketPrice;
+            if (price && price > 0) stockUpdates[sym] = price * usdToEur;
           } catch {}
         })
       );
@@ -2950,8 +3149,35 @@ function AppContent({ user }) {
         {view === "scpi"       && <ScpiView scpi={scpi} setScpi={setScpi} history={history} />}
         {view === "realestate" && <RealEstateView realestate={realestate} setRealestate={setRealestate} history={history} />}
         {view === "bank"       && <BankView bank={bank} setBank={setBank} />}
-        {view === "budget"     && <BudgetView uid={user?.uid} />}
+        {view === "budget"     && <BudgetView uid={user?.uid} onOpenQuickAdd={() => setShowQuickAdd(true)} quickAddTx={quickAddTx} setQuickAddTx={setQuickAddTx} onCatsChange={setQuickAddCats} />}
       </div>
+
+      {/* ── Bouton flottant ➕ ─────────────────────────────────── */}
+      <button onClick={() => setShowQuickAdd(true)}
+        style={{ position:"fixed", bottom:28, right:24, zIndex:900,
+          width:56, height:56, borderRadius:"50%", border:"none", cursor:"pointer",
+          background:"linear-gradient(135deg,#6366F1,#4F46E5)",
+          color:"#fff", fontSize:26, fontWeight:700, lineHeight:1,
+          boxShadow:"0 4px 24px rgba(99,102,241,0.5)",
+          display:"flex", alignItems:"center", justifyContent:"center",
+          transition:"transform 0.15s, box-shadow 0.15s" }}
+        onMouseEnter={e => { e.currentTarget.style.transform="scale(1.1)"; e.currentTarget.style.boxShadow="0 6px 32px rgba(99,102,241,0.7)"; }}
+        onMouseLeave={e => { e.currentTarget.style.transform="scale(1)"; e.currentTarget.style.boxShadow="0 4px 24px rgba(99,102,241,0.5)"; }}>
+        +
+      </button>
+
+      {/* ── Modal saisie rapide ───────────────────────────────── */}
+      {showQuickAdd && (
+        <QuickAddModal
+          cats={quickAddCats}
+          onClose={() => setShowQuickAdd(false)}
+          onAdd={(tx) => {
+            setQuickAddTx(prev => [...prev, tx]);
+            // Déclencher sauvegarde Firebase via un event custom
+            window.dispatchEvent(new CustomEvent("patrimoine:quickadd", { detail: tx }));
+          }}
+        />
+      )}
     </div>
   );
 }
