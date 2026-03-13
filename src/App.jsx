@@ -547,123 +547,144 @@ function Overview({ cryptoData, cryptoPrices, stocks, bank, savings, oraPrice, r
 // ─── CRYPTO TREEMAP ───────────────────────────────────────────────────────────
 function CryptoTreemap({ cryptoData, cryptoPrices }) {
   const total = cryptoData.reduce((s, c) => s + (cryptoPrices[c.code]?.eur || 0) * c.qty, 0);
+  const containerRef = useRef(null);
+  const [W, setW] = useState(600);
+  useEffect(() => {
+    if (!containerRef.current) return;
+    const ro = new ResizeObserver(e => setW(e[0].contentRect.width));
+    ro.observe(containerRef.current);
+    return () => ro.disconnect();
+  }, []);
+
   if (!total) return null;
 
-  // Trier par valeur décroissante
+  const H = Math.round(W * 0.52);
+  const GAP = 3;
+
   const items = [...cryptoData]
     .map(c => ({ ...c, value: (cryptoPrices[c.code]?.eur || 0) * c.qty }))
     .filter(c => c.value > 0)
     .sort((a, b) => b.value - a.value);
 
-  // Algorithme squarified treemap (slice-and-dice simplifié)
-  function layout(items, x, y, w, h) {
-    if (!items.length) return [];
-    const totalVal = items.reduce((s, i) => s + i.value, 0);
-    const rects = [];
-    let remaining = [...items];
-    let cx = x, cy = y, cw = w, ch = h;
-
-    while (remaining.length) {
-      const isHoriz = cw >= ch;
-      const rowVal  = remaining.slice(0, Math.max(1, Math.round(remaining.length * (isHoriz ? cw/w : ch/h)))).reduce((s,i)=>s+i.value,0);
-      // Nombre d'items dans cette rangée
-      let rowCount = 0, acc = 0;
-      const limit = isHoriz ? cw : ch;
-      for (let i = 0; i < remaining.length; i++) {
-        acc += remaining[i].value;
-        rowCount++;
-        if (acc / totalVal * (isHoriz ? w : h) >= limit * 0.5 || i === remaining.length-1) break;
-      }
-      rowCount = Math.max(1, rowCount);
-      const rowItems = remaining.splice(0, rowCount);
-      const rowTotal = rowItems.reduce((s,i)=>s+i.value, 0);
-      const frac     = rowTotal / totalVal;
-      const rowSize  = isHoriz ? cw * (rowTotal/(remaining.length ? totalVal : rowTotal + remaining.reduce((s,i)=>s+i.value,0))) : ch * frac;
-
-      let pos = isHoriz ? cy : cx;
-      rowItems.forEach(item => {
-        const itemFrac = item.value / rowTotal;
-        const itemSize = (isHoriz ? ch : cw) * itemFrac;
-        if (isHoriz) {
-          rects.push({ ...item, x:cx, y:pos, w:rowSize, h:itemSize });
-          pos += itemSize;
-        } else {
-          rects.push({ ...item, x:pos, y:cy, w:itemSize, h:rowSize });
-          pos += itemSize;
-        }
-      });
-      if (isHoriz) { cx += rowSize; cw -= rowSize; }
-      else         { cy += rowSize; ch -= rowSize; }
-    }
-    return rects;
+  // ── Vrai algorithme Squarified Treemap (Bruls et al.) ──────────────────────
+  function worst(row, w) {
+    const s = row.reduce((a, b) => a + b, 0);
+    const rMax = Math.max(...row), rMin = Math.min(...row);
+    return Math.max((w * w * rMax) / (s * s), (s * s) / (w * w * rMin));
   }
 
-  const [dims, setDims] = useState({ w: 340, h: 260 });
-  const containerRef = useRef(null);
-  useEffect(() => {
-    if (!containerRef.current) return;
-    const ro = new ResizeObserver(entries => {
-      const { width } = entries[0].contentRect;
-      setDims({ w: width, h: Math.max(200, Math.round(width * 0.65)) });
-    });
-    ro.observe(containerRef.current);
-    return () => ro.disconnect();
-  }, []);
+  function squarify(values, x, y, w, h) {
+    if (!values.length) return [];
+    const results = [];
+    let remaining = [...values];
 
-  const rects = layout(items, 0, 0, dims.w, dims.h);
-  const gap = 2;
+    function layoutRow(row, isHoriz, x, y, w, h) {
+      const rowSum = row.reduce((a, b) => a + b, 0);
+      const totalSum = remaining.reduce((a, b) => a + b, 0) + rowSum;
+      let pos = isHoriz ? y : x;
+      const rowSize = isHoriz ? w * rowSum / totalSum : h * rowSum / totalSum;
+      return row.map(v => {
+        const itemSize = (isHoriz ? h : w) * v / rowSum;
+        const rect = isHoriz
+          ? { x, y: pos, w: rowSize, h: itemSize }
+          : { x: pos, y, w: itemSize, h: rowSize };
+        pos += itemSize;
+        return rect;
+      });
+    }
+
+    function recurse(values, x, y, w, h) {
+      if (!values.length) return;
+      if (values.length === 1) {
+        results.push({ idx: values[0].idx, x, y, w, h });
+        return;
+      }
+      const isHoriz = w >= h;
+      const shortSide = isHoriz ? h : w;
+      const areaTotal = values.reduce((s, v) => s + v.val, 0);
+      const scale = (w * h) / areaTotal;
+      const scaled = values.map(v => v.val * scale);
+
+      let row = [], i = 0;
+      while (i < scaled.length) {
+        const testRow = [...row, scaled[i]];
+        if (row.length && worst(testRow, shortSide) > worst(row, shortSide)) break;
+        row = testRow;
+        i++;
+      }
+
+      const rowItems = values.slice(0, row.length);
+      const restItems = values.slice(row.length);
+      const rects = layoutRow(row, isHoriz, x, y, w, h);
+      rects.forEach((r, j) => results.push({ idx: rowItems[j].idx, ...r }));
+
+      if (restItems.length) {
+        const rowSum = rowItems.reduce((s, v) => s + v.val, 0);
+        const frac = rowSum / areaTotal;
+        if (isHoriz) recurse(restItems, x + w * frac, y, w * (1 - frac), h);
+        else         recurse(restItems, x, y + h * frac, w, h * (1 - frac));
+      }
+    }
+
+    const total = values.reduce((s, v) => s + v, 0);
+    recurse(values.map((v, i) => ({ val: v, idx: i })), x, y, w, h);
+    return results;
+  }
+
+  const vals = items.map(c => c.value);
+  const rects = squarify(vals, 0, 0, W, H);
 
   return (
-    <div ref={containerRef} style={{ width:"100%", marginBottom:14 }}>
-      <svg width={dims.w} height={dims.h} style={{ display:"block", borderRadius:12, overflow:"hidden" }}>
-        {rects.map((r, i) => {
-          const rx = r.x + gap/2, ry = r.y + gap/2;
-          const rw = r.w - gap, rh = r.h - gap;
-          if (rw < 4 || rh < 4) return null;
-          const pct = (r.value / total * 100).toFixed(1);
-          const showSymbol = rw > 30 && rh > 22;
-          const showPct    = rw > 50 && rh > 40;
-          const showVal    = rw > 70 && rh > 55;
-          const fs = Math.min(rw * 0.22, rh * 0.28, 28);
-          // Couleur plus sombre pour le fond
-          const bg = r.color;
+    <div ref={containerRef} style={{ width:"100%" }}>
+      <svg width={W} height={H} style={{ display:"block", borderRadius:10, overflow:"hidden", background:"#0B1120" }}>
+        <defs>
+          <linearGradient id="tmShine" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%"   stopColor="rgba(255,255,255,0.10)" />
+            <stop offset="100%" stopColor="rgba(0,0,0,0.30)" />
+          </linearGradient>
+        </defs>
+        {rects.map(r => {
+          const item = items[r.idx];
+          const rx = r.x + GAP/2, ry = r.y + GAP/2;
+          const rw = r.w - GAP,   rh = r.h - GAP;
+          if (rw < 2 || rh < 2) return null;
+          const pct   = (item.value / total * 100).toFixed(1);
+          const fs    = Math.min(Math.max(rw * 0.18, 9), rh * 0.3, 32);
+          const showSym = rw > 28 && rh > 18;
+          const showPct = rw > 45 && rh > 36 && fs >= 11;
+          const showVal = rw > 65 && rh > 54 && fs >= 12;
+          // Nb de lignes affichées → centrage vertical
+          const lines   = (showSym?1:0) + (showPct?1:0) + (showVal?1:0);
+          const lineH   = fs * 1.4;
+          const totalH  = lines * lineH;
+          let lineY     = ry + rh/2 - totalH/2 + lineH/2;
+
           return (
-            <g key={r.code}>
-              <rect x={rx} y={ry} width={rw} height={rh} rx={6} fill={bg} fillOpacity={0.85} />
-              <rect x={rx} y={ry} width={rw} height={rh} rx={6}
-                fill="url(#tmGrad)" />
-              {showSymbol && (
-                <text x={rx + rw/2} y={ry + rh/2 + (showPct ? -fs*0.3 : fs*0.35)}
-                  textAnchor="middle" dominantBaseline="middle"
-                  fill="rgba(255,255,255,0.95)" fontWeight="800"
-                  fontSize={Math.max(11, fs)}
-                  style={{ fontFamily:"'Syne','DM Sans',sans-serif", letterSpacing:"-0.5px" }}>
-                  {r.code}
+            <g key={item.code}>
+              <rect x={rx} y={ry} width={rw} height={rh} rx={5} fill={item.color} fillOpacity={0.88} />
+              <rect x={rx} y={ry} width={rw} height={rh} rx={5} fill="url(#tmShine)" />
+              {showSym && (
+                <text x={rx+rw/2} y={lineY} textAnchor="middle" dominantBaseline="middle"
+                  fill="rgba(255,255,255,0.96)" fontWeight="800" fontSize={fs}
+                  fontFamily="'Syne','DM Sans',sans-serif" letterSpacing="-0.5">
+                  {item.code}
                 </text>
               )}
-              {showPct && (
-                <text x={rx + rw/2} y={ry + rh/2 + fs*0.8}
-                  textAnchor="middle" dominantBaseline="middle"
-                  fill="rgba(255,255,255,0.65)" fontSize={Math.max(9, fs*0.45)}>
+              {showPct && (() => { lineY += lineH; return (
+                <text key="pct" x={rx+rw/2} y={lineY} textAnchor="middle" dominantBaseline="middle"
+                  fill="rgba(255,255,255,0.60)" fontSize={Math.max(8, fs*0.48)} fontFamily="'DM Sans',sans-serif">
                   {pct}%
                 </text>
-              )}
-              {showVal && (
-                <text x={rx + rw/2} y={ry + rh/2 + fs*1.5}
-                  textAnchor="middle" dominantBaseline="middle"
-                  fill="rgba(255,255,255,0.45)" fontSize={Math.max(8, fs*0.38)}>
-                  {fmt(r.value)}
+              ); })()}
+              {showVal && (() => { lineY += lineH; return (
+                <text key="val" x={rx+rw/2} y={lineY} textAnchor="middle" dominantBaseline="middle"
+                  fill="rgba(255,255,255,0.40)" fontSize={Math.max(7, fs*0.40)} fontFamily="'DM Sans',sans-serif">
+                  {fmt(item.value)}
                 </text>
-              )}
+              ); })()}
             </g>
           );
         })}
-        <defs>
-          <linearGradient id="tmGrad" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%"   stopColor="rgba(255,255,255,0.08)" />
-            <stop offset="100%" stopColor="rgba(0,0,0,0.25)" />
-          </linearGradient>
-        </defs>
       </svg>
     </div>
   );
