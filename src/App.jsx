@@ -129,40 +129,94 @@ function MiniAreaChart({ data, dataKey, color, height = 60, showPeriodSelector =
   const filtered = showPeriodSelector ? filterByPeriod(data, period) : data;
 
   if (!filtered || filtered.length < 2) return (
-    <div style={{ height, display: "flex", alignItems: "center", justifyContent: "center", color: "#334155", fontSize: 12 }}>
+    <div style={{ height, display:"flex", alignItems:"center", justifyContent:"center", color:"#334155", fontSize:12 }}>
       Pas encore assez de données historiques
     </div>
   );
 
-  // Domaine dynamique : Y part de la valeur min (pas de 0)
-  const vals = filtered.map(d => d[dataKey]).filter(Boolean);
+  const vals = filtered.map(d => d[dataKey]).filter(v => v != null && !isNaN(v));
   const minVal = Math.min(...vals);
   const maxVal = Math.max(...vals);
-  const padding = (maxVal - minVal) * 0.1 || 10;
-  const yDomain = [Math.floor(minVal - padding), Math.ceil(maxVal + padding)];
+  const range  = maxVal - minVal || 1;
+  const pad    = range * 0.12;
+  const yMin   = minVal - pad;
+  const yMax   = maxVal + pad;
+  const isUp   = vals[vals.length-1] >= vals[0];
+  const lineColor = isUp ? "#00C8A0" : "#FF5B7F";
+  const gradColor = isUp ? "#00C8A0" : "#FF5B7F";
+
+  const CustomTooltip = ({ active, payload, label }) => {
+    if (!active || !payload?.length) return null;
+    return (
+      <div style={{ background:"#0F1929", border:"1px solid #1E3050", borderRadius:8,
+        padding:"8px 14px", fontSize:12, color:"#E2E8F0", boxShadow:"0 4px 20px rgba(0,0,0,0.5)" }}>
+        <div style={{ color:"#64748B", marginBottom:3 }}>{label}</div>
+        <div style={{ color:lineColor, fontWeight:700, fontSize:14 }}>{fmt(payload[0].value)}</div>
+      </div>
+    );
+  };
+
+  const tickFmt = v => {
+    if (v >= 1000000) return `${(v/1000000).toFixed(1)}M`;
+    if (v >= 1000) return `${(v/1000).toFixed(0)}k`;
+    return v.toFixed(0);
+  };
 
   return (
-    <div>
-      {showPeriodSelector && <PeriodSelector value={period} onChange={setPeriod} />}
+    <div style={{ background:"transparent" }}>
+      {showPeriodSelector && (
+        <div style={{ display:"flex", gap:3, marginBottom:10 }}>
+          {PERIODS.map(p => (
+            <button key={p.key} onClick={() => setPeriod(p.key)} style={{
+              background: period===p.key ? "rgba(0,200,160,0.15)" : "transparent",
+              border: `1px solid ${period===p.key ? "rgba(0,200,160,0.5)" : "rgba(255,255,255,0.07)"}`,
+              borderRadius:5, color: period===p.key ? "#00C8A0" : "#475569",
+              padding:"3px 10px", fontSize:11, cursor:"pointer", fontWeight: period===p.key ? 700 : 400,
+              transition:"all 0.15s"
+            }}>{p.label}</button>
+          ))}
+          {/* Badge variation */}
+          {vals.length >= 2 && (() => {
+            const pct = ((vals[vals.length-1] - vals[0]) / (vals[0]||1)) * 100;
+            return (
+              <span style={{ marginLeft:"auto", fontSize:12, fontWeight:700,
+                color: pct >= 0 ? "#00C8A0" : "#FF5B7F",
+                background: pct >= 0 ? "rgba(0,200,160,0.1)" : "rgba(255,91,127,0.1)",
+                border:`1px solid ${pct>=0?"rgba(0,200,160,0.3)":"rgba(255,91,127,0.3)"}`,
+                borderRadius:5, padding:"2px 8px" }}>
+                {pct >= 0 ? "▲" : "▼"} {Math.abs(pct).toFixed(2)}%
+              </span>
+            );
+          })()}
+        </div>
+      )}
       <ResponsiveContainer width="100%" height={height}>
-        <AreaChart data={filtered} margin={{ top: 4, right: 4, bottom: 0, left: 0 }}>
+        <AreaChart data={filtered} margin={{ top:8, right:60, bottom:4, left:0 }}>
           <defs>
-            <linearGradient id={`grad_${dataKey}_${period}`} x1="0" y1="0" x2="0" y2="1">
-              <stop offset="5%" stopColor={color} stopOpacity={0.25} />
-              <stop offset="95%" stopColor={color} stopOpacity={0} />
+            <linearGradient id={`lcw_${dataKey}_${period}`} x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%"   stopColor={gradColor} stopOpacity={0.20} />
+              <stop offset="100%" stopColor={gradColor} stopOpacity={0.01} />
             </linearGradient>
           </defs>
-          <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.03)" />
-          <XAxis dataKey="date" tick={{ fontSize: 10, fill: "#64748B" }} tickLine={false} axisLine={false}
-            tickFormatter={d => d.slice(5)} interval="preserveStartEnd" />
-          <YAxis domain={yDomain} tick={{ fontSize: 10, fill: "#64748B" }} tickLine={false} axisLine={false}
-            tickFormatter={v => v >= 1000 ? `${(v/1000).toFixed(0)}k` : v} width={36} />
-          <Tooltip
-            contentStyle={{ background: "#1E293B", border: `1px solid #334155`, borderRadius: "10px", color: "#F1F5F9", fontSize: 12 }}
-            formatter={v => [fmt(v), "Valeur"]} labelFormatter={l => `📅 ${l}`}
-          />
-          <Area type="monotone" dataKey={dataKey} stroke={color} strokeWidth={1.5}
-            fill={`url(#grad_${dataKey}_${period})`} dot={false} activeDot={{ r: 4, fill: color }} />
+          <CartesianGrid
+            strokeDasharray="0"
+            stroke="rgba(255,255,255,0.04)"
+            horizontal={true} vertical={false} />
+          <XAxis dataKey="date" tick={{ fontSize:10, fill:"#475569" }} tickLine={false} axisLine={false}
+            tickFormatter={d => d?.length === 10 ? d.slice(5) : d}
+            interval="preserveStartEnd" />
+          <YAxis
+            orientation="right"
+            domain={[yMin, yMax]}
+            tick={{ fontSize:10, fill:"#475569" }} tickLine={false} axisLine={false}
+            tickFormatter={tickFmt} width={52} tickCount={5} />
+          <Tooltip content={<CustomTooltip />} cursor={{ stroke:"rgba(255,255,255,0.15)", strokeWidth:1, strokeDasharray:"4 4" }} />
+          <Area
+            type="monotone" dataKey={dataKey}
+            stroke={lineColor} strokeWidth={2}
+            fill={`url(#lcw_${dataKey}_${period})`}
+            dot={false}
+            activeDot={{ r:5, fill:lineColor, stroke:"#0B1120", strokeWidth:2 }} />
         </AreaChart>
       </ResponsiveContainer>
     </div>
@@ -429,7 +483,7 @@ function Overview({ cryptoData, cryptoPrices, stocks, bank, savings, oraPrice, r
         </div>
         <div style={{ fontSize: 12, color: "#64748B", marginTop: 6, marginBottom: 14 }}>Prix crypto en EUR · CoinGecko live</div>
         <Variation history={history} dataKey="total" color="#818CF8" />
-        <MiniAreaChart data={history} dataKey="total" color="#818CF8" height={80} showPeriodSelector={true} showPeriodSelector={true} />
+        <MiniAreaChart data={history} dataKey="total" color="#818CF8" height={220} showPeriodSelector={true} showPeriodSelector={true} />
       </Card>
 
       {/* Stats globales */}
@@ -490,6 +544,131 @@ function Overview({ cryptoData, cryptoPrices, stocks, bank, savings, oraPrice, r
 }
 
 // ─── CRYPTO VIEW ──────────────────────────────────────────────────────────────
+// ─── CRYPTO TREEMAP ───────────────────────────────────────────────────────────
+function CryptoTreemap({ cryptoData, cryptoPrices }) {
+  const total = cryptoData.reduce((s, c) => s + (cryptoPrices[c.code]?.eur || 0) * c.qty, 0);
+  if (!total) return null;
+
+  // Trier par valeur décroissante
+  const items = [...cryptoData]
+    .map(c => ({ ...c, value: (cryptoPrices[c.code]?.eur || 0) * c.qty }))
+    .filter(c => c.value > 0)
+    .sort((a, b) => b.value - a.value);
+
+  // Algorithme squarified treemap (slice-and-dice simplifié)
+  function layout(items, x, y, w, h) {
+    if (!items.length) return [];
+    const totalVal = items.reduce((s, i) => s + i.value, 0);
+    const rects = [];
+    let remaining = [...items];
+    let cx = x, cy = y, cw = w, ch = h;
+
+    while (remaining.length) {
+      const isHoriz = cw >= ch;
+      const rowVal  = remaining.slice(0, Math.max(1, Math.round(remaining.length * (isHoriz ? cw/w : ch/h)))).reduce((s,i)=>s+i.value,0);
+      // Nombre d'items dans cette rangée
+      let rowCount = 0, acc = 0;
+      const limit = isHoriz ? cw : ch;
+      for (let i = 0; i < remaining.length; i++) {
+        acc += remaining[i].value;
+        rowCount++;
+        if (acc / totalVal * (isHoriz ? w : h) >= limit * 0.5 || i === remaining.length-1) break;
+      }
+      rowCount = Math.max(1, rowCount);
+      const rowItems = remaining.splice(0, rowCount);
+      const rowTotal = rowItems.reduce((s,i)=>s+i.value, 0);
+      const frac     = rowTotal / totalVal;
+      const rowSize  = isHoriz ? cw * (rowTotal/(remaining.length ? totalVal : rowTotal + remaining.reduce((s,i)=>s+i.value,0))) : ch * frac;
+
+      let pos = isHoriz ? cy : cx;
+      rowItems.forEach(item => {
+        const itemFrac = item.value / rowTotal;
+        const itemSize = (isHoriz ? ch : cw) * itemFrac;
+        if (isHoriz) {
+          rects.push({ ...item, x:cx, y:pos, w:rowSize, h:itemSize });
+          pos += itemSize;
+        } else {
+          rects.push({ ...item, x:pos, y:cy, w:itemSize, h:rowSize });
+          pos += itemSize;
+        }
+      });
+      if (isHoriz) { cx += rowSize; cw -= rowSize; }
+      else         { cy += rowSize; ch -= rowSize; }
+    }
+    return rects;
+  }
+
+  const [dims, setDims] = useState({ w: 340, h: 260 });
+  const containerRef = useRef(null);
+  useEffect(() => {
+    if (!containerRef.current) return;
+    const ro = new ResizeObserver(entries => {
+      const { width } = entries[0].contentRect;
+      setDims({ w: width, h: Math.max(200, Math.round(width * 0.65)) });
+    });
+    ro.observe(containerRef.current);
+    return () => ro.disconnect();
+  }, []);
+
+  const rects = layout(items, 0, 0, dims.w, dims.h);
+  const gap = 2;
+
+  return (
+    <div ref={containerRef} style={{ width:"100%", marginBottom:14 }}>
+      <svg width={dims.w} height={dims.h} style={{ display:"block", borderRadius:12, overflow:"hidden" }}>
+        {rects.map((r, i) => {
+          const rx = r.x + gap/2, ry = r.y + gap/2;
+          const rw = r.w - gap, rh = r.h - gap;
+          if (rw < 4 || rh < 4) return null;
+          const pct = (r.value / total * 100).toFixed(1);
+          const showSymbol = rw > 30 && rh > 22;
+          const showPct    = rw > 50 && rh > 40;
+          const showVal    = rw > 70 && rh > 55;
+          const fs = Math.min(rw * 0.22, rh * 0.28, 28);
+          // Couleur plus sombre pour le fond
+          const bg = r.color;
+          return (
+            <g key={r.code}>
+              <rect x={rx} y={ry} width={rw} height={rh} rx={6} fill={bg} fillOpacity={0.85} />
+              <rect x={rx} y={ry} width={rw} height={rh} rx={6}
+                fill="url(#tmGrad)" />
+              {showSymbol && (
+                <text x={rx + rw/2} y={ry + rh/2 + (showPct ? -fs*0.3 : fs*0.35)}
+                  textAnchor="middle" dominantBaseline="middle"
+                  fill="rgba(255,255,255,0.95)" fontWeight="800"
+                  fontSize={Math.max(11, fs)}
+                  style={{ fontFamily:"'Syne','DM Sans',sans-serif", letterSpacing:"-0.5px" }}>
+                  {r.code}
+                </text>
+              )}
+              {showPct && (
+                <text x={rx + rw/2} y={ry + rh/2 + fs*0.8}
+                  textAnchor="middle" dominantBaseline="middle"
+                  fill="rgba(255,255,255,0.65)" fontSize={Math.max(9, fs*0.45)}>
+                  {pct}%
+                </text>
+              )}
+              {showVal && (
+                <text x={rx + rw/2} y={ry + rh/2 + fs*1.5}
+                  textAnchor="middle" dominantBaseline="middle"
+                  fill="rgba(255,255,255,0.45)" fontSize={Math.max(8, fs*0.38)}>
+                  {fmt(r.value)}
+                </text>
+              )}
+            </g>
+          );
+        })}
+        <defs>
+          <linearGradient id="tmGrad" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%"   stopColor="rgba(255,255,255,0.08)" />
+            <stop offset="100%" stopColor="rgba(0,0,0,0.25)" />
+          </linearGradient>
+        </defs>
+      </svg>
+    </div>
+  );
+}
+
 function CryptoView({ cryptoData, setCryptoData, cryptoPrices, loading, history, cryptoHistory }) {
   const [editingCode, setEditingCode] = useState(null);
   const [editQty, setEditQty] = useState("");
@@ -586,12 +765,18 @@ function CryptoView({ cryptoData, setCryptoData, cryptoPrices, loading, history,
         <StatCard label="Nb positions" value={cryptoData.length} sub="Tokens différents" color="#6366F1" icon="🎯" />
       </div>
 
+      {/* Treemap répartition */}
+      <Card style={{ marginBottom: 14, padding: "14px 18px" }}>
+        <div style={{ fontSize: 12, fontWeight:600, color:"#94A3B8", marginBottom:10 }}>Répartition du portefeuille</div>
+        <CryptoTreemap cryptoData={cryptoData} cryptoPrices={cryptoPrices} />
+      </Card>
+
       {/* Graphique évolution */}
       <Card style={{ marginBottom: 14, padding: "14px 18px" }}>
-        <div style={{ fontSize: 12, color: "#64748B", marginBottom: 4 }}>Évolution Crypto (€) — 90 jours · ETH via CoinGecko</div>
+        <div style={{ fontSize: 12, color: "#64748B", marginBottom: 4 }}>Évolution Crypto (€) — ETH via CoinGecko</div>
         {cryptoHistory && cryptoHistory.length > 1
-          ? <MiniAreaChart data={cryptoHistory} dataKey="crypto" color="#818CF8" height={100} showPeriodSelector={true} />
-          : <><Variation history={history} dataKey="crypto" color="#818CF8" /><MiniAreaChart data={history} dataKey="crypto" color="#818CF8" height={90} showPeriodSelector={true} /></>
+          ? <MiniAreaChart data={cryptoHistory} dataKey="crypto" color="#818CF8" height={220} showPeriodSelector={true} />
+          : <><Variation history={history} dataKey="crypto" color="#818CF8" /><MiniAreaChart data={history} dataKey="crypto" color="#818CF8" height={220} showPeriodSelector={true} /></>
         }
       </Card>
 
@@ -877,8 +1062,8 @@ function StocksView({ stocks, setStocks, history, marketHistory }) {
         <div style={{ fontSize: 12, color: "#64748B", marginBottom: 4 }}>Évolution Bourse (€) — 6 mois · AAPL + TSLA via Finnhub</div>
         <div style={{ fontSize: 11, color: "#64748B", marginBottom: 8 }}>Courbe basée sur tes positions AAPL ({stocks.find(s=>s.symbol==="AAPL")?.qty} titres) et TSLA ({stocks.find(s=>s.symbol==="TSLA")?.qty} titres)</div>
         {marketHistory && marketHistory.length > 1
-          ? <MiniAreaChart data={marketHistory} dataKey="stocks" color="#34D399" height={100} showPeriodSelector={true} />
-          : <><Variation history={history} dataKey="stocks" color="#34D399" /><MiniAreaChart data={history} dataKey="stocks" color="#34D399" height={90} showPeriodSelector={true} /></>
+          ? <MiniAreaChart data={marketHistory} dataKey="stocks" color="#34D399" height={220} showPeriodSelector={true} />
+          : <><Variation history={history} dataKey="stocks" color="#34D399" /><MiniAreaChart data={history} dataKey="stocks" color="#34D399" height={220} showPeriodSelector={true} /></>
         }
       </Card>
 
@@ -1146,7 +1331,7 @@ function ScpiView({ scpi, setScpi, history }) {
       <Card style={{ marginBottom: 14, padding: "14px 18px" }}>
         <div style={{ fontSize: 12, color: "#64748B", marginBottom: 8 }}>Évolution SCPI (€)</div>
         <Variation history={history} dataKey="scpi" color="#A78BFA" />
-        <MiniAreaChart data={history} dataKey="scpi" color="#A78BFA" height={90} showPeriodSelector={true} />
+        <MiniAreaChart data={history} dataKey="scpi" color="#A78BFA" height={220} showPeriodSelector={true} />
       </Card>
 
       {/* Staleness alert */}
@@ -1368,7 +1553,7 @@ function RealEstateView({ realestate, setRealestate, history }) {
       <Card style={{ marginBottom: 14, padding: "14px 18px" }}>
         <div style={{ fontSize: 12, color: "#64748B", marginBottom: 8 }}>Évolution valeur immobilier (€)</div>
         <Variation history={history} dataKey="realestate" color="#F472B6" />
-        <MiniAreaChart data={history} dataKey="realestate" color="#F472B6" height={90} showPeriodSelector={true} />
+        <MiniAreaChart data={history} dataKey="realestate" color="#F472B6" height={220} showPeriodSelector={true} />
       </Card>
 
       <Card style={{ background: "rgba(244,114,182,0.06)", border: "1px solid rgba(244,114,182,0.2)", marginBottom: 18, padding: "12px 18px", fontSize: 13, color: "#F9A8D4" }}>
