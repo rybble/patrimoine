@@ -546,142 +546,139 @@ function Overview({ cryptoData, cryptoPrices, stocks, bank, savings, oraPrice, r
 // ─── CRYPTO VIEW ──────────────────────────────────────────────────────────────
 // ─── CRYPTO TREEMAP ───────────────────────────────────────────────────────────
 function CryptoTreemap({ cryptoData, cryptoPrices }) {
-  const total = cryptoData.reduce((s, c) => s + (cryptoPrices[c.code]?.eur || 0) * c.qty, 0);
   const containerRef = useRef(null);
-  const [W, setW] = useState(600);
+  const [W, setW] = useState(500);
   useEffect(() => {
     if (!containerRef.current) return;
-    const ro = new ResizeObserver(e => setW(e[0].contentRect.width));
+    const ro = new ResizeObserver(e => setW(Math.floor(e[0].contentRect.width)));
     ro.observe(containerRef.current);
     return () => ro.disconnect();
   }, []);
 
-  if (!total) return null;
+  const total = cryptoData.reduce((s, c) => s + (cryptoPrices[c.code]?.eur || 0) * c.qty, 0);
+  if (!total) return <div ref={containerRef} style={{height:200,display:"flex",alignItems:"center",justifyContent:"center",color:"#334155",fontSize:12}}>Chargement des prix…</div>;
 
-  const H = Math.round(W * 0.52);
+  const H = Math.round(W * 0.55);
   const GAP = 3;
 
   const items = [...cryptoData]
     .map(c => ({ ...c, value: (cryptoPrices[c.code]?.eur || 0) * c.qty }))
-    .filter(c => c.value > 0)
+    .filter(c => c.value > 1)
     .sort((a, b) => b.value - a.value);
 
-  // ── Vrai algorithme Squarified Treemap (Bruls et al.) ──────────────────────
-  function worst(row, w) {
-    const s = row.reduce((a, b) => a + b, 0);
-    const rMax = Math.max(...row), rMin = Math.min(...row);
-    return Math.max((w * w * rMax) / (s * s), (s * s) / (w * w * rMin));
-  }
-
-  function squarify(values, x, y, w, h) {
-    if (!values.length) return [];
+  // Squarified treemap — algorithme Bruls 1999
+  function squarify(data, x, y, w, h) {
+    if (!data.length) return [];
+    const area = w * h;
+    const total = data.reduce((s, d) => s + d.v, 0);
+    // Normaliser les surfaces
+    const normed = data.map(d => ({ ...d, v: d.v / total * area }));
     const results = [];
-    let remaining = [...values];
 
-    function layoutRow(row, isHoriz, x, y, w, h) {
-      const rowSum = row.reduce((a, b) => a + b, 0);
-      const totalSum = remaining.reduce((a, b) => a + b, 0) + rowSum;
-      let pos = isHoriz ? y : x;
-      const rowSize = isHoriz ? w * rowSum / totalSum : h * rowSum / totalSum;
-      return row.map(v => {
-        const itemSize = (isHoriz ? h : w) * v / rowSum;
-        const rect = isHoriz
-          ? { x, y: pos, w: rowSize, h: itemSize }
-          : { x: pos, y, w: itemSize, h: rowSize };
-        pos += itemSize;
-        return rect;
+    function worstRatio(row, side) {
+      const s = row.reduce((a, b) => a + b, 0);
+      const rmax = Math.max(...row), rmin = Math.min(...row);
+      return Math.max(side*side*rmax/(s*s), s*s/(side*side*rmin));
+    }
+
+    function placeRow(row, items, isH, rx, ry, rw, rh) {
+      const s = row.reduce((a, b) => a + b, 0);
+      const rowDim = isH ? s / rh : s / rw;
+      let pos = isH ? ry : rx;
+      items.forEach((item, i) => {
+        const dim = isH ? row[i] / rowDim : row[i] / rowDim;
+        results.push({
+          idx: item.idx,
+          x: isH ? rx : pos,
+          y: isH ? pos : ry,
+          w: isH ? rowDim : dim,
+          h: isH ? dim   : rowDim,
+        });
+        pos += isH ? row[i] / rowDim : row[i] / rowDim;
       });
+      return isH ? { rx: rx+rowDim, ry, rw: rw-rowDim, rh } : { rx, ry: ry+rowDim, rw, rh: rh-rowDim };
     }
 
-    function recurse(values, x, y, w, h) {
-      if (!values.length) return;
-      if (values.length === 1) {
-        results.push({ idx: values[0].idx, x, y, w, h });
-        return;
-      }
-      const isHoriz = w >= h;
-      const shortSide = isHoriz ? h : w;
-      const areaTotal = values.reduce((s, v) => s + v.val, 0);
-      const scale = (w * h) / areaTotal;
-      const scaled = values.map(v => v.val * scale);
-
-      let row = [], i = 0;
-      while (i < scaled.length) {
-        const testRow = [...row, scaled[i]];
-        if (row.length && worst(testRow, shortSide) > worst(row, shortSide)) break;
+    function recurse(remaining, rx, ry, rw, rh) {
+      if (!remaining.length) return;
+      const isH = rw <= rh;
+      const side = isH ? rw : rh;
+      let row = [], rowItems = [], best = Infinity;
+      for (let i = 0; i < remaining.length; i++) {
+        const testRow = [...row, remaining[i].v];
+        const ratio = worstRatio(testRow, side);
+        if (ratio > best && row.length) break;
+        best = ratio;
         row = testRow;
-        i++;
+        rowItems = remaining.slice(0, i+1);
       }
-
-      const rowItems = values.slice(0, row.length);
-      const restItems = values.slice(row.length);
-      const rects = layoutRow(row, isHoriz, x, y, w, h);
-      rects.forEach((r, j) => results.push({ idx: rowItems[j].idx, ...r }));
-
-      if (restItems.length) {
-        const rowSum = rowItems.reduce((s, v) => s + v.val, 0);
-        const frac = rowSum / areaTotal;
-        if (isHoriz) recurse(restItems, x + w * frac, y, w * (1 - frac), h);
-        else         recurse(restItems, x, y + h * frac, w, h * (1 - frac));
-      }
+      const next = placeRow(row, rowItems, isH, rx, ry, rw, rh);
+      recurse(remaining.slice(rowItems.length), next.rx, next.ry, next.rw, next.rh);
     }
 
-    const total = values.reduce((s, v) => s + v, 0);
-    recurse(values.map((v, i) => ({ val: v, idx: i })), x, y, w, h);
+    recurse(normed.map((d, i) => ({ ...d, idx: i })), x, y, w, h);
     return results;
   }
 
-  const vals = items.map(c => c.value);
-  const rects = squarify(vals, 0, 0, W, H);
+  const rects = squarify(items.map((d, i) => ({ v: d.value, idx: i })), 0, 0, W, H);
 
   return (
     <div ref={containerRef} style={{ width:"100%" }}>
-      <svg width={W} height={H} style={{ display:"block", borderRadius:10, overflow:"hidden", background:"#0B1120" }}>
+      <svg width={W} height={H} style={{ display:"block", borderRadius:10, overflow:"hidden" }}>
         <defs>
           <linearGradient id="tmShine" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%"   stopColor="rgba(255,255,255,0.10)" />
-            <stop offset="100%" stopColor="rgba(0,0,0,0.30)" />
+            <stop offset="0%"   stopColor="rgba(255,255,255,0.12)" />
+            <stop offset="100%" stopColor="rgba(0,0,0,0.28)" />
           </linearGradient>
         </defs>
-        {rects.map(r => {
+        {rects.map((r, i) => {
           const item = items[r.idx];
+          if (!item) return null;
           const rx = r.x + GAP/2, ry = r.y + GAP/2;
           const rw = r.w - GAP,   rh = r.h - GAP;
-          if (rw < 2 || rh < 2) return null;
-          const pct   = (item.value / total * 100).toFixed(1);
-          const fs    = Math.min(Math.max(rw * 0.18, 9), rh * 0.3, 32);
-          const showSym = rw > 28 && rh > 18;
-          const showPct = rw > 45 && rh > 36 && fs >= 11;
-          const showVal = rw > 65 && rh > 54 && fs >= 12;
-          // Nb de lignes affichées → centrage vertical
-          const lines   = (showSym?1:0) + (showPct?1:0) + (showVal?1:0);
-          const lineH   = fs * 1.4;
-          const totalH  = lines * lineH;
-          let lineY     = ry + rh/2 - totalH/2 + lineH/2;
+          if (rw < 4 || rh < 4) return null;
+
+          const pct = (item.value / total * 100).toFixed(1);
+          // Taille de fonte adaptative
+          const fs = Math.min(Math.max(Math.min(rw/item.code.length*1.1, rh*0.32), 9), 36);
+          const showSym = rw > 24 && rh > 16;
+          const showPct = rw > 40 && rh > fs*2.6 && fs >= 10;
+          const showVal = rw > 60 && rh > fs*4.2 && fs >= 12;
+
+          // Centrage vertical du groupe de textes
+          const lineH  = fs * 1.35;
+          const nLines = (showSym?1:0)+(showPct?1:0)+(showVal?1:0);
+          const blockH = nLines * lineH;
+          let ty = ry + rh/2 - blockH/2 + lineH*0.55;
 
           return (
             <g key={item.code}>
-              <rect x={rx} y={ry} width={rw} height={rh} rx={5} fill={item.color} fillOpacity={0.88} />
-              <rect x={rx} y={ry} width={rw} height={rh} rx={5} fill="url(#tmShine)" />
+              <rect x={rx} y={ry} width={rw} height={rh} rx={4} fill={item.color} fillOpacity={0.9} />
+              <rect x={rx} y={ry} width={rw} height={rh} rx={4} fill="url(#tmShine)" />
               {showSym && (
-                <text x={rx+rw/2} y={lineY} textAnchor="middle" dominantBaseline="middle"
-                  fill="rgba(255,255,255,0.96)" fontWeight="800" fontSize={fs}
-                  fontFamily="'Syne','DM Sans',sans-serif" letterSpacing="-0.5">
+                <text x={rx+rw/2} y={ty}
+                  textAnchor="middle" dominantBaseline="middle"
+                  fill="rgba(255,255,255,0.97)" fontWeight="800"
+                  fontSize={fs} fontFamily="'Syne','DM Sans',sans-serif">
                   {item.code}
                 </text>
               )}
-              {showPct && (() => { lineY += lineH; return (
-                <text key="pct" x={rx+rw/2} y={lineY} textAnchor="middle" dominantBaseline="middle"
-                  fill="rgba(255,255,255,0.60)" fontSize={Math.max(8, fs*0.48)} fontFamily="'DM Sans',sans-serif">
+              {showPct && (
+                <text x={rx+rw/2} y={ty + lineH}
+                  textAnchor="middle" dominantBaseline="middle"
+                  fill="rgba(255,255,255,0.62)" fontSize={Math.max(8, fs*0.50)}
+                  fontFamily="'DM Sans',sans-serif">
                   {pct}%
                 </text>
-              ); })()}
-              {showVal && (() => { lineY += lineH; return (
-                <text key="val" x={rx+rw/2} y={lineY} textAnchor="middle" dominantBaseline="middle"
-                  fill="rgba(255,255,255,0.40)" fontSize={Math.max(7, fs*0.40)} fontFamily="'DM Sans',sans-serif">
+              )}
+              {showVal && (
+                <text x={rx+rw/2} y={ty + lineH*2}
+                  textAnchor="middle" dominantBaseline="middle"
+                  fill="rgba(255,255,255,0.38)" fontSize={Math.max(7, fs*0.40)}
+                  fontFamily="'DM Sans',sans-serif">
                   {fmt(item.value)}
                 </text>
-              ); })()}
+              )}
             </g>
           );
         })}
@@ -689,6 +686,7 @@ function CryptoTreemap({ cryptoData, cryptoPrices }) {
     </div>
   );
 }
+
 
 function CryptoView({ cryptoData, setCryptoData, cryptoPrices, loading, history, cryptoHistory }) {
   const [editingCode, setEditingCode] = useState(null);
@@ -2006,6 +2004,12 @@ function BudgetView({ uid, quickAddTx, setQuickAddTx, onCatsChange }) {
   // ── Computed ───────────────────────────────────────────────────────────────
   const bilan  = monthlyBilan();
   const evol   = evolutionData();
+  const evolFiltered = (() => {
+    if (!evol.length) return evol;
+    const p = PERIODS.find(x => x.key === budgetPeriod);
+    if (!p || p.days === null) return evol;
+    return evol.slice(-Math.max(Math.ceil(p.days / 30), 1));
+  })();
   const totalE_yr = bilan.reduce((s,r) => s+r.entrees, 0);
   const totalS_yr = bilan.reduce((s,r) => s+r.sorties, 0);
   const solde_yr  = totalE_yr - totalS_yr;
@@ -3131,16 +3135,15 @@ function AppContent({ user }) {
   const fetchOraPrice = useCallback(async () => {
     // Yahoo Finance — ORA.PA (Euronext Paris) via proxy CORS public
     const urls = [
-      // Option 1 : Yahoo Finance via allorigins (proxy CORS)
-      `https://api.allorigins.win/get?url=${encodeURIComponent("https://query1.finance.yahoo.com/v8/finance/chart/ORA.PA?interval=1d&range=1d")}`,
+      // Option 1 : Yahoo Finance via corsproxy.io
+      `https://corsproxy.io/?${encodeURIComponent("https://query1.finance.yahoo.com/v8/finance/chart/ORA.PA?interval=1d&range=1d")}`,
       // Option 2 : Yahoo Finance v7 (fallback)
-      `https://api.allorigins.win/get?url=${encodeURIComponent("https://query2.finance.yahoo.com/v8/finance/chart/ORA.PA?interval=1d&range=1d")}`,
+      `https://corsproxy.io/?${encodeURIComponent("https://query2.finance.yahoo.com/v8/finance/chart/ORA.PA?interval=1d&range=1d")}`,
     ];
     for (const url of urls) {
       try {
         const res  = await fetch(url);
-        const wrap = await res.json();
-        const data = JSON.parse(wrap.contents);
+        const data = await res.json();
         const price = data?.chart?.result?.[0]?.meta?.regularMarketPrice;
         if (price && price > 0 && price < 100) { // ORA.PA ~15-25€, sanity check
           setOraPrice(price);
@@ -3201,12 +3204,11 @@ function AppContent({ user }) {
       await Promise.all(
         Object.entries(yahooSymbols).map(async ([sym, { ticker, currency }]) => {
           try {
-            const proxyUrl = `https://api.allorigins.win/get?url=${encodeURIComponent(
+            const proxyUrl = `https://corsproxy.io/?${encodeURIComponent(
               `https://query1.finance.yahoo.com/v8/finance/chart/${ticker}?interval=1d&range=1d`
             )}`;
             const res  = await fetch(proxyUrl);
-            const wrap = await res.json();
-            const data = JSON.parse(wrap.contents);
+            const data = await res.json();
             const price = data?.chart?.result?.[0]?.meta?.regularMarketPrice;
             if (price && price > 0) {
               let priceEur;
@@ -3225,12 +3227,11 @@ function AppContent({ user }) {
       await Promise.all(
         Object.entries(usStocks).map(async ([sym, ticker]) => {
           try {
-            const proxyUrl = `https://api.allorigins.win/get?url=${encodeURIComponent(
+            const proxyUrl = `https://corsproxy.io/?${encodeURIComponent(
               `https://query1.finance.yahoo.com/v8/finance/chart/${ticker}?interval=1d&range=1d`
             )}`;
             const res  = await fetch(proxyUrl);
-            const wrap = await res.json();
-            const data = JSON.parse(wrap.contents);
+            const data = await res.json();
             const price = data?.chart?.result?.[0]?.meta?.regularMarketPrice;
             if (price && price > 0) stockUpdates[sym] = price * usdToEur;
           } catch {}
