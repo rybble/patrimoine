@@ -3134,22 +3134,25 @@ function AppContent({ user }) {
 
   const fetchOraPrice = useCallback(async () => {
     const TWELVE_KEY = "b0f8328019d044ce9f86df5861a1a1dd";
-    // Twelve Data — format Euronext : SYMBOL:Euronext
-    const twelveSymbols = ["ORA:Euronext", "ORA:XPAR", "ORA"];
-    for (const sym of twelveSymbols) {
-      try {
-        const url  = `https://api.twelvedata.com/price?symbol=${encodeURIComponent(sym)}&apikey=${TWELVE_KEY}`;
-        const res  = await fetch(url, { cache:"no-store" });
-        const data = await res.json();
-        const price = parseFloat(data.price);
-        if (price && price > 5 && price < 100) {
-          console.log("ORA.PA:", price, "€ via Twelve Data sym=", sym);
+    // Twelve Data — ORA seul fonctionne, retourne prix en centimes (ex: 110.4 = 11.04€)
+    // ORA:Euronext nécessite un plan payant, ORA:XPAR invalide
+    try {
+      const url  = `https://api.twelvedata.com/price?symbol=ORA&apikey=${TWELVE_KEY}`;
+      const res  = await fetch(url, { cache:"no-store" });
+      const data = await res.json();
+      const raw  = parseFloat(data.price);
+      if (raw && raw > 0) {
+        // Twelve Data retourne ORA en centimes d'euro → diviser par 10
+        // 110.40 → 11.04€  |  173.52 → 17.352€  |  175.0 → 17.50€
+        const price = raw / 10;
+        if (price > 5 && price < 100) {
+          console.log("ORA.PA:", price.toFixed(2), "€ via Twelve Data (raw:", raw, ")");
           setOraPrice(price);
           return;
         }
-        console.warn("Twelve Data ORA [" + sym + "]:", JSON.stringify(data).slice(0,120));
-      } catch(e) { console.warn("Twelve Data ORA error:", e.message); }
-    }
+      }
+      console.warn("Twelve Data ORA:", JSON.stringify(data).slice(0,80));
+    } catch(e) { console.warn("Twelve Data ORA error:", e.message); }
     // Fallback : Finnhub
     const finnhubSymbols = ["EURONEXT:ORA", "ORA"];
     for (const sym of finnhubSymbols) {
