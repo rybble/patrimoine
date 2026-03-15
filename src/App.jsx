@@ -3134,27 +3134,24 @@ function AppContent({ user }) {
 
   const fetchOraPrice = useCallback(async () => {
     const TWELVE_KEY = "b0f8328019d044ce9f86df5861a1a1dd";
-    // Twelve Data — code MIC Euronext Paris = XPAR
+    // Twelve Data — format correct: symbole:MIC ou symbole/MIC
     const twelveUrls = [
-      `https://api.twelvedata.com/price?symbol=ORA&exchange=XPAR&apikey=${TWELVE_KEY}`,
-      `https://api.twelvedata.com/price?symbol=ORA.PA&apikey=${TWELVE_KEY}`,
-      `https://api.twelvedata.com/quote?symbol=ORA&exchange=XPAR&apikey=${TWELVE_KEY}`,
+      `https://api.twelvedata.com/price?symbol=ORA%3AXPAR&apikey=${TWELVE_KEY}`,
+      `https://api.twelvedata.com/price?symbol=ORA%2FXPAR&apikey=${TWELVE_KEY}`,
+      `https://api.twelvedata.com/price?symbol=FR0000133308&apikey=${TWELVE_KEY}`,
     ];
     for (const url of twelveUrls) {
       try {
         const res  = await fetch(url, { cache:"no-store" });
         const data = await res.json();
-        // /price retourne { price: "17.52" }, /quote retourne { close: "17.52", ... }
-        const raw  = data.price ?? data.close ?? data.c;
+        const raw  = data.price ?? data.close;
         const price = parseFloat(raw);
         if (price && price > 5 && price < 100) {
           console.log("ORA.PA:", price, "€ via Twelve Data");
           setOraPrice(price);
           return;
         }
-        if (data.code === 400 || data.status === "error") {
-          console.warn("Twelve Data ORA:", data.message || data.code);
-        }
+        console.warn("Twelve Data ORA response:", JSON.stringify(data).slice(0,100));
       } catch(e) { console.warn("Twelve Data ORA error:", e.message); }
     }
     // Fallback : Finnhub
