@@ -494,31 +494,33 @@ function Overview({ cryptoData, cryptoPrices, stocks, bank, savings, oraPrice, r
         <StatCard label="Actifs liquides" value={fmt(cryptoTotal + stocksTotal + bankTotal)} sub="Crypto + Bourse + Banque" color="#60A5FA" icon="💧" />
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 260px", gap: 16, marginBottom: 20 }}>
-        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-          {sections.map(s => (
-            <Card key={s.key} onClick={() => onNavigate(s.key)} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "14px 18px", cursor: "pointer" }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-                <div style={{ width: 40, height: 40, borderRadius: 12, background: s.color + "22", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 19, flexShrink: 0 }}>
-                  {s.icon}
-                </div>
-                <div>
-                  <div style={{ fontWeight: 700, color: "#F1F5F9", fontSize: 14 }}>{s.label}</div>
-                  <div style={{ fontSize: 11, color: "#64748B" }}>
-                    {grandTotal > 0 ? ((s.value / grandTotal) * 100).toFixed(1) : 0}% · voir le détail →
-                  </div>
+      {/* Sections liste */}
+      <div style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 16 }}>
+        {sections.map(s => (
+          <Card key={s.key} onClick={() => onNavigate(s.key)} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "14px 18px", cursor: "pointer" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+              <div style={{ width: 40, height: 40, borderRadius: 12, background: s.color + "22", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 19, flexShrink: 0 }}>
+                {s.icon}
+              </div>
+              <div>
+                <div style={{ fontWeight: 700, color: "#F1F5F9", fontSize: 14 }}>{s.label}</div>
+                <div style={{ fontSize: 11, color: "#64748B" }}>
+                  {grandTotal > 0 ? ((s.value / grandTotal) * 100).toFixed(1) : 0}% · voir le détail →
                 </div>
               </div>
-              <div style={{ textAlign: "right" }}>
-                <div style={{ fontSize: 19, fontWeight: 700, color: s.color }}>{fmt(s.value)}</div>
-              </div>
-            </Card>
-          ))}
-        </div>
+            </div>
+            <div style={{ textAlign: "right" }}>
+              <div style={{ fontSize: 19, fontWeight: 700, color: s.color }}>{fmt(s.value)}</div>
+            </div>
+          </Card>
+        ))}
+      </div>
 
-        <Card style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center" }}>
-          <div style={{ fontSize: 11, color: "#64748B", textTransform: "uppercase", letterSpacing: 1, marginBottom: 10 }}>Répartition</div>
-          <ResponsiveContainer width="100%" height={155}>
+      {/* Graphique répartition — sous les sections, pleine largeur */}
+      <Card style={{ display: "flex", flexDirection: "column", alignItems: "center", marginBottom: 20, padding: "16px 20px" }}>
+        <div style={{ fontSize: 11, color: "#64748B", textTransform: "uppercase", letterSpacing: 1, marginBottom: 10 }}>Répartition</div>
+        <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", justifyContent: "center", gap: 16, width: "100%" }}>
+          <ResponsiveContainer width={180} height={180}>
             <PieChart>
               <Pie data={pieData} cx="50%" cy="50%" innerRadius={42} outerRadius={68} paddingAngle={3} dataKey="value">
                 {pieData.map((e, i) => <Cell key={i} fill={e.color} />)}
@@ -526,19 +528,19 @@ function Overview({ cryptoData, cryptoPrices, stocks, bank, savings, oraPrice, r
               <Tooltip formatter={(v) => fmt(v)} contentStyle={{ background: "#1E293B", border: "1px solid #334155", borderRadius: "10px", color: "#F1F5F9", fontSize: 12 }} />
             </PieChart>
           </ResponsiveContainer>
-          <div style={{ display: "flex", flexDirection: "column", gap: 5, width: "100%" }}>
+          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
             {pieData.map((d, i) => (
-              <div key={i} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", fontSize: 12 }}>
+              <div key={i} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16, fontSize: 12 }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                  <div style={{ width: 8, height: 8, borderRadius: 2, background: d.color }} />
+                  <div style={{ width: 8, height: 8, borderRadius: 2, background: d.color, flexShrink: 0 }} />
                   <span style={{ color: "#64748B" }}>{d.name}</span>
                 </div>
                 <span style={{ color: "#F1F5F9", fontWeight: 600 }}>{fmt(d.value)}</span>
               </div>
             ))}
           </div>
-        </Card>
-      </div>
+        </div>
+      </Card>
     </div>
   );
 }
@@ -889,44 +891,45 @@ function CryptoView({ cryptoData, setCryptoData, cryptoPrices, loading, history,
           const share = total > 0 ? (value / total) * 100 : 0;
 
           return (
-            <Card key={c.code} style={{ display: "flex", alignItems: "center", gap: 14, padding: "13px 18px" }}>
-              <div style={{ width: 38, height: 38, borderRadius: "10px", background: c.color + "28", border: `2px solid ${c.color}55`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: 800, color: c.color, flexShrink: 0 }}>
-                {c.symbol.slice(0, 4)}
-              </div>
-              <div style={{ flex: 1 }}>
-                <div style={{ fontWeight: 700, color: "#F1F5F9", fontSize: 14 }}>{c.symbol}</div>
-                <div style={{ fontSize: 12, color: "#64748B" }}>
-                  {editingCode === c.code ? (
-                    <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-                      <input value={editQty} onChange={e => setEditQty(e.target.value)}
-                        onKeyDown={e => e.key === "Enter" && saveEdit(c.code)}
-                        autoFocus
-                        style={{ width: 110, background: "#1E293B", border: "1px solid #4F46E5", borderRadius: "6px", padding: "2px 8px", color: "#F1F5F9", fontSize: 12 }} />
-                      <button onClick={() => saveEdit(c.code)} style={{ background: "#4F46E5", border: "none", borderRadius: 4, color: "#fff", padding: "2px 8px", cursor: "pointer", fontSize: 11 }}>✓</button>
-                      <button onClick={() => setEditingCode(null)} style={{ background: "transparent", border: "none", color: "#64748B", cursor: "pointer", fontSize: 11 }}>✕</button>
-                    </span>
-                  ) : (
-                    <span onClick={() => { setEditingCode(c.code); setEditQty(String(c.qty)); }}
-                      style={{ cursor: "pointer", textDecoration: "underline dotted", textUnderlineOffset: 3 }}>
-                      {c.qty >= 1 ? c.qty.toFixed(4) : c.qty.toFixed(6)} unités
-                    </span>
-                  )}
+            <Card key={c.code} style={{ padding: "12px 14px" }}>
+              <div style={{ display:"flex", alignItems:"center", gap:12 }}>
+                <div style={{ width: 36, height: 36, borderRadius: "10px", background: c.color + "28", border: `2px solid ${c.color}55`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 10, fontWeight: 800, color: c.color, flexShrink: 0 }}>
+                  {c.symbol.slice(0, 4)}
                 </div>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontWeight: 700, color: "#F1F5F9", fontSize: 14 }}>{c.symbol}</div>
+                  <div style={{ fontSize: 11, color: "#64748B" }}>
+                    {editingCode === c.code ? (
+                      <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+                        <input value={editQty} onChange={e => setEditQty(e.target.value)}
+                          onKeyDown={e => e.key === "Enter" && saveEdit(c.code)}
+                          autoFocus
+                          style={{ width: 90, background: "#1E293B", border: "1px solid #4F46E5", borderRadius: "6px", padding: "2px 6px", color: "#F1F5F9", fontSize: 12 }} />
+                        <button onClick={() => saveEdit(c.code)} style={{ background: "#4F46E5", border: "none", borderRadius: 4, color: "#fff", padding: "2px 7px", cursor: "pointer", fontSize: 11 }}>✓</button>
+                        <button onClick={() => setEditingCode(null)} style={{ background: "transparent", border: "none", color: "#64748B", cursor: "pointer", fontSize: 11 }}>✕</button>
+                      </span>
+                    ) : (
+                      <span onClick={() => { setEditingCode(c.code); setEditQty(String(c.qty)); }}
+                        style={{ cursor: "pointer", textDecoration: "underline dotted", textUnderlineOffset: 3 }}>
+                        {c.qty >= 1 ? c.qty.toFixed(4) : c.qty.toFixed(6)} unités
+                      </span>
+                    )}
+                  </div>
+                </div>
+                <div style={{ textAlign: "right", flexShrink: 0 }}>
+                  <div style={{ fontSize: 15, fontWeight: 700, color: "#F1F5F9" }}>{price > 0 ? fmt(value) : "—"}</div>
+                  <div style={{ display:"flex", gap:6, justifyContent:"flex-end", fontSize: 11 }}>
+                    <span style={{ color: "#64748B" }}>{share.toFixed(1)}%</span>
+                    <span style={{ color: pctColor(pct), fontWeight: 600 }}>{fmtPct(pct)}</span>
+                  </div>
+                </div>
+                <button onClick={() => removeToken(c.code)}
+                  title="Supprimer"
+                  style={{ background: "transparent", border: "none", color: "#334155", cursor: "pointer", fontSize: 16, padding: "0 2px", lineHeight: 1, flexShrink: 0 }}
+                  onMouseEnter={e => e.currentTarget.style.color = "#F87171"}
+                  onMouseLeave={e => e.currentTarget.style.color = "#334155"}
+                >✕</button>
               </div>
-              <div style={{ textAlign: "right", minWidth: 80 }}>
-                <div style={{ fontSize: 12, color: "#64748B" }}>{price > 0 ? fmt(price) : "—"}</div>
-                <div style={{ fontSize: 12, color: pctColor(pct), fontWeight: 600 }}>{fmtPct(pct)}</div>
-              </div>
-              <div style={{ textAlign: "right", minWidth: 100 }}>
-                <div style={{ fontSize: 16, fontWeight: 700, color: "#F1F5F9" }}>{price > 0 ? fmt(value) : "—"}</div>
-                <div style={{ fontSize: 11, color: "#64748B" }}>{share.toFixed(1)}%</div>
-              </div>
-              <button onClick={() => removeToken(c.code)}
-                title="Supprimer"
-                style={{ background: "transparent", border: "none", color: "#334155", cursor: "pointer", fontSize: 16, padding: "0 4px", lineHeight: 1, flexShrink: 0 }}
-                onMouseEnter={e => e.currentTarget.style.color = "#F87171"}
-                onMouseLeave={e => e.currentTarget.style.color = "#334155"}
-              >✕</button>
             </Card>
           );
         })}
@@ -2573,88 +2576,68 @@ function BudgetView({ uid, quickAddTx, setQuickAddTx, onCatsChange }) {
             </div>
           </Card>
 
-          {/* Table */}
-          <Card style={{ padding:0, overflow:"hidden" }}>
-            <table style={{ width:"100%", borderCollapse:"collapse" }}>
-              <thead>
-                <tr style={{ background:"rgba(255,255,255,0.04)" }}>
-                  {["Période","Type","Catégorie","Montant","Note","Actions"].map(h=>(
-                    <th key={h} style={{ padding:"10px 14px", textAlign:["Montant"].includes(h)?"right":"left", fontSize:11, color:"#64748B", fontWeight:600, borderBottom:"1px solid rgba(255,255,255,0.06)" }}>{h}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
+          {/* Transactions — cartes mobiles */}
+          <Card style={{ padding:"14px 18px" }}>
+            <div style={{ display:"flex", flexDirection:"column", gap:6 }}>
                 {txPageData.map((tx,i) => {
                   const isEd = editingTx === tx.id;
                   const col  = getColor(tx.type, tx.es);
                   return (
-                    <tr key={tx.id} style={{ background:i%2===0?"transparent":"rgba(255,255,255,0.02)" }}>
+                    <div key={tx.id} style={{ background:"rgba(255,255,255,0.02)", borderRadius:10, border:"1px solid rgba(255,255,255,0.06)", padding:"12px 14px" }}>
                       {isEd ? (
-                        <>
-                          <td style={{ padding:"8px 14px", borderBottom:"1px solid rgba(255,255,255,0.04)" }}>
-                            <div style={{ display:"flex", gap:4 }}>
-                              <select value={editForm.annee} onChange={e=>setEditForm(f=>({...f,annee:parseInt(e.target.value)}))} style={{...inpS,width:72,padding:"4px 6px",fontSize:12}}>
-                                {[2024,2025,2026,2027].map(y=><option key={y} value={y}>{y}</option>)}
-                              </select>
-                              <select value={editForm.mois} onChange={e=>setEditForm(f=>({...f,mois:parseInt(e.target.value)}))} style={{...inpS,width:64,padding:"4px 6px",fontSize:12}}>
-                                {MOIS_FR.map((m,idx)=><option key={idx+1} value={idx+1}>{m}</option>)}
-                              </select>
-                            </div>
-                          </td>
-                          <td style={{ padding:"8px 14px", borderBottom:"1px solid rgba(255,255,255,0.04)" }}>
-                            <select value={editForm.es} onChange={e=>setEditForm(f=>({...f,es:e.target.value}))} style={{...inpS,padding:"4px 6px",fontSize:12}}>
+                        <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
+                          <div style={{ display:"flex", gap:6, flexWrap:"wrap" }}>
+                            <select value={editForm.annee} onChange={e=>setEditForm(f=>({...f,annee:parseInt(e.target.value)}))} style={{...inpS,width:80,padding:"5px 8px",fontSize:12}}>
+                              {[2024,2025,2026,2027].map(y=><option key={y} value={y}>{y}</option>)}
+                            </select>
+                            <select value={editForm.mois} onChange={e=>setEditForm(f=>({...f,mois:parseInt(e.target.value)}))} style={{...inpS,width:72,padding:"5px 8px",fontSize:12}}>
+                              {MOIS_FR.map((m,idx)=><option key={idx+1} value={idx+1}>{m}</option>)}
+                            </select>
+                            <select value={editForm.es} onChange={e=>setEditForm(f=>({...f,es:e.target.value}))} style={{...inpS,padding:"5px 8px",fontSize:12}}>
                               <option value="Sortie">Sortie</option>
                               <option value="Entrée">Entrée</option>
                             </select>
-                          </td>
-                          <td style={{ padding:"8px 14px", borderBottom:"1px solid rgba(255,255,255,0.04)" }}>
-                            <select value={editForm.type} onChange={e=>setEditForm(f=>({...f,type:e.target.value}))} style={{...inpS,padding:"4px 6px",fontSize:12}}>
+                          </div>
+                          <div style={{ display:"flex", gap:6, flexWrap:"wrap" }}>
+                            <select value={editForm.type} onChange={e=>setEditForm(f=>({...f,type:e.target.value}))} style={{...inpS,flex:1,padding:"5px 8px",fontSize:12}}>
                               {allCats(editForm.es).map(c=><option key={c.name} value={c.name}>{c.name}</option>)}
                             </select>
-                          </td>
-                          <td style={{ padding:"8px 14px", borderBottom:"1px solid rgba(255,255,255,0.04)" }}>
-                            <input type="number" step="0.01" value={editForm.montant} onChange={e=>setEditForm(f=>({...f,montant:e.target.value}))} style={{...inpS,width:90,padding:"4px 6px",fontSize:12,textAlign:"right"}} />
-                          </td>
-                          <td style={{ padding:"8px 14px", borderBottom:"1px solid rgba(255,255,255,0.04)" }}>
-                            <input value={editForm.note||""} onChange={e=>setEditForm(f=>({...f,note:e.target.value}))} style={{...inpS,padding:"4px 6px",fontSize:12}} />
-                          </td>
-                          <td style={{ padding:"8px 14px", borderBottom:"1px solid rgba(255,255,255,0.04)" }}>
-                            <div style={{ display:"flex", gap:4 }}>
-                              <button onClick={saveEditTx} style={{ background:"#4F46E5", border:"none", borderRadius:6, color:"#fff", padding:"4px 10px", cursor:"pointer", fontSize:11, fontWeight:600 }}>✓</button>
-                              <button onClick={()=>setEditingTx(null)} style={{ background:"transparent", border:"1px solid #334155", borderRadius:6, color:"#64748B", padding:"4px 8px", cursor:"pointer", fontSize:11 }}>✕</button>
-                            </div>
-                          </td>
-                        </>
+                            <input type="number" step="0.01" value={editForm.montant} onChange={e=>setEditForm(f=>({...f,montant:e.target.value}))} style={{...inpS,width:100,padding:"5px 8px",fontSize:12,textAlign:"right"}} />
+                          </div>
+                          <input value={editForm.note||""} onChange={e=>setEditForm(f=>({...f,note:e.target.value}))} placeholder="Note…" style={{...inpS,padding:"5px 8px",fontSize:12}} />
+                          <div style={{ display:"flex", gap:6 }}>
+                            <button onClick={saveEditTx} style={{ background:"#4F46E5", border:"none", borderRadius:6, color:"#fff", padding:"6px 16px", cursor:"pointer", fontSize:12, fontWeight:600 }}>✓ Sauvegarder</button>
+                            <button onClick={()=>setEditingTx(null)} style={{ background:"transparent", border:"1px solid #334155", borderRadius:6, color:"#64748B", padding:"6px 12px", cursor:"pointer", fontSize:12 }}>Annuler</button>
+                          </div>
+                        </div>
                       ) : (
-                        <>
-                          <td style={{ padding:"9px 14px", fontSize:12, color:"#94A3B8", borderBottom:"1px solid rgba(255,255,255,0.04)" }}>{MOIS_FR[tx.mois-1]} {tx.annee}</td>
-                          <td style={{ padding:"9px 14px", borderBottom:"1px solid rgba(255,255,255,0.04)" }}>
-                            <span style={{ fontSize:11, padding:"2px 7px", borderRadius:4, background:tx.es==="Sortie"?"rgba(248,113,113,0.15)":"rgba(52,211,153,0.15)", color:tx.es==="Sortie"?"#F87171":"#34D399", fontWeight:600 }}>{tx.es}</span>
-                          </td>
-                          <td style={{ padding:"9px 14px", borderBottom:"1px solid rgba(255,255,255,0.04)" }}>
-                            <div style={{ display:"flex", alignItems:"center", gap:6 }}>
-                              <div style={{ width:8, height:8, borderRadius:"50%", background:col, flexShrink:0 }} />
-                              <span style={{ fontSize:13, color:"#F1F5F9" }}>{tx.type}</span>
+                        <div style={{ display:"flex", alignItems:"center", gap:10 }}>
+                          <div style={{ flex:1, minWidth:0 }}>
+                            <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:3 }}>
+                              <span style={{ fontSize:11, padding:"2px 7px", borderRadius:4, background:tx.es==="Sortie"?"rgba(248,113,113,0.15)":"rgba(52,211,153,0.15)", color:tx.es==="Sortie"?"#F87171":"#34D399", fontWeight:600, flexShrink:0 }}>{tx.es}</span>
+                              <div style={{ display:"flex", alignItems:"center", gap:5, minWidth:0 }}>
+                                <div style={{ width:8, height:8, borderRadius:"50%", background:col, flexShrink:0 }} />
+                                <span style={{ fontSize:13, color:"#F1F5F9", fontWeight:600, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{tx.type}</span>
+                              </div>
                             </div>
-                          </td>
-                          <td style={{ padding:"9px 14px", textAlign:"right", fontSize:13, fontWeight:700, color:col, borderBottom:"1px solid rgba(255,255,255,0.04)" }}>{fmt(tx.montant)}</td>
-                          <td style={{ padding:"9px 14px", fontSize:12, color:"#64748B", borderBottom:"1px solid rgba(255,255,255,0.04)", maxWidth:180, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{tx.note}</td>
-                          <td style={{ padding:"9px 14px", borderBottom:"1px solid rgba(255,255,255,0.04)" }}>
-                            <div style={{ display:"flex", gap:4 }}>
-                              <button onClick={()=>startEditTx(tx)} style={{ background:"transparent", border:"1px solid #334155", borderRadius:6, color:"#818CF8", padding:"3px 8px", cursor:"pointer", fontSize:11 }}>✏</button>
-                              <button onClick={()=>deleteTx(tx.id)}
-                                style={{ background:"transparent", border:"1px solid rgba(248,113,113,0.3)", borderRadius:6, color:"#F87171", padding:"3px 8px", cursor:"pointer", fontSize:11 }}
-                                onMouseEnter={e=>e.currentTarget.style.background="rgba(248,113,113,0.1)"}
-                                onMouseLeave={e=>e.currentTarget.style.background="transparent"}>✕</button>
+                            <div style={{ display:"flex", gap:8, fontSize:11, color:"#64748B" }}>
+                              <span>{MOIS_FR[tx.mois-1]} {tx.annee}</span>
+                              {tx.note && <span style={{ overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>· {tx.note}</span>}
                             </div>
-                          </td>
-                        </>
+                          </div>
+                          <div style={{ textAlign:"right", flexShrink:0 }}>
+                            <div style={{ fontSize:15, fontWeight:700, color:col }}>{fmt(tx.montant)}</div>
+                          </div>
+                          <div style={{ display:"flex", flexDirection:"column", gap:4, flexShrink:0 }}>
+                            <button onClick={()=>startEditTx(tx)} style={{ background:"transparent", border:"1px solid #334155", borderRadius:6, color:"#818CF8", padding:"3px 8px", cursor:"pointer", fontSize:11 }}>✏</button>
+                            <button onClick={()=>deleteTx(tx.id)} style={{ background:"transparent", border:"1px solid rgba(248,113,113,0.3)", borderRadius:6, color:"#F87171", padding:"3px 8px", cursor:"pointer", fontSize:11 }}>✕</button>
+                          </div>
+                        </div>
                       )}
-                    </tr>
+                    </div>
                   );
                 })}
-              </tbody>
-            </table>
+            </div>
             {/* Pagination */}
             {txFiltered.length > TX_PER_PAGE && (
               <div style={{ display:"flex", justifyContent:"center", alignItems:"center", gap:8, padding:"12px 18px", borderTop:"1px solid rgba(255,255,255,0.06)" }}>
