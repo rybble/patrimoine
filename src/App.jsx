@@ -3133,34 +3133,39 @@ function AppContent({ user }) {
   }, []);
 
   const fetchOraPrice = useCallback(async () => {
-    const TWELVE_KEY = "b0f8328019d044ce9f86df5861a1a1dd";
-    // Twelve Data EOD — cours de clôture gratuit pour Euronext Paris (XPAR)
-    // /eod = End of Day, disponible sur plan free contrairement à /price temps réel
-    try {
-      const res  = await fetch(
-        `https://api.twelvedata.com/eod?symbol=ORA&mic_code=XPAR&apikey=${TWELVE_KEY}`,
-        { cache:"no-store" }
-      );
-      const data = await res.json();
-      const price = parseFloat(data.close);
-      if (price && price > 10 && price < 100) {
-        console.log("ORA.PA EOD:", price.toFixed(2), "€ via Twelve Data");
-        setOraPrice(price);
-        return;
-      }
-      console.warn("Twelve Data EOD XPAR:", JSON.stringify(data).slice(0,120));
-    } catch(e) { console.warn("Twelve Data EOD error:", e.message); }
+    // ORA.PA — Yahoo Finance v8 API (JSON direct, pas de proxy requis)
+    // Yahoo Finance supporte les requêtes cross-origin depuis les apps web
+    const yahooUrls = [
+      "https://query1.finance.yahoo.com/v8/finance/chart/ORA.PA?interval=1d&range=1d",
+      "https://query2.finance.yahoo.com/v8/finance/chart/ORA.PA?interval=1d&range=1d",
+    ];
+    for (const url of yahooUrls) {
+      try {
+        const res  = await fetch(url, {
+          cache: "no-store",
+          headers: { "Accept": "application/json" }
+        });
+        if (!res.ok) { console.warn("Yahoo Finance HTTP:", res.status); continue; }
+        const data = await res.json();
+        const price = data?.chart?.result?.[0]?.meta?.regularMarketPrice;
+        if (price && price > 10 && price < 100) {
+          console.log("ORA.PA:", price.toFixed(2), "€ via Yahoo Finance");
+          setOraPrice(price);
+          return;
+        }
+        console.warn("Yahoo Finance ORA:", price, JSON.stringify(data).slice(0,80));
+      } catch(e) { console.warn("Yahoo Finance ORA error:", e.message); }
+    }
 
-    // Fallback : Finnhub
-    const finnhubSymbols = ["EURONEXT:ORA", "ORA"];
-    for (const sym of finnhubSymbols) {
+    // Fallback : Finnhub avec correction centimes
+    for (const sym of ["EURONEXT:ORA", "ORA"]) {
       try {
         const res  = await fetch(`https://finnhub.io/api/v1/quote?symbol=${sym}&token=${FINNHUB_KEY}`);
         const data = await res.json();
         if (data.c && data.c > 0) {
           const price = data.c > 100 ? data.c / 100 : data.c;
           if (price > 10 && price < 100) {
-            console.log("ORA.PA:", price, "€ via Finnhub", sym);
+            console.log("ORA.PA:", price.toFixed(2), "€ via Finnhub", sym);
             setOraPrice(price);
             return;
           }
