@@ -2033,7 +2033,9 @@ function BudgetView({ uid, quickAddTx, setQuickAddTx, onCatsChange }) {
   // Cat stats
   const allCatNames = [...new Set(transactions.filter(t => t.es === catStatEs).map(t => t.type))].sort();
   const activeCatName = catStatName || allCatNames[0] || "";
-  const catTxs = transactions.filter(t => t.es === catStatEs && t.type === activeCatName);
+  const catTxs    = transactions.filter(t => t.es === catStatEs && t.type === activeCatName);
+  const catTxsYr  = catTxs.filter(t => t.annee === curYear); // filtré sur l'année courante
+  const catTotalYr = catTxsYr.reduce((s,t) => s+t.montant, 0); // pour le ratio Part du budget
   const catMonthly = (() => {
     const map = {};
     catTxs.forEach(t => {
@@ -2317,7 +2319,7 @@ function BudgetView({ uid, quickAddTx, setQuickAddTx, onCatsChange }) {
                   <div>
                     <span style={{ fontSize:12, color:"#94A3B8" }}>% budget sortie </span>
                     <span style={{ fontSize:14, fontWeight:700, color:"#FBBF24" }}>
-                      {totalS_yr > 0 ? (catTotal/totalS_yr*100).toFixed(1) : "—"}%
+                      {totalS_yr > 0 ? (catTotalYr/totalS_yr*100).toFixed(1) : "—"}%
                     </span>
                   </div>
                 </div>
@@ -2332,7 +2334,7 @@ function BudgetView({ uid, quickAddTx, setQuickAddTx, onCatsChange }) {
                 <StatCard label="Total cumulé" value={fmt(catTotal)} sub={`${catTxs.length} transaction${catTxs.length>1?"s":""}`} color={catColor} icon="💳" />
                 <StatCard label="Moy. mensuelle" value={fmt(catAvgMo)} sub={`sur ${catMonthly.length} mois actifs`} color={catColor} icon="📅" />
                 <StatCard label="Mois max" value={fmt(catMax)} sub={catMonthly.find(m=>m.total===catMax)?.label||""} color={catColor} icon="📈" />
-                <StatCard label="Part du budget" value={`${totalS_yr>0?(catTotal/totalS_yr*100).toFixed(1):"0"}%`} sub="des sorties annuelles" color="#FBBF24" icon="🎯" />
+                <StatCard label="Part du budget" value={`${totalS_yr>0?(catTotalYr/totalS_yr*100).toFixed(1):"0"}%`} sub={`des sorties ${curYear}`} color="#FBBF24" icon="🎯" />
               </div>
 
               {/* Graphique dual : valeur mensuelle + % budget global */}
