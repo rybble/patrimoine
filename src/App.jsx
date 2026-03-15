@@ -3133,31 +3133,22 @@ function AppContent({ user }) {
   }, []);
 
   const fetchOraPrice = useCallback(async () => {
-    // ORA.PA — Yahoo Finance v8 API (JSON direct, pas de proxy requis)
-    // Yahoo Finance supporte les requêtes cross-origin depuis les apps web
-    const yahooUrls = [
-      "https://query1.finance.yahoo.com/v8/finance/chart/ORA.PA?interval=1d&range=1d",
-      "https://query2.finance.yahoo.com/v8/finance/chart/ORA.PA?interval=1d&range=1d",
-    ];
-    for (const url of yahooUrls) {
-      try {
-        const res  = await fetch(url, {
-          cache: "no-store",
-          headers: { "Accept": "application/json" }
-        });
-        if (!res.ok) { console.warn("Yahoo Finance HTTP:", res.status); continue; }
-        const data = await res.json();
-        const price = data?.chart?.result?.[0]?.meta?.regularMarketPrice;
-        if (price && price > 10 && price < 100) {
-          console.log("ORA.PA:", price.toFixed(2), "€ via Yahoo Finance");
-          setOraPrice(price);
-          return;
-        }
-        console.warn("Yahoo Finance ORA:", price, JSON.stringify(data).slice(0,80));
-      } catch(e) { console.warn("Yahoo Finance ORA error:", e.message); }
-    }
+    // ORA.PA via Cloudflare Worker proxy (ora-proxy.rybble.workers.dev)
+    // Résout le problème CORS de Yahoo Finance depuis GitHub Pages
+    try {
+      const res  = await fetch("https://ora-proxy.rybble.workers.dev", { cache:"no-store" });
+      if (!res.ok) throw new Error("HTTP " + res.status);
+      const data = await res.json();
+      const price = data?.chart?.result?.[0]?.meta?.regularMarketPrice;
+      if (price && price > 10 && price < 100) {
+        console.log("ORA.PA:", price.toFixed(2), "€ via Cloudflare Worker");
+        setOraPrice(price);
+        return;
+      }
+      console.warn("ORA Worker response:", price, JSON.stringify(data).slice(0,80));
+    } catch(e) { console.warn("ORA Worker error:", e.message); }
 
-    // Fallback : Finnhub avec correction centimes
+    // Fallback : Finnhub
     for (const sym of ["EURONEXT:ORA", "ORA"]) {
       try {
         const res  = await fetch(`https://finnhub.io/api/v1/quote?symbol=${sym}&token=${FINNHUB_KEY}`);
@@ -3172,7 +3163,7 @@ function AppContent({ user }) {
         }
       } catch(e) { console.warn("Finnhub ORA error:", sym, e.message); }
     }
-    console.warn("ORA.PA unavailable from all sources");
+    console.warn("ORA.PA unavailable");
   }, []);
 
   const fetchPrices = useCallback(async () => {
