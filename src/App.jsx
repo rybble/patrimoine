@@ -3133,43 +3133,29 @@ function AppContent({ user }) {
   }, []);
 
   const fetchOraPrice = useCallback(async () => {
-    const TWELVE_KEY = "b0f8328019d044ce9f86df5861a1a1dd";
-    // Twelve Data — ORA seul fonctionne, retourne prix en centimes (ex: 110.4 = 11.04€)
-    // ORA:Euronext nécessite un plan payant, ORA:XPAR invalide
-    try {
-      const url  = `https://api.twelvedata.com/price?symbol=ORA&apikey=${TWELVE_KEY}`;
-      const res  = await fetch(url, { cache:"no-store" });
-      const data = await res.json();
-      const raw  = parseFloat(data.price);
-      if (raw && raw > 0) {
-        // Twelve Data retourne ORA en centimes d'euro → diviser par 10
-        // 110.40 → 11.04€  |  173.52 → 17.352€  |  175.0 → 17.50€
-        const price = raw / 10;
-        if (price > 5 && price < 100) {
-          console.log("ORA.PA:", price.toFixed(2), "€ via Twelve Data (raw:", raw, ")");
+    // ORA.PA via plusieurs proxies CORS en cascade
+    const proxies = [
+      // thingproxy — proxy CORS open source fiable
+      `https://thingproxy.freeboard.io/fetch/https://query1.finance.yahoo.com/v8/finance/chart/ORA.PA?interval=1d&range=1d`,
+      // api.codetabs — autre proxy public
+      `https://api.codetabs.com/v1/proxy?quest=https://query1.finance.yahoo.com/v8/finance/chart/ORA.PA?interval=1d%26range=1d`,
+      // corsproxy.io en fallback
+      `https://corsproxy.io/?${encodeURIComponent("https://query1.finance.yahoo.com/v8/finance/chart/ORA.PA?interval=1d&range=1d")}`,
+    ];
+    for (const url of proxies) {
+      try {
+        const res  = await fetch(url, { cache: "no-store" });
+        if (!res.ok) continue;
+        const data = await res.json();
+        const price = data?.chart?.result?.[0]?.meta?.regularMarketPrice;
+        if (price && price > 5 && price < 100) { // ORA.PA ~15-25€
+          console.log("ORA.PA:", price, "via", url.slice(0,40));
           setOraPrice(price);
           return;
         }
-      }
-      console.warn("Twelve Data ORA:", JSON.stringify(data).slice(0,80));
-    } catch(e) { console.warn("Twelve Data ORA error:", e.message); }
-    // Fallback : Finnhub
-    const finnhubSymbols = ["EURONEXT:ORA", "ORA"];
-    for (const sym of finnhubSymbols) {
-      try {
-        const res  = await fetch(`https://finnhub.io/api/v1/quote?symbol=${sym}&token=${FINNHUB_KEY}`);
-        const data = await res.json();
-        if (data.c && data.c > 0) {
-          const price = data.c > 100 ? data.c / 100 : data.c;
-          if (price > 5 && price < 100) {
-            console.log("ORA.PA:", price, "€ via Finnhub", sym);
-            setOraPrice(price);
-            return;
-          }
-        }
-      } catch(e) { console.warn("Finnhub ORA error:", sym, e.message); }
+      } catch(e) { console.warn("ORA proxy failed:", url.slice(0,40), e.message); }
     }
-    console.warn("ORA.PA unavailable from all sources");
+    console.warn("ORA.PA price unavailable from all proxies");
   }, []);
 
   const fetchPrices = useCallback(async () => {
@@ -3350,18 +3336,9 @@ function AppContent({ user }) {
           </div>
         </div>
 
-        {/* Nav tabs + bouton ajout rapide */}
-        <div style={{ display: "flex", gap: 6, marginBottom: 20, flexWrap: "wrap", alignItems: "center" }}>
+        {/* Nav tabs */}
+        <div style={{ display: "flex", gap: 6, marginBottom: 20, flexWrap: "wrap" }}>
           {navItems.map(n => <Pill key={n.key} label={`${n.icon} ${n.label}`} active={view === n.key} onClick={() => setView(n.key)} />)}
-          <button onClick={() => setShowQuickAdd(true)}
-            style={{ marginLeft:"auto", flexShrink:0,
-              background:"linear-gradient(135deg,#6366F1,#4F46E5)",
-              border:"none", borderRadius:20, color:"#fff",
-              padding:"6px 16px", fontSize:13, fontWeight:700,
-              cursor:"pointer", display:"flex", alignItems:"center", gap:6,
-              boxShadow:"0 2px 12px rgba(99,102,241,0.4)" }}>
-            <span style={{ fontSize:16, lineHeight:1 }}>+</span> Ajouter
-          </button>
         </div>
 
         {/* ORA.PA status bar */}
@@ -3386,7 +3363,19 @@ function AppContent({ user }) {
         {view === "budget"     && <BudgetView uid={user?.uid} onOpenQuickAdd={() => setShowQuickAdd(true)} quickAddTx={quickAddTx} setQuickAddTx={setQuickAddTx} onCatsChange={setQuickAddCats} />}
       </div>
 
-      {/* Bouton ajout intégré dans la nav — supprimé du bas de page */}
+      {/* ── Bouton flottant ➕ ─────────────────────────────────── */}
+      <button onClick={() => setShowQuickAdd(true)}
+        style={{ position:"fixed", bottom:28, right:24, zIndex:900,
+          width:56, height:56, borderRadius:"50%", border:"none", cursor:"pointer",
+          background:"linear-gradient(135deg,#6366F1,#4F46E5)",
+          color:"#fff", fontSize:26, fontWeight:700, lineHeight:1,
+          boxShadow:"0 4px 24px rgba(99,102,241,0.5)",
+          display:"flex", alignItems:"center", justifyContent:"center",
+          transition:"transform 0.15s, box-shadow 0.15s" }}
+        onMouseEnter={e => { e.currentTarget.style.transform="scale(1.1)"; e.currentTarget.style.boxShadow="0 6px 32px rgba(99,102,241,0.7)"; }}
+        onMouseLeave={e => { e.currentTarget.style.transform="scale(1)"; e.currentTarget.style.boxShadow="0 4px 24px rgba(99,102,241,0.5)"; }}>
+        +
+      </button>
 
       {/* ── Modal saisie rapide ───────────────────────────────── */}
       {showQuickAdd && (
