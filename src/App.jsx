@@ -3011,7 +3011,7 @@ function AppContent({ user }) {
   const [fbSynced, setFbSynced] = useState(false);
   const [fbStatus, setFbStatus] = useState("");
   const [showQuickAdd, setShowQuickAdd] = useState(false);
-  const [quickAddCats, setQuickAddCats] = useState({ entree:[], sortie:[] });
+  const [quickAddCats, setQuickAddCats] = useState({ entree: DEFAULT_CATS_ENTREE, sortie: DEFAULT_CATS_SORTIE });
   const [quickAddTx,   setQuickAddTx]   = useState([]); // "", "saving", "saved", "error"
 
   // ── Firebase sync ─────────────────────────────────────────────────────────
@@ -3133,25 +3133,29 @@ function AppContent({ user }) {
   }, []);
 
   const fetchOraPrice = useCallback(async () => {
-    // Yahoo Finance — ORA.PA (Euronext Paris) via proxy CORS public
-    const urls = [
-      // Option 1 : Yahoo Finance via corsproxy.io
+    // ORA.PA via plusieurs proxies CORS en cascade
+    const proxies = [
+      // thingproxy — proxy CORS open source fiable
+      `https://thingproxy.freeboard.io/fetch/https://query1.finance.yahoo.com/v8/finance/chart/ORA.PA?interval=1d&range=1d`,
+      // api.codetabs — autre proxy public
+      `https://api.codetabs.com/v1/proxy?quest=https://query1.finance.yahoo.com/v8/finance/chart/ORA.PA?interval=1d%26range=1d`,
+      // corsproxy.io en fallback
       `https://corsproxy.io/?${encodeURIComponent("https://query1.finance.yahoo.com/v8/finance/chart/ORA.PA?interval=1d&range=1d")}`,
-      // Option 2 : Yahoo Finance v7 (fallback)
-      `https://corsproxy.io/?${encodeURIComponent("https://query2.finance.yahoo.com/v8/finance/chart/ORA.PA?interval=1d&range=1d")}`,
     ];
-    for (const url of urls) {
+    for (const url of proxies) {
       try {
-        const res  = await fetch(url);
+        const res  = await fetch(url, { cache: "no-store" });
+        if (!res.ok) continue;
         const data = await res.json();
         const price = data?.chart?.result?.[0]?.meta?.regularMarketPrice;
-        if (price && price > 0 && price < 100) { // ORA.PA ~15-25€, sanity check
+        if (price && price > 5 && price < 100) { // ORA.PA ~15-25€
+          console.log("ORA.PA:", price, "via", url.slice(0,40));
           setOraPrice(price);
           return;
         }
-      } catch {}
+      } catch(e) { console.warn("ORA proxy failed:", url.slice(0,40), e.message); }
     }
-    console.warn("ORA.PA price unavailable");
+    console.warn("ORA.PA price unavailable from all proxies");
   }, []);
 
   const fetchPrices = useCallback(async () => {
