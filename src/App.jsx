@@ -3133,25 +3133,20 @@ function AppContent({ user }) {
   }, []);
 
   const fetchOraPrice = useCallback(async () => {
-    // ORA.PA — cascade de sources sans proxy CORS requis
-    // Source 1 : Stooq (CSV public, pas de CORS)
+    // ORA.PA via Twelve Data (API gratuite, pas de CORS, 800 req/jour)
+    const TWELVE_KEY = "b0f8328019d044ce9f86df5861a1a1dd";
     try {
-      const res = await fetch("https://stooq.com/q/l/?s=ora.pa&f=sd2t2ohlcv&h&e=csv", { cache:"no-store" });
-      const csv = await res.text();
-      // Format CSV: Symbol,Date,Time,Open,High,Low,Close,Volume
-      const lines = csv.trim().split("\n");
-      if (lines.length >= 2) {
-        const cols = lines[1].split(",");
-        const close = parseFloat(cols[6]);
-        if (close && close > 5 && close < 100) {
-          console.log("ORA.PA:", close, "€ via Stooq");
-          setOraPrice(close);
-          return;
-        }
+      const res  = await fetch(`https://api.twelvedata.com/price?symbol=ORA&exchange=EURONEXT&apikey=${TWELVE_KEY}`, { cache:"no-store" });
+      const data = await res.json();
+      const price = parseFloat(data.price);
+      if (price && price > 5 && price < 100) {
+        console.log("ORA.PA:", price, "€ via Twelve Data");
+        setOraPrice(price);
+        return;
       }
-    } catch(e) { console.warn("Stooq ORA error:", e.message); }
+    } catch(e) { console.warn("Twelve Data ORA error:", e.message); }
 
-    // Source 2 : Finnhub avec correction cents→euros
+    // Fallback : Finnhub avec correction cents→euros
     const finnhubSymbols = ["EURONEXT:ORA", "ORA"];
     for (const sym of finnhubSymbols) {
       try {
