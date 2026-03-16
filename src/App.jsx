@@ -939,20 +939,20 @@ function CryptoView({ cryptoData, setCryptoData, cryptoPrices, loading, history,
 }
 
 // ─── STOCKS VIEW ──────────────────────────────────────────────────────────────
-// ─── TRADINGVIEW SEARCH ───────────────────────────────────────────────────────
+
+// ─── STOCK SEARCH BAR ────────────────────────────────────────────────────────
 function StockSearchBar({ onAdd, workerUrl = "https://ora-proxy.rybble.workers.dev" }) {
-  const [query, setQuery]           = useState("");
+  const [query, setQuery]             = useState("");
   const [suggestions, setSuggestions] = useState([]);
-  const [selected, setSelected]     = useState(null);
-  const [account, setAccount]       = useState("ct"); // "ct" | "pea"
-  const [qty, setQty]               = useState("");
+  const [selected, setSelected]       = useState(null);
+  const [account, setAccount]         = useState("ct");
+  const [qty, setQty]                 = useState("");
   const [loadingPrice, setLoadingPrice] = useState(false);
-  const [livePrice, setLivePrice]   = useState(null);
+  const [livePrice, setLivePrice]     = useState(null);
   const [searchLoading, setSearchLoading] = useState(false);
   const debounceRef = useRef(null);
   const dropdownRef = useRef(null);
 
-  // Fermer dropdown si clic extérieur
   useEffect(() => {
     const handler = (e) => { if (dropdownRef.current && !dropdownRef.current.contains(e.target)) setSuggestions([]); };
     document.addEventListener("mousedown", handler);
@@ -963,53 +963,26 @@ function StockSearchBar({ onAdd, workerUrl = "https://ora-proxy.rybble.workers.d
     if (q.length < 1) { setSuggestions([]); return; }
     setSearchLoading(true);
     try {
-      // TradingView symbol search (pas de CORS grâce au proxy — on passe par fetch direct, TradingView autorise)
-      const res = await fetch(
-        `https://symbol-search.tradingview.com/symbol_search/v3/?text=${encodeURIComponent(q)}&hl=1&exchange=&lang=fr&search_type=undefined&domain=production&sort_by_country=FR`,
-        { headers: { "Content-Type": "application/json" } }
-      );
-      if (!res.ok) throw new Error("TV search failed");
+      // Recherche via le Worker Cloudflare (évite les problèmes CORS)
+      const res = await fetch(`${workerUrl}?mode=search&q=${encodeURIComponent(q)}`, { cache: "no-store" });
+      if (!res.ok) throw new Error("search failed");
       const data = await res.json();
-      const items = (data.symbols || []).slice(0, 8).map(s => ({
-        ticker:      s.symbol,
-        name:        s.description || s.symbol,
-        exchange:    s.exchange,
-        type:        s.type,
-        // Yahoo Finance ticker : reconstruit depuis exchange + symbol
-        yahooTicker: buildYahooTicker(s.symbol, s.exchange, s.prefix_name),
-      }));
-      setSuggestions(items);
-    } catch (e) {
-      // Fallback : recherche Yahoo Finance directement
-      try {
-        const r2 = await fetch(`https://query1.finance.yahoo.com/v1/finance/search?q=${encodeURIComponent(q)}&lang=fr&region=FR&quotesCount=8&enableFuzzyQuery=false`);
-        const d2 = await r2.json();
-        const items = (d2.quotes || []).slice(0, 8).map(s => ({
-          ticker: s.symbol, name: s.longname || s.shortname || s.symbol,
-          exchange: s.exchDisp || s.exchange, type: s.quoteType,
+      const items = (data.quotes || [])
+        .filter(s => s.symbol && ["EQUITY","ETF","MUTUALFUND","INDEX","FUTURE"].includes(s.quoteType))
+        .slice(0, 8)
+        .map(s => ({
+          ticker:   s.symbol,
+          name:     s.longname || s.shortname || s.symbol,
+          exchange: s.exchDisp || s.exchange || "",
+          type:     s.quoteType || "",
           yahooTicker: s.symbol,
         }));
-        setSuggestions(items);
-      } catch {}
+      setSuggestions(items);
+    } catch (e) {
+      console.warn("Search error:", e.message);
+      setSuggestions([]);
     } finally { setSearchLoading(false); }
-  }, []);
-
-  function buildYahooTicker(symbol, exchange, prefix) {
-    // Mapping exchange TradingView → suffixe Yahoo Finance
-    const suffixes = {
-      "EURONEXT": ".PA", "EPA": ".PA",
-      "XETRA": ".DE",    "FWB": ".F",
-      "BIT": ".MI",      "BME": ".MC",
-      "LSE": ".L",       "SWX": ".SW",
-      "AMS": ".AS",      "BRU": ".BR",
-      "NASDAQ": "",      "NYSE": "",
-      "AMEX": "",        "TSX": ".TO",
-      "ASX": ".AX",      "HKEx": ".HK",
-      "TSE": ".T",
-    };
-    const suffix = suffixes[exchange] ?? "";
-    return symbol + suffix;
-  }
+  }, [workerUrl]);
 
   const handleInput = (e) => {
     const v = e.target.value;
@@ -1017,14 +990,13 @@ function StockSearchBar({ onAdd, workerUrl = "https://ora-proxy.rybble.workers.d
     setSelected(null);
     setLivePrice(null);
     clearTimeout(debounceRef.current);
-    debounceRef.current = setTimeout(() => search(v), 280);
+    debounceRef.current = setTimeout(() => search(v), 300);
   };
 
   const pickSuggestion = async (item) => {
     setSelected(item);
     setQuery(`${item.ticker} — ${item.name}`);
     setSuggestions([]);
-    // Fetch prix live via Worker
     setLoadingPrice(true);
     setLivePrice(null);
     try {
@@ -1037,141 +1009,118 @@ function StockSearchBar({ onAdd, workerUrl = "https://ora-proxy.rybble.workers.d
     setLoadingPrice(false);
   };
 
+  const toEur = (lp) => {
+    if (!lp) return 0;
+    if (lp.currency === "USD") return lp.price * 0.92;
+    if (lp.currency === "GBp") return lp.price / 100 * 1.18;
+    return lp.price;
+  };
+
   const handleAdd = () => {
     if (!selected || !qty) return;
     const qtyNum = parseFloat(qty.replace(",", "."));
     if (!qtyNum || qtyNum <= 0) return;
-    // Convertir le prix en EUR si besoin (estimation 0.92 pour USD)
-    let priceEur = livePrice?.price || 0;
-    if (livePrice?.currency === "USD") priceEur = priceEur * 0.92;
-    else if (livePrice?.currency === "GBp") priceEur = priceEur / 100 * 1.18; // pence → £ → €
-    onAdd({
-      symbol:  selected.ticker,
-      name:    selected.name,
-      qty:     qtyNum,
-      price:   priceEur,
-      isin:    "",
-      account: account, // "ct" ou "pea"
-    });
-    // Reset
+    onAdd({ symbol: selected.ticker, name: selected.name, qty: qtyNum, price: toEur(livePrice), isin: "", account });
     setQuery(""); setSelected(null); setQty(""); setLivePrice(null); setAccount("ct");
   };
 
-  const inp = { background: "#1E293B", border: "1px solid #334155", borderRadius: 8,
-    padding: "8px 12px", color: "#F1F5F9", fontSize: 13, outline: "none" };
-  const btnAccount = (id, label, color) => (
+  const inp = { background: "#1E293B", border: "1px solid #334155", borderRadius: 8, padding: "8px 12px", color: "#F1F5F9", fontSize: 13, outline: "none" };
+
+  const btnAcc = (id, label, rgb) => (
     <button onClick={() => setAccount(id)} style={{
-      background: account === id ? `rgba(${color},0.15)` : "transparent",
-      border: `1px solid ${account === id ? `rgba(${color},0.5)` : "rgba(255,255,255,0.1)"}`,
-      borderRadius: 8, color: account === id ? `rgb(${color})` : "#64748B",
-      padding: "7px 16px", fontSize: 13, fontWeight: account === id ? 700 : 400,
-      cursor: "pointer", transition: "all 0.15s",
+      background: account === id ? `rgba(${rgb},0.15)` : "transparent",
+      border: `1px solid ${account === id ? `rgba(${rgb},0.5)` : "rgba(255,255,255,0.1)"}`,
+      borderRadius: 8, color: account === id ? `rgb(${rgb})` : "#64748B",
+      padding: "7px 16px", fontSize: 13, fontWeight: account === id ? 700 : 400, cursor: "pointer", transition: "all 0.15s",
     }}>{label}</button>
   );
 
   return (
     <Card style={{ padding: "16px 18px", background: "rgba(99,102,241,0.05)", border: "1px dashed rgba(99,102,241,0.35)" }}>
-      <div style={{ fontSize: 13, fontWeight: 700, color: "#818CF8", marginBottom: 14 }}>
-        ＋ Ajouter une valeur
-      </div>
+      <div style={{ fontSize: 13, fontWeight: 700, color: "#818CF8", marginBottom: 14 }}>＋ Ajouter une valeur</div>
 
-      {/* Ligne 1 : Recherche + compte */}
       <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "flex-start", marginBottom: 12 }}>
 
-        {/* Champ recherche avec dropdown */}
+        {/* Champ recherche */}
         <div ref={dropdownRef} style={{ position: "relative", flex: "1 1 260px" }}>
           <div style={{ fontSize: 11, color: "#64748B", marginBottom: 4 }}>Rechercher une valeur</div>
           <div style={{ position: "relative" }}>
-            <input
-              value={query}
-              onChange={handleInput}
-              placeholder="ex: AAPL, Tesla, ORA.PA…"
-              style={{ ...inp, width: "100%", paddingRight: 30 }}
-            />
-            {searchLoading && (
-              <span style={{ position:"absolute", right:10, top:"50%", transform:"translateY(-50%)", color:"#64748B", fontSize:12 }}>⏳</span>
-            )}
+            <input value={query} onChange={handleInput} placeholder="ex: AAPL, Tesla, ORA.PA, Air Liquide…"
+              style={{ ...inp, width: "100%", paddingRight: 32 }} />
+            {searchLoading && <span style={{ position:"absolute", right:10, top:"50%", transform:"translateY(-50%)", color:"#64748B", fontSize:12 }}>⏳</span>}
           </div>
           {suggestions.length > 0 && (
-            <div style={{
-              position: "absolute", top: "calc(100% + 4px)", left: 0, right: 0, zIndex: 999,
-              background: "#1E293B", border: "1px solid #334155", borderRadius: 10,
-              boxShadow: "0 8px 32px rgba(0,0,0,0.5)", overflow: "hidden",
-            }}>
+            <div style={{ position:"absolute", top:"calc(100% + 4px)", left:0, right:0, zIndex:999,
+              background:"#1E293B", border:"1px solid #334155", borderRadius:10, boxShadow:"0 8px 32px rgba(0,0,0,0.5)", overflow:"hidden" }}>
               {suggestions.map((s, i) => (
                 <div key={i} onClick={() => pickSuggestion(s)}
-                  style={{ padding: "9px 14px", cursor: "pointer", display: "flex", alignItems: "center", gap: 10,
-                    borderBottom: i < suggestions.length - 1 ? "1px solid rgba(255,255,255,0.05)" : "none" }}
-                  onMouseEnter={e => e.currentTarget.style.background = "rgba(99,102,241,0.12)"}
-                  onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
-                  <div style={{ width: 36, height: 36, borderRadius: 8, background: "rgba(99,102,241,0.15)",
-                    display: "flex", alignItems: "center", justifyContent: "center",
-                    fontSize: 10, fontWeight: 800, color: "#818CF8", flexShrink: 0 }}>
-                    {s.ticker.slice(0, 4)}
+                  style={{ padding:"9px 14px", cursor:"pointer", display:"flex", alignItems:"center", gap:10,
+                    borderBottom: i < suggestions.length-1 ? "1px solid rgba(255,255,255,0.05)" : "none" }}
+                  onMouseEnter={e => e.currentTarget.style.background="rgba(99,102,241,0.12)"}
+                  onMouseLeave={e => e.currentTarget.style.background="transparent"}>
+                  <div style={{ width:36, height:36, borderRadius:8, background:"rgba(99,102,241,0.15)", display:"flex", alignItems:"center",
+                    justifyContent:"center", fontSize:10, fontWeight:800, color:"#818CF8", flexShrink:0 }}>
+                    {s.ticker.replace(/[^A-Z0-9]/gi,"").slice(0,4).toUpperCase()}
                   </div>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontWeight: 700, color: "#F1F5F9", fontSize: 13 }}
-                      dangerouslySetInnerHTML={{ __html: s.name }} />
-                    <div style={{ fontSize: 11, color: "#64748B" }}>{s.ticker} · {s.exchange} · {s.type}</div>
+                  <div style={{ flex:1, minWidth:0 }}>
+                    <div style={{ fontWeight:700, color:"#F1F5F9", fontSize:13, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{s.name}</div>
+                    <div style={{ fontSize:11, color:"#64748B" }}>{s.ticker} · {s.exchange} · {s.type}</div>
                   </div>
                 </div>
               ))}
             </div>
           )}
+          {!searchLoading && query.length > 1 && suggestions.length === 0 && !selected && (
+            <div style={{ position:"absolute", top:"calc(100% + 4px)", left:0, right:0, zIndex:999,
+              background:"#1E293B", border:"1px solid #334155", borderRadius:10, padding:"12px 14px",
+              fontSize:12, color:"#64748B" }}>
+              Aucun résultat — essayez le ticker exact (ex: "AI.PA" pour Air Liquide)
+            </div>
+          )}
         </div>
 
-        {/* Choix compte */}
-        <div style={{ flexShrink: 0 }}>
-          <div style={{ fontSize: 11, color: "#64748B", marginBottom: 4 }}>Compte</div>
-          <div style={{ display: "flex", gap: 6 }}>
-            {btnAccount("ct",  "📋 Compte-Titres", "96,165,250")}
-            {btnAccount("pea", "🇫🇷 PEA",          "167,139,250")}
+        {/* Compte */}
+        <div style={{ flexShrink:0 }}>
+          <div style={{ fontSize:11, color:"#64748B", marginBottom:4 }}>Compte</div>
+          <div style={{ display:"flex", gap:6 }}>
+            {btnAcc("ct",  "📋 Compte-Titres", "96,165,250")}
+            {btnAcc("pea", "🇫🇷 PEA",          "167,139,250")}
           </div>
         </div>
 
         {/* Quantité */}
-        <div style={{ width: 110, flexShrink: 0 }}>
-          <div style={{ fontSize: 11, color: "#64748B", marginBottom: 4 }}>Quantité</div>
-          <input value={qty} onChange={e => setQty(e.target.value)} placeholder="0.00"
-            style={{ ...inp, width: "100%" }} />
+        <div style={{ width:110, flexShrink:0 }}>
+          <div style={{ fontSize:11, color:"#64748B", marginBottom:4 }}>Quantité</div>
+          <input value={qty} onChange={e => setQty(e.target.value)} placeholder="0.00" style={{ ...inp, width:"100%" }} />
         </div>
       </div>
 
-      {/* Ligne 2 : Prix récupéré + bouton */}
-      <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
-        <div style={{ flex: 1, minHeight: 32, display: "flex", alignItems: "center" }}>
-          {loadingPrice && <span style={{ fontSize: 12, color: "#64748B" }}>⏳ Récupération du cours…</span>}
-          {!loadingPrice && livePrice && (
-            <div style={{ fontSize: 13, display: "flex", alignItems: "center", gap: 8 }}>
-              <span style={{ color: "#34D399", fontWeight: 700 }}>
-                ✓ {livePrice.price.toFixed(2)} {livePrice.currency}
-              </span>
-              {livePrice.currency !== "EUR" && (
-                <span style={{ color: "#64748B", fontSize: 11 }}>
-                  ≈ {(livePrice.currency === "USD" ? livePrice.price * 0.92 : livePrice.currency === "GBp" ? livePrice.price / 100 * 1.18 : livePrice.price).toFixed(2)} €
-                </span>
-              )}
-              {qty && parseFloat(qty) > 0 && (() => {
-                const priceEur = livePrice.currency === "USD" ? livePrice.price * 0.92 : livePrice.currency === "GBp" ? livePrice.price / 100 * 1.18 : livePrice.price;
-                return <span style={{ color: "#94A3B8", fontSize: 12 }}>→ total ≈ {fmt(priceEur * parseFloat(qty.replace(",",".")))}</span>;
-              })()}
-            </div>
-          )}
+      {/* Prix + bouton */}
+      <div style={{ display:"flex", alignItems:"center", gap:12, flexWrap:"wrap" }}>
+        <div style={{ flex:1, minHeight:32, display:"flex", alignItems:"center" }}>
+          {loadingPrice && <span style={{ fontSize:12, color:"#64748B" }}>⏳ Récupération du cours…</span>}
+          {!loadingPrice && livePrice && (() => {
+            const eur = toEur(livePrice);
+            const qtyNum = parseFloat(qty.replace(",",".")) || 0;
+            return (
+              <div style={{ fontSize:13, display:"flex", alignItems:"center", gap:8, flexWrap:"wrap" }}>
+                <span style={{ color:"#34D399", fontWeight:700 }}>✓ {livePrice.price.toFixed(2)} {livePrice.currency}</span>
+                {livePrice.currency !== "EUR" && <span style={{ color:"#64748B", fontSize:11 }}>≈ {eur.toFixed(2)} €</span>}
+                {qtyNum > 0 && <span style={{ color:"#94A3B8", fontSize:12 }}>→ total ≈ {fmt(eur * qtyNum)}</span>}
+              </div>
+            );
+          })()}
           {!loadingPrice && selected && !livePrice && (
-            <span style={{ fontSize: 12, color: "#F87171" }}>⚠ Cours indisponible — prix manuel requis</span>
+            <span style={{ fontSize:12, color:"#F87171" }}>⚠ Cours indisponible via Yahoo Finance</span>
           )}
         </div>
-        <div style={{ display: "flex", gap: 8 }}>
-          <button onClick={handleAdd}
-            disabled={!selected || !qty || (!livePrice && true)}
-            style={{ background: selected && qty && livePrice ? "linear-gradient(135deg,#6366F1,#4F46E5)" : "rgba(99,102,241,0.2)",
-              border: "none", borderRadius: 10, color: selected && qty && livePrice ? "#fff" : "#4F46E5",
-              padding: "8px 20px", cursor: selected && qty && livePrice ? "pointer" : "not-allowed",
-              fontWeight: 700, fontSize: 13, boxShadow: selected && qty && livePrice ? "0 2px 12px rgba(99,102,241,0.4)" : "none",
-              transition: "all 0.15s" }}>
-            Ajouter
-          </button>
-        </div>
+        <button onClick={handleAdd} disabled={!selected || !qty || !livePrice}
+          style={{ background: selected && qty && livePrice ? "linear-gradient(135deg,#6366F1,#4F46E5)" : "rgba(99,102,241,0.2)",
+            border:"none", borderRadius:10, color: selected && qty && livePrice ? "#fff" : "#4F46E5",
+            padding:"8px 20px", cursor: selected && qty && livePrice ? "pointer" : "not-allowed",
+            fontWeight:700, fontSize:13, transition:"all 0.15s" }}>
+          Ajouter
+        </button>
       </div>
     </Card>
   );
@@ -1193,26 +1142,21 @@ function StocksView({ stocks, setStocks, history, marketHistory }) {
       try {
         const lines = ev.target.result.split("\n").filter(l => l.trim());
         if (lines.length < 2) { setImportStatus("❌ Fichier vide ou invalide"); return; }
-        // Try to detect separator
         const sep = lines[0].includes(";") ? ";" : ",";
         const headers = lines[0].split(sep).map(h => h.trim().replace(/"/g, "").toLowerCase());
-
-        // Map common Trade Republic / generic CSV column names
         const col = (names) => { for (const n of names) { const i = headers.indexOf(n); if (i >= 0) return i; } return -1; };
         const iSymbol = col(["ticker","symbol","isin","wkn","bezeichnung","name","titre","libellé"]);
         const iName   = col(["name","bezeichnung","titre","libellé","security name","instrument"]);
         const iQty    = col(["shares","quantity","anzahl","quantité","qté","nombre","units"]);
         const iPrice  = col(["price","kurs","cours","prix","current price","last price","valeur unitaire"]);
         const iIsin   = col(["isin"]);
-
-        if (iQty < 0 || iPrice < 0) { setImportStatus("❌ Colonnes quantité/prix introuvables. Format attendu : Symbole, Nom, Quantité, Prix"); return; }
-
+        if (iQty < 0 || iPrice < 0) { setImportStatus("❌ Colonnes quantité/prix introuvables."); return; }
         const updated = [...stocks];
         let count = 0;
         lines.slice(1).forEach(line => {
           const cols = line.split(sep).map(c => c.trim().replace(/"/g, ""));
           const symbol = iSymbol >= 0 ? cols[iSymbol]?.toUpperCase() : "";
-          const name   = iName >= 0 ? cols[iName] : symbol;
+          const name   = iName   >= 0 ? cols[iName] : symbol;
           const qty    = parseFloat(cols[iQty]?.replace(",", ".")) || 0;
           const price  = parseFloat(cols[iPrice]?.replace(",", ".")) || 0;
           const isin   = iIsin >= 0 ? cols[iIsin] : "";
@@ -1225,32 +1169,29 @@ function StocksView({ stocks, setStocks, history, marketHistory }) {
         setStocks(updated);
         setImportStatus(`✅ ${count} ligne(s) importée(s)`);
         setTimeout(() => setImportStatus(""), 4000);
-      } catch (err) { setImportStatus("❌ Erreur de lecture : " + err.message); }
+      } catch (err) { setImportStatus("❌ Erreur : " + err.message); }
     };
     reader.readAsText(file, "UTF-8");
     e.target.value = "";
   };
 
-  // Catégorisation des actifs
-  // Catégorisation des actifs — basée sur le champ account ou liste statique
-  const CT_SYMBOLS_DEFAULT = ["AAPL", "TSLA", "BYD", "CSPX"];
-  const NON_COTE_SYMBOLS   = ["APOLLO", "EQTF"];
-
-  const stocksCT      = stocks.filter(s => !NON_COTE_SYMBOLS.includes(s.symbol) && (s.account === "ct" || (!s.account && CT_SYMBOLS_DEFAULT.includes(s.symbol))));
-  const stocksPEA     = stocks.filter(s => s.account === "pea");
-  const stocksNonCote = stocks.filter(s => NON_COTE_SYMBOLS.includes(s.symbol));
-
-  const totalCT      = stocksCT.reduce((s, st) => s + st.price * st.qty, 0);
-  const totalPEA     = stocksPEA.reduce((s, st) => s + st.price * st.qty, 0);
-  const PEA_MANUAL   = stocksPEA.length === 0 ? 549.89 : 0; // valeur manuelle si pas de lignes PEA
-  const PEA_VALUE    = totalPEA + PEA_MANUAL;
-  const totalNonCote = stocksNonCote.reduce((s, st) => s + st.price * st.qty, 0);
+  // Catégorisation — basée sur champ account ou liste statique par défaut
+  const CT_DEFAULT     = ["AAPL", "TSLA", "BYD", "CSPX"];
+  const NON_COTE       = ["APOLLO", "EQTF"];
+  const stocksCT       = stocks.filter(s => !NON_COTE.includes(s.symbol) && (s.account === "ct"  || (!s.account && CT_DEFAULT.includes(s.symbol))));
+  const stocksPEA      = stocks.filter(s => s.account === "pea");
+  const stocksNonCote  = stocks.filter(s => NON_COTE.includes(s.symbol));
+  const totalCT        = stocksCT.reduce((s, st) => s + st.price * st.qty, 0);
+  const totalPEA       = stocksPEA.reduce((s, st) => s + st.price * st.qty, 0);
+  const PEA_MANUAL     = stocksPEA.length === 0 ? 549.89 : 0;
+  const PEA_VALUE      = totalPEA + PEA_MANUAL;
+  const totalNonCote   = stocksNonCote.reduce((s, st) => s + st.price * st.qty, 0);
 
   const renderStockCard = (st) => {
     const value = st.price * st.qty;
-    const isEditing = editing === st.symbol;
+    const isEditing = editing === st.symbol + (st.account || "");
     return (
-      <Card key={st.symbol} style={{ padding: "13px 18px" }}>
+      <Card key={st.symbol + (st.account||"")} style={{ padding: "13px 18px" }}>
         <div style={{ display: "flex", alignItems: "flex-start", gap: 12 }}>
           <div style={{ width: 42, height: 42, borderRadius: "10px", background: "rgba(52,211,153,0.1)", border: "2px solid rgba(52,211,153,0.25)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: 800, color: "#34D399", flexShrink: 0 }}>
             {st.symbol.slice(0, 4)}
@@ -1267,7 +1208,7 @@ function StocksView({ stocks, setStocks, history, marketHistory }) {
                       style={{ width: w, background: "#1E293B", border: "1px solid #4F46E5", borderRadius: "6px", padding: "4px 8px", color: "#F1F5F9", fontSize: 12 }} />
                   </div>
                 ))}
-                <button onClick={() => { setStocks(p => p.map(s => s.symbol === st.symbol ? { ...s, qty: parseFloat(form.qty) || s.qty, price: parseFloat(form.price) || s.price } : s)); setEditing(null); }}
+                <button onClick={() => { setStocks(p => p.map(s => (s.symbol === st.symbol && (s.account||"") === (st.account||"")) ? { ...s, qty: parseFloat(form.qty)||s.qty, price: parseFloat(form.price)||s.price } : s)); setEditing(null); }}
                   style={{ alignSelf: "flex-end", background: "#4F46E5", border: "none", borderRadius: "6px", color: "#fff", padding: "4px 12px", cursor: "pointer", fontSize: 12, fontWeight: 600 }}>✓ Sauver</button>
                 <button onClick={() => setEditing(null)}
                   style={{ alignSelf: "flex-end", background: "transparent", border: "1px solid #334155", borderRadius: "6px", color: "#64748B", padding: "4px 10px", cursor: "pointer", fontSize: 12 }}>Annuler</button>
@@ -1275,34 +1216,33 @@ function StocksView({ stocks, setStocks, history, marketHistory }) {
             ) : (
               <div style={{ fontSize: 12, color: "#64748B" }}>
                 {st.qty} titres · {fmt(st.price)} / titre
-                <button onClick={() => { setEditing(st.symbol); setForm({ qty: String(st.qty), price: String(st.price) }); }}
+                <button onClick={() => { setEditing(st.symbol + (st.account||"")); setForm({ qty: String(st.qty), price: String(st.price) }); }}
                   style={{ marginLeft: 10, background: "transparent", border: "none", color: "#6366F1", fontSize: 11, cursor: "pointer", textDecoration: "underline" }}>modifier</button>
               </div>
             )}
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
             <div style={{ fontSize: 17, fontWeight: 700, color: "#34D399", minWidth: 90, textAlign: "right" }}>{fmt(value)}</div>
-            <button onClick={() => setStocks(p => p.filter(s => s.symbol !== st.symbol))} title="Supprimer"
+            <button onClick={() => setStocks(p => p.filter(s => !(s.symbol === st.symbol && (s.account||"") === (st.account||""))))} title="Supprimer"
               style={{ background: "transparent", border: "none", color: "#334155", cursor: "pointer", fontSize: 16, padding: "0 2px" }}
-              onMouseEnter={e => e.currentTarget.style.color = "#F87171"}
-              onMouseLeave={e => e.currentTarget.style.color = "#334155"}>✕</button>
+              onMouseEnter={e => e.currentTarget.style.color="#F87171"}
+              onMouseLeave={e => e.currentTarget.style.color="#334155"}>✕</button>
           </div>
         </div>
       </Card>
     );
   };
 
-  const SubSectionHeader = ({ title, subtitle, total: sTotal, color = "#34D399", badge }) => (
-    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10, marginTop: 4 }}>
+  const SubSectionHeader = ({ title, subtitle, total: sTotal, color = "#34D399" }) => (
+    <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:10, marginTop:4 }}>
       <div>
-        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          <div style={{ width: 3, height: 18, borderRadius: 2, background: color }} />
-          <span style={{ fontWeight: 700, fontSize: 15, color: "#F1F5F9" }}>{title}</span>
-          {badge && <span style={{ fontSize: 11, color: "#64748B", background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 6, padding: "1px 8px" }}>{badge}</span>}
+        <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+          <div style={{ width:3, height:18, borderRadius:2, background:color }} />
+          <span style={{ fontWeight:700, fontSize:15, color:"#F1F5F9" }}>{title}</span>
         </div>
-        {subtitle && <div style={{ fontSize: 12, color: "#64748B", marginLeft: 11 }}>{subtitle}</div>}
+        {subtitle && <div style={{ fontSize:12, color:"#64748B", marginLeft:11 }}>{subtitle}</div>}
       </div>
-      <div style={{ fontSize: 17, fontWeight: 700, color }}>{fmt(sTotal)}</div>
+      <div style={{ fontSize:17, fontWeight:700, color }}>{fmt(sTotal)}</div>
     </div>
   );
 
@@ -1310,15 +1250,15 @@ function StocksView({ stocks, setStocks, history, marketHistory }) {
     <div>
       <SectionTitle sub={`Trade Republic · Total ${fmt(total + PEA_VALUE)}`}>Bourse</SectionTitle>
 
-      <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 14 }}>
+      <div style={{ display:"flex", gap:10, flexWrap:"wrap", marginBottom:14 }}>
         <StatCard label="Total bourse" value={fmt(total + PEA_VALUE)} sub={`${stocks.length} positions`} color="#34D399" icon="📈" />
-        <StatCard label="Compte-Titres" value={fmt(totalCT)} sub="AAPL · TSLA · BYD · CSPX" color="#60A5FA" icon="📋" />
-        <StatCard label="PEA" value={fmt(PEA_VALUE)} sub="Trade Republic" color="#A78BFA" icon="🇫🇷" />
+        <StatCard label="Compte-Titres" value={fmt(totalCT)} sub={`${stocksCT.length} lignes`} color="#60A5FA" icon="📋" />
+        <StatCard label="PEA" value={fmt(PEA_VALUE)} sub={stocksPEA.length > 0 ? `${stocksPEA.length} lignes` : "Trade Republic"} color="#A78BFA" icon="🇫🇷" />
         <StatCard label="Non cotés" value={fmt(totalNonCote)} sub="APOLLO · EQTF" color="#FBBF24" icon="🔒" />
       </div>
 
       <Card style={{ marginBottom: 18, padding: "14px 18px" }}>
-        <div style={{ fontSize: 12, color: "#64748B", marginBottom: 4 }}>Évolution Bourse (€) — 6 mois · AAPL + TSLA via Finnhub</div>
+        <div style={{ fontSize: 12, color: "#64748B", marginBottom: 4 }}>Évolution Bourse (€) — 6 mois · AAPL + TSLA via Worker</div>
         <div style={{ fontSize: 11, color: "#64748B", marginBottom: 8 }}>Courbe basée sur tes positions AAPL ({stocks.find(s=>s.symbol==="AAPL")?.qty} titres) et TSLA ({stocks.find(s=>s.symbol==="TSLA")?.qty} titres)</div>
         {marketHistory && marketHistory.length > 1
           ? <MiniAreaChart data={marketHistory} dataKey="stocks" color="#34D399" height={220} showPeriodSelector={true} />
@@ -1329,9 +1269,9 @@ function StocksView({ stocks, setStocks, history, marketHistory }) {
       {/* ── COMPTE-TITRES ── */}
       <div style={{ marginBottom: 22 }}>
         <SubSectionHeader title="Compte-Titres" subtitle="Trade Republic · Actions cotées" total={totalCT} color="#60A5FA" />
-        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+        <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
           {stocksCT.map(renderStockCard)}
-          {stocksCT.length === 0 && <div style={{ fontSize: 13, color: "#475569", textAlign: "center", padding: "16px 0" }}>Aucune position — ajoutez une valeur ci-dessous</div>}
+          {stocksCT.length === 0 && <div style={{ fontSize:13, color:"#475569", textAlign:"center", padding:"16px 0" }}>Aucune position — ajoutez via la recherche ci-dessous</div>}
         </div>
       </div>
 
@@ -1339,22 +1279,20 @@ function StocksView({ stocks, setStocks, history, marketHistory }) {
       <div style={{ marginBottom: 22 }}>
         <SubSectionHeader title="PEA" subtitle="Trade Republic · Plan d'Épargne en Actions" total={PEA_VALUE} color="#A78BFA" />
         {stocksPEA.length === 0 ? (
-          <Card style={{ padding: "16px 20px", background: "rgba(167,139,250,0.05)", border: "1px solid rgba(167,139,250,0.2)" }}>
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 12 }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
-                <div style={{ width: 42, height: 42, borderRadius: "10px", background: "rgba(167,139,250,0.15)", border: "2px solid rgba(167,139,250,0.3)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 20, flexShrink: 0 }}>
-                  🇫🇷
-                </div>
+          <Card style={{ padding:"16px 20px", background:"rgba(167,139,250,0.05)", border:"1px solid rgba(167,139,250,0.2)" }}>
+            <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", flexWrap:"wrap", gap:12 }}>
+              <div style={{ display:"flex", alignItems:"center", gap:14 }}>
+                <div style={{ width:42, height:42, borderRadius:"10px", background:"rgba(167,139,250,0.15)", border:"2px solid rgba(167,139,250,0.3)", display:"flex", alignItems:"center", justifyContent:"center", fontSize:20, flexShrink:0 }}>🇫🇷</div>
                 <div>
-                  <div style={{ fontWeight: 700, color: "#F1F5F9", fontSize: 14 }}>PEA Trade Republic</div>
-                  <div style={{ fontSize: 11, color: "#64748B", marginTop: 2 }}>Valeur manuelle · ajoutez des lignes PEA via la recherche ci-dessous</div>
+                  <div style={{ fontWeight:700, color:"#F1F5F9", fontSize:14 }}>PEA Trade Republic</div>
+                  <div style={{ fontSize:11, color:"#64748B", marginTop:2 }}>Valeur manuelle · ajoutez des lignes PEA via la recherche ci-dessous</div>
                 </div>
               </div>
-              <div style={{ fontSize: 22, fontWeight: 800, color: "#A78BFA" }}>{fmt(PEA_VALUE)}</div>
+              <div style={{ fontSize:22, fontWeight:800, color:"#A78BFA" }}>{fmt(PEA_VALUE)}</div>
             </div>
           </Card>
         ) : (
-          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
             {stocksPEA.map(renderStockCard)}
           </div>
         )}
@@ -1363,41 +1301,38 @@ function StocksView({ stocks, setStocks, history, marketHistory }) {
       {/* ── NON COTÉS ── */}
       <div style={{ marginBottom: 22 }}>
         <SubSectionHeader title="Actifs non cotés / alternatifs" subtitle="Fonds privés · ELTIF · Prix manuels" total={totalNonCote} color="#FBBF24" />
-        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+        <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
           {stocksNonCote.map(renderStockCard)}
         </div>
       </div>
 
-      {/* Import CSV banner */}
-      <Card style={{ marginBottom: 14, padding: "12px 18px", background: "rgba(52,211,153,0.05)", border: "1px solid rgba(52,211,153,0.2)" }}>
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 10 }}>
+      {/* Import CSV */}
+      <Card style={{ marginBottom: 14, padding:"12px 18px", background:"rgba(52,211,153,0.05)", border:"1px solid rgba(52,211,153,0.2)" }}>
+        <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", flexWrap:"wrap", gap:10 }}>
           <div>
-            <div style={{ fontWeight: 700, color: "#34D399", fontSize: 13 }}>📂 Importer un relevé CSV</div>
-            <div style={{ fontSize: 12, color: "#64748B", marginTop: 2 }}>
-              Trade Republic : Compte → Historique → Exporter · Colonnes attendues : Symbole, Nom, Quantité, Prix
-            </div>
+            <div style={{ fontWeight:700, color:"#34D399", fontSize:13 }}>📂 Importer un relevé CSV</div>
+            <div style={{ fontSize:12, color:"#64748B", marginTop:2 }}>Trade Republic : Compte → Historique → Exporter</div>
           </div>
-          <label style={{ background: "#34D399", color: "#0B1120", borderRadius: "10px", padding: "7px 16px", cursor: "pointer", fontWeight: 700, fontSize: 13, flexShrink: 0 }}>
+          <label style={{ background:"#34D399", color:"#0B1120", borderRadius:"10px", padding:"7px 16px", cursor:"pointer", fontWeight:700, fontSize:13, flexShrink:0 }}>
             📥 Importer CSV
-            <input type="file" accept=".csv,.txt" onChange={handleCSV} style={{ display: "none" }} />
+            <input type="file" accept=".csv,.txt" onChange={handleCSV} style={{ display:"none" }} />
           </label>
         </div>
-        {importStatus && <div style={{ marginTop: 8, fontSize: 13, color: importStatus.startsWith("✅") ? "#34D399" : "#F87171" }}>{importStatus}</div>}
+        {importStatus && <div style={{ marginTop:8, fontSize:13, color: importStatus.startsWith("✅") ? "#34D399" : "#F87171" }}>{importStatus}</div>}
       </Card>
 
       {/* ── RECHERCHE & AJOUT ── */}
       <StockSearchBar onAdd={(newEntry) => {
         setStocks(prev => {
-          const exists = prev.findIndex(s => s.symbol === newEntry.symbol && s.account === newEntry.account);
-          if (exists >= 0) {
-            return prev.map((s, i) => i === exists ? { ...s, qty: s.qty + newEntry.qty, price: newEntry.price } : s);
-          }
+          const idx = prev.findIndex(s => s.symbol === newEntry.symbol && (s.account||"ct") === newEntry.account);
+          if (idx >= 0) return prev.map((s, i) => i === idx ? { ...s, qty: s.qty + newEntry.qty, price: newEntry.price } : s);
           return [...prev, newEntry];
         });
       }} />
     </div>
   );
 }
+
 
 // ─── SAVINGS VIEW ─────────────────────────────────────────────────────────────
 function SavingsView({ savings, setSavings, oraPrice }) {
@@ -3327,16 +3262,22 @@ function AppContent({ user }) {
         const to = Math.floor(Date.now() / 1000);
         const from = to - 180 * 24 * 3600;
         const [rAAPL, rTSLA] = await Promise.all([
-          fetch(`https://finnhub.io/api/v1/stock/candle?symbol=AAPL&resolution=W&from=${from}&to=${to}&token=${FINNHUB_KEY}`).then(r => r.json()),
-          fetch(`https://finnhub.io/api/v1/stock/candle?symbol=TSLA&resolution=W&from=${from}&to=${to}&token=${FINNHUB_KEY}`).then(r => r.json()),
+          fetch(`https://ora-proxy.rybble.workers.dev?symbol=AAPL&interval=1wk&range=6mo`, { cache:"no-store" }).then(r => r.json()),
+          fetch(`https://ora-proxy.rybble.workers.dev?symbol=TSLA&interval=1wk&range=6mo`, { cache:"no-store" }).then(r => r.json()),
         ]);
-        if (rAAPL.s === "ok" && rTSLA.s === "ok") {
+        const aaplR = rAAPL?.chart?.result?.[0];
+        const tslaR = rTSLA?.chart?.result?.[0];
+        if (aaplR?.timestamp && tslaR?.timestamp) {
           const aaplQty = 0.0466, tslaQty = 0.012771, usdToEur = 0.92;
-          const points = rAAPL.t.map((ts, i) => ({
-            date: new Date(ts * 1000).toISOString().slice(0, 10),
-            stocks: Math.round((rAAPL.c[i] * aaplQty + (rTSLA.c[i] || 0) * tslaQty) * usdToEur),
-          }));
-          setMarketHistory(prev => ({ ...prev, stocks: points }));
+          const aaplClose = aaplR.indicators?.quote?.[0]?.close || [];
+          const tslaClose = tslaR.indicators?.quote?.[0]?.close || [];
+          const tslaByDate = {};
+          tslaR.timestamp.forEach((ts, i) => { tslaByDate[new Date(ts*1000).toISOString().slice(0,10)] = tslaClose[i]; });
+          const points = aaplR.timestamp.map((ts, i) => {
+            const date = new Date(ts*1000).toISOString().slice(0,10);
+            return { date, stocks: Math.round(((aaplClose[i]||0)*aaplQty + (tslaByDate[date]||0)*tslaQty)*usdToEur) };
+          }).filter(p => p.stocks > 0);
+          if (points.length > 0) setMarketHistory(prev => ({ ...prev, stocks: points }));
         }
       } catch (e) { console.error("Stock history error:", e); }
     };
