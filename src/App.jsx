@@ -3117,39 +3117,49 @@ function AppContent({ user }) {
     fetchMarketHistory();
   }, []);
 
+  // ── TradingView price fetch (universel, pas de CORS) ─────────────────────────
+  const fetchTVPrice = useCallback(async (symbol) => {
+    // TradingView scanner API — utilisé par leur site, pas de restriction CORS
+    try {
+      const res = await fetch("https://scanner.tradingview.com/symbol", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          symbols: { tickers: [symbol], query: { types: [] } },
+          columns: ["close", "currency"]
+        }),
+        cache: "no-store",
+      });
+      const data = await res.json();
+      const price = data?.data?.[0]?.d?.[0];
+      const currency = data?.data?.[0]?.d?.[1];
+      if (price && price > 0) return { price, currency };
+    } catch(e) { console.warn("TradingView price error:", symbol, e.message); }
+    return null;
+  }, []);
+
   const fetchOraPrice = useCallback(async () => {
-    // ORA.PA via Cloudflare Worker proxy (ora-proxy.rybble.workers.dev)
-    // Résout le problème CORS de Yahoo Finance depuis GitHub Pages
+    // ORA sur Euronext Paris via TradingView
+    const result = await fetchTVPrice("EURONEXT:ORA");
+    if (result && result.price > 5 && result.price < 100) {
+      console.log("ORA.PA:", result.price.toFixed(2), "€ via TradingView");
+      setOraPrice(result.price);
+      return;
+    }
+    // Fallback Cloudflare Worker
     try {
       const res  = await fetch("https://ora-proxy.rybble.workers.dev", { cache:"no-store" });
-      if (!res.ok) throw new Error("HTTP " + res.status);
-      const data = await res.json();
-      const price = data?.chart?.result?.[0]?.meta?.regularMarketPrice;
-      if (price && price > 10 && price < 100) {
-        console.log("ORA.PA:", price.toFixed(2), "€ via Cloudflare Worker");
-        setOraPrice(price);
-        return;
-      }
-      console.warn("ORA Worker response:", price, JSON.stringify(data).slice(0,80));
-    } catch(e) { console.warn("ORA Worker error:", e.message); }
-
-    // Fallback : Finnhub
-    for (const sym of ["EURONEXT:ORA", "ORA"]) {
-      try {
-        const res  = await fetch(`https://finnhub.io/api/v1/quote?symbol=${sym}&token=${FINNHUB_KEY}`);
+      if (res.ok) {
         const data = await res.json();
-        if (data.c && data.c > 0) {
-          const price = data.c > 100 ? data.c / 100 : data.c;
-          if (price > 10 && price < 100) {
-            console.log("ORA.PA:", price.toFixed(2), "€ via Finnhub", sym);
-            setOraPrice(price);
-            return;
-          }
+        const price = data?.chart?.result?.[0]?.meta?.regularMarketPrice;
+        if (price && price > 10 && price < 100) {
+          setOraPrice(price);
+          return;
         }
-      } catch(e) { console.warn("Finnhub ORA error:", sym, e.message); }
-    }
+      }
+    } catch(e) {}
     console.warn("ORA.PA unavailable");
-  }, []);
+  }, [fetchTVPrice]);
 
   const fetchPrices = useCallback(async () => {
     setLoading(true);
@@ -3179,61 +3189,72 @@ function AppContent({ user }) {
       const fxData = await fxRes.json();
       const usdToEur = fxData?.usd?.eur || 0.92;
 
-      // Stocks: Yahoo Finance (BYD, CSPX) + Finnhub (AAPL, TSLA) — voir ci-dessous
-      // ── Yahoo Finance pour BYD (1211.HK) et CSPX (CSPX.AS) ─────────────────
-      const yahooSymbols = {
-        "BYD":  { ticker: "1211.HK", currency: "HKD" },
-        "CSPX": { ticker: "CSPX.AS", currency: "EUR" },  // iShares Core S&P500 USD Acc — coté en EUR sur Euronext Amsterdam
+      // ── Stocks via TradingView (pas de CORS, conversion auto) ─────────────────
+      // Symboles TradingView : NASDAQ:AAPL, NASDAQ:TSLA, HKEX:1211 (BYD), EURONEXT:CSPX
+      const tvStocks = {
+        "AAPL": { tvSym: "NASDAQ:AAPL", currency: "USD" },
+        "TSLA": { tvSym: "NASDAQ:TSLA", currency: "USD" },
+        "BYD":  { tvSym: "HKEX:1211",   currency: "HKD" },
+        "CSPX": { tvSym: "EURONEXT:CSPX", currency: "EUR" },
       };
 
-      // Taux HKD→EUR et GBP→EUR
-      let hkdToEur = 0.12, gbpToEur = 1.18;
+      // Taux de change HKD→EUR via CoinGecko
+      let hkdToEur = 0.12;
       try {
-        const fxExtra = await cgFetch("https://api.coingecko.com/api/v3/simple/price?ids=hkd,gbp&vs_currencies=eur");
+        const fxExtra = await cgFetch("https://api.coingecko.com/api/v3/simple/price?ids=hkd&vs_currencies=eur");
         const fxExtra2 = await fxExtra.json();
         if (fxExtra2?.hkd?.eur) hkdToEur = fxExtra2.hkd.eur;
-        if (fxExtra2?.gbp?.eur) gbpToEur = fxExtra2.gbp.eur;
       } catch {}
 
       const stockUpdates = {};
 
-      // Fetch BYD + CSPX via Yahoo Finance (proxy CORS)
-      await Promise.all(
-        Object.entries(yahooSymbols).map(async ([sym, { ticker, currency }]) => {
+      // Fetch tous les stocks en une seule requête TradingView
+      try {
+        const tvSymbols = Object.values(tvStocks).map(s => s.tvSym);
+        const res = await fetch("https://scanner.tradingview.com/symbol", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            symbols: { tickers: tvSymbols, query: { types: [] } },
+            columns: ["close", "currency"]
+          }),
+          cache: "no-store",
+        });
+        const data = await res.json();
+        if (data?.data) {
+          data.data.forEach((item, i) => {
+            const tvSym = tvSymbols[i];
+            const entry = Object.entries(tvStocks).find(([, v]) => v.tvSym === tvSym);
+            if (!entry) return;
+            const [stockSym, { currency }] = entry;
+            const rawPrice = item?.d?.[0];
+            if (!rawPrice || rawPrice <= 0) return;
+            let priceEur;
+            if (currency === "USD") priceEur = rawPrice * usdToEur;
+            else if (currency === "HKD") priceEur = rawPrice * hkdToEur;
+            else priceEur = rawPrice; // EUR direct
+            if (priceEur > 0) {
+              stockUpdates[stockSym] = priceEur;
+              console.log(`${stockSym}: ${priceEur.toFixed(2)}€ via TradingView (raw: ${rawPrice} ${currency})`);
+            }
+          });
+        }
+      } catch(e) { console.warn("TradingView stocks error:", e.message); }
+
+      // Fallback Finnhub pour AAPL + TSLA si TradingView échoue
+      for (const [sym, ticker] of [["AAPL","AAPL"],["TSLA","TSLA"]]) {
+        if (!stockUpdates[sym]) {
           try {
-            const proxyUrl = `https://corsproxy.io/?${encodeURIComponent(
-              `https://query1.finance.yahoo.com/v8/finance/chart/${ticker}?interval=1d&range=1d`
-            )}`;
-            const res  = await fetch(proxyUrl);
+            const res  = await fetch(`https://finnhub.io/api/v1/quote?symbol=${ticker}&token=${FINNHUB_KEY}`);
             const data = await res.json();
-            const price = data?.chart?.result?.[0]?.meta?.regularMarketPrice;
-            if (price && price > 0) {
-              let priceEur;
-              if (currency === "HKD") priceEur = price * hkdToEur;
-              else if (currency === "GBp") priceEur = (price / 100) * gbpToEur;
-              else if (currency === "USD") priceEur = price * usdToEur;
-              else priceEur = price;
-              stockUpdates[sym] = priceEur;
+            if (data.c && data.c > 0) {
+              stockUpdates[sym] = data.c * usdToEur;
+              console.log(`${sym} fallback Finnhub: ${stockUpdates[sym].toFixed(2)}€`);
             }
           } catch {}
-        })
-      );
+        }
+      }
 
-      // Fetch AAPL + TSLA via Yahoo Finance (USD → EUR)
-      const usStocks = { "AAPL": "AAPL", "TSLA": "TSLA" };
-      await Promise.all(
-        Object.entries(usStocks).map(async ([sym, ticker]) => {
-          try {
-            const proxyUrl = `https://corsproxy.io/?${encodeURIComponent(
-              `https://query1.finance.yahoo.com/v8/finance/chart/${ticker}?interval=1d&range=1d`
-            )}`;
-            const res  = await fetch(proxyUrl);
-            const data = await res.json();
-            const price = data?.chart?.result?.[0]?.meta?.regularMarketPrice;
-            if (price && price > 0) stockUpdates[sym] = price * usdToEur;
-          } catch {}
-        })
-      );
       if (Object.keys(stockUpdates).length > 0) {
         setStocks(prev => prev.map(st => stockUpdates[st.symbol] ? { ...st, price: stockUpdates[st.symbol] } : st));
       }
