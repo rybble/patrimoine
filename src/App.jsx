@@ -3117,49 +3117,33 @@ function AppContent({ user }) {
     fetchMarketHistory();
   }, []);
 
-  // ── TradingView price fetch (universel, pas de CORS) ─────────────────────────
-  const fetchTVPrice = useCallback(async (symbol) => {
-    // TradingView scanner API — utilisé par leur site, pas de restriction CORS
+  // ── Worker universel Cloudflare pour toutes les cotations ───────────────────
+  // Un seul Worker gère tous les symboles via Yahoo Finance
+  // Usage: https://ora-proxy.rybble.workers.dev?symbol=ORA.PA
+  const fetchWorkerPrice = useCallback(async (yahooSymbol) => {
     try {
-      const res = await fetch("https://scanner.tradingview.com/symbol", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          symbols: { tickers: [symbol], query: { types: [] } },
-          columns: ["close", "currency"]
-        }),
-        cache: "no-store",
-      });
+      const res = await fetch(
+        `https://ora-proxy.rybble.workers.dev?symbol=${encodeURIComponent(yahooSymbol)}`,
+        { cache: "no-store" }
+      );
+      if (!res.ok) return null;
       const data = await res.json();
-      const price = data?.data?.[0]?.d?.[0];
-      const currency = data?.data?.[0]?.d?.[1];
+      const price = data?.chart?.result?.[0]?.meta?.regularMarketPrice;
+      const currency = data?.chart?.result?.[0]?.meta?.currency;
       if (price && price > 0) return { price, currency };
-    } catch(e) { console.warn("TradingView price error:", symbol, e.message); }
+    } catch(e) { console.warn("Worker price error:", yahooSymbol, e.message); }
     return null;
   }, []);
 
   const fetchOraPrice = useCallback(async () => {
-    // ORA sur Euronext Paris via TradingView
-    const result = await fetchTVPrice("EURONEXT:ORA");
+    const result = await fetchWorkerPrice("ORA.PA");
     if (result && result.price > 5 && result.price < 100) {
-      console.log("ORA.PA:", result.price.toFixed(2), "€ via TradingView");
+      console.log("ORA.PA:", result.price.toFixed(2), "€ via Worker");
       setOraPrice(result.price);
-      return;
+    } else {
+      console.warn("ORA.PA unavailable");
     }
-    // Fallback Cloudflare Worker
-    try {
-      const res  = await fetch("https://ora-proxy.rybble.workers.dev", { cache:"no-store" });
-      if (res.ok) {
-        const data = await res.json();
-        const price = data?.chart?.result?.[0]?.meta?.regularMarketPrice;
-        if (price && price > 10 && price < 100) {
-          setOraPrice(price);
-          return;
-        }
-      }
-    } catch(e) {}
-    console.warn("ORA.PA unavailable");
-  }, [fetchTVPrice]);
+  }, [fetchWorkerPrice]);
 
   const fetchPrices = useCallback(async () => {
     setLoading(true);
@@ -3189,16 +3173,17 @@ function AppContent({ user }) {
       const fxData = await fxRes.json();
       const usdToEur = fxData?.usd?.eur || 0.92;
 
-      // ── Stocks via TradingView (pas de CORS, conversion auto) ─────────────────
-      // Symboles TradingView : NASDAQ:AAPL, NASDAQ:TSLA, HKEX:1211 (BYD), EURONEXT:CSPX
-      const tvStocks = {
-        "AAPL": { tvSym: "NASDAQ:AAPL", currency: "USD" },
-        "TSLA": { tvSym: "NASDAQ:TSLA", currency: "USD" },
-        "BYD":  { tvSym: "HKEX:1211",   currency: "HKD" },
-        "CSPX": { tvSym: "EURONEXT:CSPX", currency: "EUR" },
+      // ── Stocks via Worker Cloudflare universel ──────────────────────────────────
+      // Le Worker fetch Yahoo Finance avec le symbole passé en paramètre
+      // Symboles Yahoo: AAPL, TSLA (USD→EUR), 1211.HK (HKD→EUR), CSPX.AS (EUR)
+      const workerStocks = {
+        "AAPL": { yahooSym: "AAPL",    currency: "USD" },
+        "TSLA": { yahooSym: "TSLA",    currency: "USD" },
+        "BYD":  { yahooSym: "1211.HK", currency: "HKD" },
+        "CSPX": { yahooSym: "CSPX.AS", currency: "EUR" },
       };
 
-      // Taux de change HKD→EUR via CoinGecko
+      // Taux HKD→EUR via CoinGecko
       let hkdToEur = 0.12;
       try {
         const fxExtra = await cgFetch("https://api.coingecko.com/api/v3/simple/price?ids=hkd&vs_currencies=eur");
@@ -3208,52 +3193,42 @@ function AppContent({ user }) {
 
       const stockUpdates = {};
 
-      // Fetch tous les stocks en une seule requête TradingView
-      try {
-        const tvSymbols = Object.values(tvStocks).map(s => s.tvSym);
-        const res = await fetch("https://scanner.tradingview.com/symbol", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            symbols: { tickers: tvSymbols, query: { types: [] } },
-            columns: ["close", "currency"]
-          }),
-          cache: "no-store",
-        });
-        const data = await res.json();
-        if (data?.data) {
-          data.data.forEach((item, i) => {
-            const tvSym = tvSymbols[i];
-            const entry = Object.entries(tvStocks).find(([, v]) => v.tvSym === tvSym);
-            if (!entry) return;
-            const [stockSym, { currency }] = entry;
-            const rawPrice = item?.d?.[0];
-            if (!rawPrice || rawPrice <= 0) return;
-            let priceEur;
-            if (currency === "USD") priceEur = rawPrice * usdToEur;
-            else if (currency === "HKD") priceEur = rawPrice * hkdToEur;
-            else priceEur = rawPrice; // EUR direct
-            if (priceEur > 0) {
-              stockUpdates[stockSym] = priceEur;
-              console.log(`${stockSym}: ${priceEur.toFixed(2)}€ via TradingView (raw: ${rawPrice} ${currency})`);
-            }
-          });
-        }
-      } catch(e) { console.warn("TradingView stocks error:", e.message); }
+      // Fetch en parallèle via le Worker
+      await Promise.all(
+        Object.entries(workerStocks).map(async ([sym, { yahooSym, currency }]) => {
+          const result = await fetchWorkerPrice(yahooSym);
+          if (!result) return;
+          // Le Worker retourne la devise réelle — on peut aussi utiliser currency param
+          const rawPrice = result.price;
+          let priceEur;
+          if (currency === "USD") priceEur = rawPrice * usdToEur;
+          else if (currency === "HKD") priceEur = rawPrice * hkdToEur;
+          else priceEur = rawPrice;
+          if (priceEur > 0) {
+            stockUpdates[sym] = priceEur;
+            console.log(`${sym}: ${priceEur.toFixed(2)}€ via Worker (raw: ${rawPrice} ${currency})`);
+          }
+        })
+      );
 
-      // Fallback Finnhub pour AAPL + TSLA si TradingView échoue
-      for (const [sym, ticker] of [["AAPL","AAPL"],["TSLA","TSLA"]]) {
-        if (!stockUpdates[sym]) {
-          try {
-            const res  = await fetch(`https://finnhub.io/api/v1/quote?symbol=${ticker}&token=${FINNHUB_KEY}`);
-            const data = await res.json();
-            if (data.c && data.c > 0) {
-              stockUpdates[sym] = data.c * usdToEur;
-              console.log(`${sym} fallback Finnhub: ${stockUpdates[sym].toFixed(2)}€`);
-            }
-          } catch {}
-        }
-      }
+      // Fallback Finnhub pour les actions US si Worker non disponible
+      const finnhubFallbacks = [
+        ["AAPL", "AAPL", "USD"],
+        ["TSLA", "TSLA", "USD"],
+      ];
+      await Promise.all(finnhubFallbacks.map(async ([sym, ticker, currency]) => {
+        if (stockUpdates[sym]) return; // déjà récupéré via Worker
+        try {
+          const res  = await fetch(`https://finnhub.io/api/v1/quote?symbol=${ticker}&token=${FINNHUB_KEY}`);
+          const data = await res.json();
+          if (data.c && data.c > 0) {
+            // Finnhub retourne en USD — convertir en EUR
+            const priceEur = currency === "USD" ? data.c * usdToEur : data.c;
+            stockUpdates[sym] = priceEur;
+            console.log(`${sym} fallback Finnhub: ${priceEur.toFixed(2)}€ (${data.c} USD)`);
+          }
+        } catch {}
+      }));
 
       if (Object.keys(stockUpdates).length > 0) {
         setStocks(prev => prev.map(st => stockUpdates[st.symbol] ? { ...st, price: stockUpdates[st.symbol] } : st));
