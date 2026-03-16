@@ -3098,19 +3098,36 @@ function AppContent({ user }) {
       } catch (e) { console.error("Crypto history error:", e); }
 
       try {
-        const to = Math.floor(Date.now() / 1000);
-        const from = to - 180 * 24 * 3600;
+        const aaplQty = 0.0466, tslaQty = 0.012771;
         const [rAAPL, rTSLA] = await Promise.all([
-          fetch(`https://finnhub.io/api/v1/stock/candle?symbol=AAPL&resolution=W&from=${from}&to=${to}&token=${FINNHUB_KEY}`).then(r => r.json()),
-          fetch(`https://finnhub.io/api/v1/stock/candle?symbol=TSLA&resolution=W&from=${from}&to=${to}&token=${FINNHUB_KEY}`).then(r => r.json()),
+          fetch(`https://ora-proxy.rybble.workers.dev?symbol=AAPL&interval=1wk&range=6mo`, { cache: "no-store" }).then(r => r.json()),
+          fetch(`https://ora-proxy.rybble.workers.dev?symbol=TSLA&interval=1wk&range=6mo`, { cache: "no-store" }).then(r => r.json()),
         ]);
-        if (rAAPL.s === "ok" && rTSLA.s === "ok") {
-          const aaplQty = 0.0466, tslaQty = 0.012771, usdToEur = 0.92;
-          const points = rAAPL.t.map((ts, i) => ({
-            date: new Date(ts * 1000).toISOString().slice(0, 10),
-            stocks: Math.round((rAAPL.c[i] * aaplQty + (rTSLA.c[i] || 0) * tslaQty) * usdToEur),
-          }));
-          setMarketHistory(prev => ({ ...prev, stocks: points }));
+        const aaplResult = rAAPL?.chart?.result?.[0];
+        const tslaResult = rTSLA?.chart?.result?.[0];
+        if (aaplResult?.timestamp && tslaResult?.timestamp) {
+          const usdToEur = 0.92;
+          const aaplClose = aaplResult.indicators?.quote?.[0]?.close || [];
+          const tslaClose = tslaResult.indicators?.quote?.[0]?.close || [];
+          // Aligner les deux séries sur les timestamps AAPL
+          const tslaByDate = {};
+          tslaResult.timestamp.forEach((ts, i) => {
+            const date = new Date(ts * 1000).toISOString().slice(0, 10);
+            tslaByDate[date] = tslaClose[i];
+          });
+          const points = aaplResult.timestamp.map((ts, i) => {
+            const date = new Date(ts * 1000).toISOString().slice(0, 10);
+            const aaplPrice = aaplClose[i] || 0;
+            const tslaPrice = tslaByDate[date] || 0;
+            return {
+              date,
+              stocks: Math.round((aaplPrice * aaplQty + tslaPrice * tslaQty) * usdToEur),
+            };
+          }).filter(p => p.stocks > 0);
+          if (points.length > 0) {
+            setMarketHistory(prev => ({ ...prev, stocks: points }));
+            console.log(`Stock history: ${points.length} points via Worker (AAPL + TSLA)`);
+          }
         }
       } catch (e) { console.error("Stock history error:", e); }
     };
