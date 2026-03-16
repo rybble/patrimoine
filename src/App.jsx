@@ -939,11 +939,247 @@ function CryptoView({ cryptoData, setCryptoData, cryptoPrices, loading, history,
 }
 
 // ─── STOCKS VIEW ──────────────────────────────────────────────────────────────
+// ─── TRADINGVIEW SEARCH ───────────────────────────────────────────────────────
+function StockSearchBar({ onAdd, workerUrl = "https://ora-proxy.rybble.workers.dev" }) {
+  const [query, setQuery]           = useState("");
+  const [suggestions, setSuggestions] = useState([]);
+  const [selected, setSelected]     = useState(null);
+  const [account, setAccount]       = useState("ct"); // "ct" | "pea"
+  const [qty, setQty]               = useState("");
+  const [loadingPrice, setLoadingPrice] = useState(false);
+  const [livePrice, setLivePrice]   = useState(null);
+  const [searchLoading, setSearchLoading] = useState(false);
+  const debounceRef = useRef(null);
+  const dropdownRef = useRef(null);
+
+  // Fermer dropdown si clic extérieur
+  useEffect(() => {
+    const handler = (e) => { if (dropdownRef.current && !dropdownRef.current.contains(e.target)) setSuggestions([]); };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, []);
+
+  const search = useCallback(async (q) => {
+    if (q.length < 1) { setSuggestions([]); return; }
+    setSearchLoading(true);
+    try {
+      // TradingView symbol search (pas de CORS grâce au proxy — on passe par fetch direct, TradingView autorise)
+      const res = await fetch(
+        `https://symbol-search.tradingview.com/symbol_search/v3/?text=${encodeURIComponent(q)}&hl=1&exchange=&lang=fr&search_type=undefined&domain=production&sort_by_country=FR`,
+        { headers: { "Content-Type": "application/json" } }
+      );
+      if (!res.ok) throw new Error("TV search failed");
+      const data = await res.json();
+      const items = (data.symbols || []).slice(0, 8).map(s => ({
+        ticker:      s.symbol,
+        name:        s.description || s.symbol,
+        exchange:    s.exchange,
+        type:        s.type,
+        // Yahoo Finance ticker : reconstruit depuis exchange + symbol
+        yahooTicker: buildYahooTicker(s.symbol, s.exchange, s.prefix_name),
+      }));
+      setSuggestions(items);
+    } catch (e) {
+      // Fallback : recherche Yahoo Finance directement
+      try {
+        const r2 = await fetch(`https://query1.finance.yahoo.com/v1/finance/search?q=${encodeURIComponent(q)}&lang=fr&region=FR&quotesCount=8&enableFuzzyQuery=false`);
+        const d2 = await r2.json();
+        const items = (d2.quotes || []).slice(0, 8).map(s => ({
+          ticker: s.symbol, name: s.longname || s.shortname || s.symbol,
+          exchange: s.exchDisp || s.exchange, type: s.quoteType,
+          yahooTicker: s.symbol,
+        }));
+        setSuggestions(items);
+      } catch {}
+    } finally { setSearchLoading(false); }
+  }, []);
+
+  function buildYahooTicker(symbol, exchange, prefix) {
+    // Mapping exchange TradingView → suffixe Yahoo Finance
+    const suffixes = {
+      "EURONEXT": ".PA", "EPA": ".PA",
+      "XETRA": ".DE",    "FWB": ".F",
+      "BIT": ".MI",      "BME": ".MC",
+      "LSE": ".L",       "SWX": ".SW",
+      "AMS": ".AS",      "BRU": ".BR",
+      "NASDAQ": "",      "NYSE": "",
+      "AMEX": "",        "TSX": ".TO",
+      "ASX": ".AX",      "HKEx": ".HK",
+      "TSE": ".T",
+    };
+    const suffix = suffixes[exchange] ?? "";
+    return symbol + suffix;
+  }
+
+  const handleInput = (e) => {
+    const v = e.target.value;
+    setQuery(v);
+    setSelected(null);
+    setLivePrice(null);
+    clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(() => search(v), 280);
+  };
+
+  const pickSuggestion = async (item) => {
+    setSelected(item);
+    setQuery(`${item.ticker} — ${item.name}`);
+    setSuggestions([]);
+    // Fetch prix live via Worker
+    setLoadingPrice(true);
+    setLivePrice(null);
+    try {
+      const res = await fetch(`${workerUrl}?symbol=${encodeURIComponent(item.yahooTicker)}`, { cache: "no-store" });
+      const data = await res.json();
+      const price    = data?.chart?.result?.[0]?.meta?.regularMarketPrice;
+      const currency = data?.chart?.result?.[0]?.meta?.currency || "EUR";
+      if (price && price > 0) setLivePrice({ price, currency });
+    } catch {}
+    setLoadingPrice(false);
+  };
+
+  const handleAdd = () => {
+    if (!selected || !qty) return;
+    const qtyNum = parseFloat(qty.replace(",", "."));
+    if (!qtyNum || qtyNum <= 0) return;
+    // Convertir le prix en EUR si besoin (estimation 0.92 pour USD)
+    let priceEur = livePrice?.price || 0;
+    if (livePrice?.currency === "USD") priceEur = priceEur * 0.92;
+    else if (livePrice?.currency === "GBp") priceEur = priceEur / 100 * 1.18; // pence → £ → €
+    onAdd({
+      symbol:  selected.ticker,
+      name:    selected.name,
+      qty:     qtyNum,
+      price:   priceEur,
+      isin:    "",
+      account: account, // "ct" ou "pea"
+    });
+    // Reset
+    setQuery(""); setSelected(null); setQty(""); setLivePrice(null); setAccount("ct");
+  };
+
+  const inp = { background: "#1E293B", border: "1px solid #334155", borderRadius: 8,
+    padding: "8px 12px", color: "#F1F5F9", fontSize: 13, outline: "none" };
+  const btnAccount = (id, label, color) => (
+    <button onClick={() => setAccount(id)} style={{
+      background: account === id ? `rgba(${color},0.15)` : "transparent",
+      border: `1px solid ${account === id ? `rgba(${color},0.5)` : "rgba(255,255,255,0.1)"}`,
+      borderRadius: 8, color: account === id ? `rgb(${color})` : "#64748B",
+      padding: "7px 16px", fontSize: 13, fontWeight: account === id ? 700 : 400,
+      cursor: "pointer", transition: "all 0.15s",
+    }}>{label}</button>
+  );
+
+  return (
+    <Card style={{ padding: "16px 18px", background: "rgba(99,102,241,0.05)", border: "1px dashed rgba(99,102,241,0.35)" }}>
+      <div style={{ fontSize: 13, fontWeight: 700, color: "#818CF8", marginBottom: 14 }}>
+        ＋ Ajouter une valeur
+      </div>
+
+      {/* Ligne 1 : Recherche + compte */}
+      <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "flex-start", marginBottom: 12 }}>
+
+        {/* Champ recherche avec dropdown */}
+        <div ref={dropdownRef} style={{ position: "relative", flex: "1 1 260px" }}>
+          <div style={{ fontSize: 11, color: "#64748B", marginBottom: 4 }}>Rechercher une valeur</div>
+          <div style={{ position: "relative" }}>
+            <input
+              value={query}
+              onChange={handleInput}
+              placeholder="ex: AAPL, Tesla, ORA.PA…"
+              style={{ ...inp, width: "100%", paddingRight: 30 }}
+            />
+            {searchLoading && (
+              <span style={{ position:"absolute", right:10, top:"50%", transform:"translateY(-50%)", color:"#64748B", fontSize:12 }}>⏳</span>
+            )}
+          </div>
+          {suggestions.length > 0 && (
+            <div style={{
+              position: "absolute", top: "calc(100% + 4px)", left: 0, right: 0, zIndex: 999,
+              background: "#1E293B", border: "1px solid #334155", borderRadius: 10,
+              boxShadow: "0 8px 32px rgba(0,0,0,0.5)", overflow: "hidden",
+            }}>
+              {suggestions.map((s, i) => (
+                <div key={i} onClick={() => pickSuggestion(s)}
+                  style={{ padding: "9px 14px", cursor: "pointer", display: "flex", alignItems: "center", gap: 10,
+                    borderBottom: i < suggestions.length - 1 ? "1px solid rgba(255,255,255,0.05)" : "none" }}
+                  onMouseEnter={e => e.currentTarget.style.background = "rgba(99,102,241,0.12)"}
+                  onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
+                  <div style={{ width: 36, height: 36, borderRadius: 8, background: "rgba(99,102,241,0.15)",
+                    display: "flex", alignItems: "center", justifyContent: "center",
+                    fontSize: 10, fontWeight: 800, color: "#818CF8", flexShrink: 0 }}>
+                    {s.ticker.slice(0, 4)}
+                  </div>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontWeight: 700, color: "#F1F5F9", fontSize: 13 }}
+                      dangerouslySetInnerHTML={{ __html: s.name }} />
+                    <div style={{ fontSize: 11, color: "#64748B" }}>{s.ticker} · {s.exchange} · {s.type}</div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Choix compte */}
+        <div style={{ flexShrink: 0 }}>
+          <div style={{ fontSize: 11, color: "#64748B", marginBottom: 4 }}>Compte</div>
+          <div style={{ display: "flex", gap: 6 }}>
+            {btnAccount("ct",  "📋 Compte-Titres", "96,165,250")}
+            {btnAccount("pea", "🇫🇷 PEA",          "167,139,250")}
+          </div>
+        </div>
+
+        {/* Quantité */}
+        <div style={{ width: 110, flexShrink: 0 }}>
+          <div style={{ fontSize: 11, color: "#64748B", marginBottom: 4 }}>Quantité</div>
+          <input value={qty} onChange={e => setQty(e.target.value)} placeholder="0.00"
+            style={{ ...inp, width: "100%" }} />
+        </div>
+      </div>
+
+      {/* Ligne 2 : Prix récupéré + bouton */}
+      <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+        <div style={{ flex: 1, minHeight: 32, display: "flex", alignItems: "center" }}>
+          {loadingPrice && <span style={{ fontSize: 12, color: "#64748B" }}>⏳ Récupération du cours…</span>}
+          {!loadingPrice && livePrice && (
+            <div style={{ fontSize: 13, display: "flex", alignItems: "center", gap: 8 }}>
+              <span style={{ color: "#34D399", fontWeight: 700 }}>
+                ✓ {livePrice.price.toFixed(2)} {livePrice.currency}
+              </span>
+              {livePrice.currency !== "EUR" && (
+                <span style={{ color: "#64748B", fontSize: 11 }}>
+                  ≈ {(livePrice.currency === "USD" ? livePrice.price * 0.92 : livePrice.currency === "GBp" ? livePrice.price / 100 * 1.18 : livePrice.price).toFixed(2)} €
+                </span>
+              )}
+              {qty && parseFloat(qty) > 0 && (() => {
+                const priceEur = livePrice.currency === "USD" ? livePrice.price * 0.92 : livePrice.currency === "GBp" ? livePrice.price / 100 * 1.18 : livePrice.price;
+                return <span style={{ color: "#94A3B8", fontSize: 12 }}>→ total ≈ {fmt(priceEur * parseFloat(qty.replace(",",".")))}</span>;
+              })()}
+            </div>
+          )}
+          {!loadingPrice && selected && !livePrice && (
+            <span style={{ fontSize: 12, color: "#F87171" }}>⚠ Cours indisponible — prix manuel requis</span>
+          )}
+        </div>
+        <div style={{ display: "flex", gap: 8 }}>
+          <button onClick={handleAdd}
+            disabled={!selected || !qty || (!livePrice && true)}
+            style={{ background: selected && qty && livePrice ? "linear-gradient(135deg,#6366F1,#4F46E5)" : "rgba(99,102,241,0.2)",
+              border: "none", borderRadius: 10, color: selected && qty && livePrice ? "#fff" : "#4F46E5",
+              padding: "8px 20px", cursor: selected && qty && livePrice ? "pointer" : "not-allowed",
+              fontWeight: 700, fontSize: 13, boxShadow: selected && qty && livePrice ? "0 2px 12px rgba(99,102,241,0.4)" : "none",
+              transition: "all 0.15s" }}>
+            Ajouter
+          </button>
+        </div>
+      </div>
+    </Card>
+  );
+}
+
 function StocksView({ stocks, setStocks, history, marketHistory }) {
   const [editing, setEditing] = useState(null);
   const [form, setForm] = useState({});
-  const [adding, setAdding] = useState(false);
-  const [newStock, setNewStock] = useState({ symbol: "", name: "", qty: "", price: "", isin: "" });
   const [importStatus, setImportStatus] = useState("");
 
   const total = stocks.reduce((s, st) => s + st.price * st.qty, 0);
@@ -996,18 +1232,19 @@ function StocksView({ stocks, setStocks, history, marketHistory }) {
   };
 
   // Catégorisation des actifs
-  const CT_SYMBOLS   = ["AAPL", "TSLA", "BYD", "CSPX"]; // cotés Trade Republic Compte-Titres
-  const PEA_SYMBOLS  = [];                               // PEA Trade Republic (valeur manuelle)
-  const NON_COTE_SYMBOLS = ["APOLLO", "EQTF"];           // fonds privés / ELTIF non cotés
+  // Catégorisation des actifs — basée sur le champ account ou liste statique
+  const CT_SYMBOLS_DEFAULT = ["AAPL", "TSLA", "BYD", "CSPX"];
+  const NON_COTE_SYMBOLS   = ["APOLLO", "EQTF"];
 
-  const stocksCT     = stocks.filter(s => CT_SYMBOLS.includes(s.symbol));
+  const stocksCT      = stocks.filter(s => !NON_COTE_SYMBOLS.includes(s.symbol) && (s.account === "ct" || (!s.account && CT_SYMBOLS_DEFAULT.includes(s.symbol))));
+  const stocksPEA     = stocks.filter(s => s.account === "pea");
   const stocksNonCote = stocks.filter(s => NON_COTE_SYMBOLS.includes(s.symbol));
-  const stocksOther  = stocks.filter(s => !CT_SYMBOLS.includes(s.symbol) && !NON_COTE_SYMBOLS.includes(s.symbol));
 
   const totalCT      = stocksCT.reduce((s, st) => s + st.price * st.qty, 0);
-  const PEA_VALUE    = 549.89; // valeur PEA Trade Republic (manuelle)
+  const totalPEA     = stocksPEA.reduce((s, st) => s + st.price * st.qty, 0);
+  const PEA_MANUAL   = stocksPEA.length === 0 ? 549.89 : 0; // valeur manuelle si pas de lignes PEA
+  const PEA_VALUE    = totalPEA + PEA_MANUAL;
   const totalNonCote = stocksNonCote.reduce((s, st) => s + st.price * st.qty, 0);
-  const totalOther   = stocksOther.reduce((s, st) => s + st.price * st.qty, 0);
 
   const renderStockCard = (st) => {
     const value = st.price * st.qty;
@@ -1094,27 +1331,33 @@ function StocksView({ stocks, setStocks, history, marketHistory }) {
         <SubSectionHeader title="Compte-Titres" subtitle="Trade Republic · Actions cotées" total={totalCT} color="#60A5FA" />
         <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
           {stocksCT.map(renderStockCard)}
-          {stocksOther.map(renderStockCard)}
+          {stocksCT.length === 0 && <div style={{ fontSize: 13, color: "#475569", textAlign: "center", padding: "16px 0" }}>Aucune position — ajoutez une valeur ci-dessous</div>}
         </div>
       </div>
 
       {/* ── PEA ── */}
       <div style={{ marginBottom: 22 }}>
         <SubSectionHeader title="PEA" subtitle="Trade Republic · Plan d'Épargne en Actions" total={PEA_VALUE} color="#A78BFA" />
-        <Card style={{ padding: "16px 20px", background: "rgba(167,139,250,0.05)", border: "1px solid rgba(167,139,250,0.2)" }}>
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 12 }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
-              <div style={{ width: 42, height: 42, borderRadius: "10px", background: "rgba(167,139,250,0.15)", border: "2px solid rgba(167,139,250,0.3)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 20, flexShrink: 0 }}>
-                🇫🇷
+        {stocksPEA.length === 0 ? (
+          <Card style={{ padding: "16px 20px", background: "rgba(167,139,250,0.05)", border: "1px solid rgba(167,139,250,0.2)" }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 12 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+                <div style={{ width: 42, height: 42, borderRadius: "10px", background: "rgba(167,139,250,0.15)", border: "2px solid rgba(167,139,250,0.3)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 20, flexShrink: 0 }}>
+                  🇫🇷
+                </div>
+                <div>
+                  <div style={{ fontWeight: 700, color: "#F1F5F9", fontSize: 14 }}>PEA Trade Republic</div>
+                  <div style={{ fontSize: 11, color: "#64748B", marginTop: 2 }}>Valeur manuelle · ajoutez des lignes PEA via la recherche ci-dessous</div>
+                </div>
               </div>
-              <div>
-                <div style={{ fontWeight: 700, color: "#F1F5F9", fontSize: 14 }}>PEA Trade Republic</div>
-                <div style={{ fontSize: 11, color: "#64748B", marginTop: 2 }}>Valeur liquidative au dernier relevé</div>
-              </div>
+              <div style={{ fontSize: 22, fontWeight: 800, color: "#A78BFA" }}>{fmt(PEA_VALUE)}</div>
             </div>
-            <div style={{ fontSize: 22, fontWeight: 800, color: "#A78BFA" }}>{fmt(PEA_VALUE)}</div>
+          </Card>
+        ) : (
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            {stocksPEA.map(renderStockCard)}
           </div>
-        </Card>
+        )}
       </div>
 
       {/* ── NON COTÉS ── */}
@@ -1142,33 +1385,16 @@ function StocksView({ stocks, setStocks, history, marketHistory }) {
         {importStatus && <div style={{ marginTop: 8, fontSize: 13, color: importStatus.startsWith("✅") ? "#34D399" : "#F87171" }}>{importStatus}</div>}
       </Card>
 
-      {adding ? (
-        <Card style={{ padding: 16 }}>
-          <div style={{ fontSize: 14, fontWeight: 600, color: "#F1F5F9", marginBottom: 12 }}>➕ Ajouter une ligne manuellement</div>
-          <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-            {[["Symbole *", "symbol", 80], ["Nom", "name", 160], ["ISIN", "isin", 130], ["Quantité *", "qty", 90], ["Prix € *", "price", 90]].map(([label, key, w]) => (
-              <div key={key}>
-                <div style={{ fontSize: 11, color: "#64748B", marginBottom: 4 }}>{label}</div>
-                <input value={newStock[key]} onChange={e => setNewStock(s => ({ ...s, [key]: e.target.value }))}
-                  style={{ width: w, background: "#1E293B", border: "1px solid #334155", borderRadius: "6px", padding: "5px 10px", color: "#F1F5F9", fontSize: 13 }} />
-              </div>
-            ))}
-            <button onClick={() => {
-              if (!newStock.symbol || !newStock.qty || !newStock.price) return;
-              setStocks(p => [...p, { symbol: newStock.symbol.toUpperCase(), name: newStock.name || newStock.symbol, qty: parseFloat(newStock.qty) || 0, price: parseFloat(newStock.price) || 0, isin: newStock.isin }]);
-              setNewStock({ symbol: "", name: "", qty: "", price: "", isin: "" });
-              setAdding(false);
-            }} style={{ alignSelf: "flex-end", background: "#4F46E5", border: "none", borderRadius: "10px", color: "#fff", padding: "7px 18px", cursor: "pointer", fontWeight: 600 }}>Ajouter</button>
-            <button onClick={() => setAdding(false)}
-              style={{ alignSelf: "flex-end", background: "transparent", border: "1px solid #334155", borderRadius: "10px", color: "#64748B", padding: "7px 14px", cursor: "pointer" }}>Annuler</button>
-          </div>
-        </Card>
-      ) : (
-        <button onClick={() => setAdding(true)}
-          style={{ width: "100%", background: "rgba(99,102,241,0.08)", border: "1px dashed rgba(99,102,241,0.4)", borderRadius: "10px", color: "#818CF8", padding: "10px", cursor: "pointer", fontSize: 13, fontWeight: 600 }}>
-          ＋ Ajouter une ligne manuellement
-        </button>
-      )}
+      {/* ── RECHERCHE & AJOUT ── */}
+      <StockSearchBar onAdd={(newEntry) => {
+        setStocks(prev => {
+          const exists = prev.findIndex(s => s.symbol === newEntry.symbol && s.account === newEntry.account);
+          if (exists >= 0) {
+            return prev.map((s, i) => i === exists ? { ...s, qty: s.qty + newEntry.qty, price: newEntry.price } : s);
+          }
+          return [...prev, newEntry];
+        });
+      }} />
     </div>
   );
 }
@@ -3098,36 +3324,19 @@ function AppContent({ user }) {
       } catch (e) { console.error("Crypto history error:", e); }
 
       try {
-        const aaplQty = 0.0466, tslaQty = 0.012771;
+        const to = Math.floor(Date.now() / 1000);
+        const from = to - 180 * 24 * 3600;
         const [rAAPL, rTSLA] = await Promise.all([
-          fetch(`https://ora-proxy.rybble.workers.dev?symbol=AAPL&interval=1wk&range=6mo`, { cache: "no-store" }).then(r => r.json()),
-          fetch(`https://ora-proxy.rybble.workers.dev?symbol=TSLA&interval=1wk&range=6mo`, { cache: "no-store" }).then(r => r.json()),
+          fetch(`https://finnhub.io/api/v1/stock/candle?symbol=AAPL&resolution=W&from=${from}&to=${to}&token=${FINNHUB_KEY}`).then(r => r.json()),
+          fetch(`https://finnhub.io/api/v1/stock/candle?symbol=TSLA&resolution=W&from=${from}&to=${to}&token=${FINNHUB_KEY}`).then(r => r.json()),
         ]);
-        const aaplResult = rAAPL?.chart?.result?.[0];
-        const tslaResult = rTSLA?.chart?.result?.[0];
-        if (aaplResult?.timestamp && tslaResult?.timestamp) {
-          const usdToEur = 0.92;
-          const aaplClose = aaplResult.indicators?.quote?.[0]?.close || [];
-          const tslaClose = tslaResult.indicators?.quote?.[0]?.close || [];
-          // Aligner les deux séries sur les timestamps AAPL
-          const tslaByDate = {};
-          tslaResult.timestamp.forEach((ts, i) => {
-            const date = new Date(ts * 1000).toISOString().slice(0, 10);
-            tslaByDate[date] = tslaClose[i];
-          });
-          const points = aaplResult.timestamp.map((ts, i) => {
-            const date = new Date(ts * 1000).toISOString().slice(0, 10);
-            const aaplPrice = aaplClose[i] || 0;
-            const tslaPrice = tslaByDate[date] || 0;
-            return {
-              date,
-              stocks: Math.round((aaplPrice * aaplQty + tslaPrice * tslaQty) * usdToEur),
-            };
-          }).filter(p => p.stocks > 0);
-          if (points.length > 0) {
-            setMarketHistory(prev => ({ ...prev, stocks: points }));
-            console.log(`Stock history: ${points.length} points via Worker (AAPL + TSLA)`);
-          }
+        if (rAAPL.s === "ok" && rTSLA.s === "ok") {
+          const aaplQty = 0.0466, tslaQty = 0.012771, usdToEur = 0.92;
+          const points = rAAPL.t.map((ts, i) => ({
+            date: new Date(ts * 1000).toISOString().slice(0, 10),
+            stocks: Math.round((rAAPL.c[i] * aaplQty + (rTSLA.c[i] || 0) * tslaQty) * usdToEur),
+          }));
+          setMarketHistory(prev => ({ ...prev, stocks: points }));
         }
       } catch (e) { console.error("Stock history error:", e); }
     };
