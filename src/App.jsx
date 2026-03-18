@@ -834,8 +834,8 @@ function CryptoView({ cryptoData, setCryptoData, cryptoPrices, loading, history,
       <Card style={{ marginBottom: 14, padding: "14px 18px" }}>
         <div style={{ fontSize: 12, color: "#64748B", marginBottom: 4 }}>Évolution Crypto (€) — ETH via CoinGecko</div>
         {cryptoHistory && cryptoHistory.length > 1
-          ? <MiniAreaChart data={cryptoHistory} dataKey="crypto" color="#818CF8" height={220} showPeriodSelector={true} />
-          : <><Variation history={history} dataKey="crypto" color="#818CF8" /><MiniAreaChart data={history} dataKey="crypto" color="#818CF8" height={220} showPeriodSelector={true} /></>
+          ? <MiniAreaChart data={cryptoHistory} dataKey="crypto" color="#818CF8" height={220} showPeriodSelector={true} intradayData={{ "24h": cryptoHistory24h, "7d": cryptoHistory7d }} />
+          : <><Variation history={history} dataKey="crypto" color="#818CF8" /><MiniAreaChart data={history} dataKey="crypto" color="#818CF8" height={220} showPeriodSelector={true} intradayData={{ "24h": cryptoHistory24h, "7d": cryptoHistory7d }} /></>
         }
       </Card>
 
@@ -1164,7 +1164,7 @@ function StockSearchBar({ onAdd, workerUrl = "https://ora-proxy.rybble.workers.d
   );
 }
 
-function StocksView({ stocks, setStocks, history, marketHistory, stocksHistory24h, stocksHistory7d }) {
+function StocksView({ stocks, setStocks, history, marketHistory, stocksHistory24h, stocksHistory7d, peaValue, nonCoteValue }) {
   const [editing, setEditing] = useState(null);
   const [form, setForm] = useState({});
   const [importStatus, setImportStatus] = useState("");
@@ -1296,14 +1296,22 @@ function StocksView({ stocks, setStocks, history, marketHistory, stocksHistory24
       </div>
 
       <Card style={{ marginBottom: 18, padding: "14px 18px" }}>
-        <div style={{ fontSize: 12, color: "#64748B", marginBottom: 4 }}>Évolution Bourse (€) — cumul des positions cotées (AAPL · TSLA · BYD · CSPX)</div>
+        <div style={{ fontSize: 12, color: "#64748B", marginBottom: 4 }}>Évolution Bourse (€) — positions cotées + PEA + non cotés</div>
         <div style={{ fontSize: 11, color: "#64748B", marginBottom: 8 }}>
-          Valeur totale des positions : {stocks.filter(s=>!["APOLLO","EQTF"].includes(s.symbol)).map(s=>`${s.symbol} (${s.qty} titres)`).join(" · ")}
+          Cotées (AAPL·TSLA·BYD·CSPX) + PEA {fmt(peaValue)} + Non cotés {fmt(nonCoteValue)} · Intraday : AAPL+TSLA uniquement
         </div>
-        {marketHistory && marketHistory.length > 1
-          ? <MiniAreaChart data={marketHistory} dataKey="stocks" color="#34D399" height={220} showPeriodSelector={true} intradayData={{ "24h": stocksHistory24h, "7d": stocksHistory7d }} />
-          : <><Variation history={history} dataKey="stocks" color="#34D399" /><MiniAreaChart data={history} dataKey="stocks" color="#34D399" height={220} showPeriodSelector={true} intradayData={{ "24h": stocksHistory24h, "7d": stocksHistory7d }} /></>
-        }
+        {(() => {
+          // Enrichir les données intraday avec PEA + non-cotés (constantes)
+          const staticBourse = (peaValue || 0) + (nonCoteValue || 0);
+          // Daily : déjà AAPL+TSLA+BYD+CSPX, on ajoute les constantes
+          const enrichedDaily = marketHistory?.map(p => ({ ...p, stocks: parseFloat((p.stocks + staticBourse).toFixed(2)) }));
+          const enriched24h   = stocksHistory24h?.map(p => ({ ...p, stocks: parseFloat((p.stocks + staticBourse).toFixed(2)) }));
+          const enriched7d    = stocksHistory7d?.map(p  => ({ ...p, stocks: parseFloat((p.stocks + staticBourse).toFixed(2)) }));
+          const hasData = enrichedDaily && enrichedDaily.length > 1;
+          return hasData
+            ? <MiniAreaChart data={enrichedDaily} dataKey="stocks" color="#34D399" height={220} showPeriodSelector={true} intradayData={{ "24h": enriched24h, "7d": enriched7d }} />
+            : <><Variation history={history} dataKey="stocks" color="#34D399" /><MiniAreaChart data={history} dataKey="stocks" color="#34D399" height={220} showPeriodSelector={true} /></>;
+        })()}
       </Card>
 
       {/* ── COMPTE-TITRES ── */}
@@ -3488,46 +3496,53 @@ function AppContent({ user }) {
         console.log(`Stock daily: ${stockPoints.length} points`);
       } catch (e) { console.error("Stock daily error:", e); }
 
-      // ── Bourse intraday 24h (horaire = ~24 points) ────────────────────────
+      // ── Bourse intraday 24h + 7j : AAPL + TSLA uniquement (même timezone NY)
+      //    PEA et non-cotés ajoutés comme constantes dans le merge total
+      const positions_intraday = [
+        { qty: 0.0466,   currency: "USD", symbol: "AAPL" },
+        { qty: 0.012771, currency: "USD", symbol: "TSLA" },
+      ];
+
+      // Bourse intraday 24h (horaire = ~24 points)
       try {
-        const resps24 = await Promise.all(positions_daily.map(p =>
+        const resps24 = await Promise.all(positions_intraday.map(p =>
           fetch(`${WORKER}?symbol=${p.symbol}&interval=1h&range=1d`, { cache:"no-store" }).then(r => r.json())
         ));
-        const pts = positions_daily.reduce((byDate, pos, i) => {
+        const byDate = {};
+        positions_intraday.forEach((pos, i) => {
           const result = resps24[i]?.chart?.result?.[0];
-          if (!result?.timestamp) return byDate;
+          if (!result?.timestamp) return;
           const closes = result.indicators?.quote?.[0]?.close || [];
-          const fx = pos.currency === "USD" ? usdToEur : pos.currency === "HKD" ? hkdToEur : 1;
           result.timestamp.forEach((ts, j) => {
+            if (!closes[j]) return;
             const date = new Date(ts * 1000).toISOString().slice(0, 16);
-            byDate[date] = (byDate[date] || 0) + (closes[j] || 0) * pos.qty * fx;
+            byDate[date] = (byDate[date] || 0) + closes[j] * pos.qty * usdToEur;
           });
-          return byDate;
-        }, {});
-        const pts24 = Object.entries(pts).filter(([,v])=>v>0).sort(([a],[b])=>a.localeCompare(b)).map(([date,v])=>({ date, stocks: parseFloat(v.toFixed(2)) }));
+        });
+        const pts24 = Object.entries(byDate).filter(([,v])=>v>0).sort(([a],[b])=>a.localeCompare(b)).map(([date,v])=>({ date, stocks: parseFloat(v.toFixed(2)) }));
         if (pts24.length > 0) setMarketHistory(prev => ({ ...prev, stocks24h: pts24 }));
-        console.log(`Stock 24h: ${pts24.length} points`);
+        console.log(`Stock 24h: ${pts24.length} points (AAPL+TSLA NY)`);
       } catch (e) { console.error("Stock 24h error:", e); }
 
-      // ── Bourse intraday 7j (horaire) ───────────────────────────────────────
+      // Bourse intraday 7j (horaire)
       try {
-        const resps7 = await Promise.all(positions_daily.map(p =>
+        const resps7 = await Promise.all(positions_intraday.map(p =>
           fetch(`${WORKER}?symbol=${p.symbol}&interval=1h&range=5d`, { cache:"no-store" }).then(r => r.json())
         ));
-        const pts = positions_daily.reduce((byDate, pos, i) => {
+        const byDate = {};
+        positions_intraday.forEach((pos, i) => {
           const result = resps7[i]?.chart?.result?.[0];
-          if (!result?.timestamp) return byDate;
+          if (!result?.timestamp) return;
           const closes = result.indicators?.quote?.[0]?.close || [];
-          const fx = pos.currency === "USD" ? usdToEur : pos.currency === "HKD" ? hkdToEur : 1;
           result.timestamp.forEach((ts, j) => {
+            if (!closes[j]) return;
             const date = new Date(ts * 1000).toISOString().slice(0, 16);
-            byDate[date] = (byDate[date] || 0) + (closes[j] || 0) * pos.qty * fx;
+            byDate[date] = (byDate[date] || 0) + closes[j] * pos.qty * usdToEur;
           });
-          return byDate;
-        }, {});
-        const pts7 = Object.entries(pts).filter(([,v])=>v>0).sort(([a],[b])=>a.localeCompare(b)).map(([date,v])=>({ date, stocks: parseFloat(v.toFixed(2)) }));
+        });
+        const pts7 = Object.entries(byDate).filter(([,v])=>v>0).sort(([a],[b])=>a.localeCompare(b)).map(([date,v])=>({ date, stocks: parseFloat(v.toFixed(2)) }));
         if (pts7.length > 0) setMarketHistory(prev => ({ ...prev, stocks7d: pts7 }));
-        console.log(`Stock 7d: ${pts7.length} points`);
+        console.log(`Stock 7d: ${pts7.length} points (AAPL+TSLA NY)`);
       } catch (e) { console.error("Stock 7d error:", e); }
     };
     fetchMarketHistory();
@@ -3833,7 +3848,7 @@ function AppContent({ user }) {
         {/* Views */}
         {view === "overview"   && <Overview cryptoData={cryptoData} cryptoPrices={cryptoPrices} stocks={stocks} bank={bank} savings={savings} oraPrice={oraPrice} realestateTotal={realestateTotal} scpiTotal={scpiTotal} onNavigate={setView} history={history} marketHistoryTotal={marketHistory.total} marketHistoryIntraday={marketHistory} />}
         {view === "crypto"     && <CryptoView cryptoData={cryptoData} setCryptoData={setCryptoData} cryptoPrices={cryptoPrices} loading={loading} history={history} cryptoHistory={marketHistory.crypto} cryptoHistory24h={marketHistory.crypto24h} cryptoHistory7d={marketHistory.crypto7d} />}
-        {view === "stocks"     && <StocksView stocks={stocks} setStocks={setStocks} history={history} marketHistory={marketHistory.stocks} stocksHistory24h={marketHistory.stocks24h} stocksHistory7d={marketHistory.stocks7d} />}
+        {view === "stocks"     && <StocksView stocks={stocks} setStocks={setStocks} history={history} marketHistory={marketHistory.stocks} stocksHistory24h={marketHistory.stocks24h} stocksHistory7d={marketHistory.stocks7d} peaValue={(() => { const pea = stocks.filter(s=>s.account==="pea").reduce((s,st)=>s+st.price*st.qty,0); return pea || 549.89; })()} nonCoteValue={stocks.filter(s=>["APOLLO","EQTF"].includes(s.symbol)).reduce((s,st)=>s+st.price*st.qty,0)} />}
         {view === "savings"    && <SavingsView savings={savings} setSavings={setSavings} oraPrice={oraPrice} />}
         {view === "scpi"       && <ScpiView scpi={scpi} setScpi={setScpi} history={history} />}
         {view === "realestate" && <RealEstateView realestate={realestate} setRealestate={setRealestate} history={history} />}
