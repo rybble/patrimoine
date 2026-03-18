@@ -127,37 +127,22 @@ function PeriodSelector({ value, onChange }) {
 // Formate un label de date/heure selon la période
 function formatXLabel(dateStr, period) {
   if (!dateStr) return "";
-  // Format ISO datetime: "2024-03-18T14:30:00" ou "2024-03-18"
   const isDateTime = dateStr.length > 10;
   if (isDateTime) {
     const d = new Date(dateStr);
-    if (period === "24h") {
-      // HH:MM toutes les 15 min
-      return d.toLocaleTimeString("fr-FR", { hour:"2-digit", minute:"2-digit" });
-    }
-    if (period === "7d") {
-      // "lun 14h" toutes les 4h
-      return d.toLocaleDateString("fr-FR", { weekday:"short" }) + " " + d.getHours() + "h";
-    }
+    if (period === "24h") return d.toLocaleTimeString("fr-FR", { hour:"2-digit", minute:"2-digit" });
+    if (period === "7d")  return d.toLocaleDateString("fr-FR", { weekday:"short", day:"numeric" }) + " " + d.getHours() + "h";
     return d.toLocaleDateString("fr-FR", { month:"2-digit", day:"2-digit" });
   }
-  // Format date seule: "2024-03-18"
-  return dateStr.slice(5); // MM-DD
+  return dateStr.slice(5);
 }
 
 function getXTickInterval(data, period) {
   if (!data?.length) return "preserveStartEnd";
-  if (period === "24h") {
-    // 1 tick toutes les 15 min → tous les 3 points si données à 5min, tous les 1 si à 15min
-    const totalPts = data.length;
-    const tickEvery = Math.max(1, Math.floor(totalPts / 12)); // ~12 ticks sur 24h
-    return tickEvery - 1;
-  }
-  if (period === "7d") {
-    // 1 tick toutes les 4h → données horaires = tick tous les 4 points
-    const totalPts = data.length;
-    const tickEvery = Math.max(1, Math.floor(totalPts / 14)); // ~14 ticks sur 7j
-    return tickEvery - 1;
+  if (period === "24h") return 0; // 1 tick par point = 1 tick/heure (~24 points)
+  if (period === "7d")  {
+    // données horaires sur 7j = ~168 points, on veut 1 tick toutes les 4h = ~42 ticks
+    return Math.max(0, Math.floor(data.length / 42) - 1);
   }
   return "preserveStartEnd";
 }
@@ -165,12 +150,14 @@ function getXTickInterval(data, period) {
 function MiniAreaChart({ data, dataKey, color, height = 60, showPeriodSelector = false, onPeriodChange, intradayData }) {
   const [period, setPeriod] = useState("all");
 
-  // Utiliser données intraday si disponibles pour 24h/7d
-  const activeData = (intradayData && (period === "24h" || period === "7d"))
-    ? (intradayData[period] || data)
-    : data;
+  // Pour 24h/7d : utiliser les données intraday dédiées (série complète, pas de filtre)
+  const useIntraday = (period === "24h" || period === "7d") && intradayData;
+  const activeData  = useIntraday ? (intradayData[period] || null) : data;
 
-  const filtered = showPeriodSelector ? filterByPeriod(activeData, period) : activeData;
+  // Pour les autres périodes : filtrer les données daily
+  const filtered = useIntraday
+    ? activeData  // données intraday = déjà la bonne fenêtre temporelle
+    : (showPeriodSelector ? filterByPeriod(data, period) : data);
 
   const handlePeriodChange = (p) => {
     setPeriod(p);
@@ -179,7 +166,7 @@ function MiniAreaChart({ data, dataKey, color, height = 60, showPeriodSelector =
 
   if (!filtered || filtered.length < 2) return (
     <div style={{ height, display:"flex", alignItems:"center", justifyContent:"center", color:"#334155", fontSize:12 }}>
-      {(period === "24h" || period === "7d") ? "⏳ Chargement données intraday…" : "Pas encore assez de données historiques"}
+      {useIntraday && !activeData ? "⏳ Chargement données intraday…" : "Pas encore assez de données historiques"}
     </div>
   );
 
@@ -1309,11 +1296,13 @@ function StocksView({ stocks, setStocks, history, marketHistory, stocksHistory24
       </div>
 
       <Card style={{ marginBottom: 18, padding: "14px 18px" }}>
-        <div style={{ fontSize: 12, color: "#64748B", marginBottom: 4 }}>Évolution Bourse (€) — 6 mois · AAPL + TSLA via Worker</div>
-        <div style={{ fontSize: 11, color: "#64748B", marginBottom: 8 }}>Courbe basée sur tes positions AAPL ({stocks.find(s=>s.symbol==="AAPL")?.qty} titres) et TSLA ({stocks.find(s=>s.symbol==="TSLA")?.qty} titres)</div>
+        <div style={{ fontSize: 12, color: "#64748B", marginBottom: 4 }}>Évolution Bourse (€) — cumul des positions cotées (AAPL · TSLA · BYD · CSPX)</div>
+        <div style={{ fontSize: 11, color: "#64748B", marginBottom: 8 }}>
+          Valeur totale des positions : {stocks.filter(s=>!["APOLLO","EQTF"].includes(s.symbol)).map(s=>`${s.symbol} (${s.qty} titres)`).join(" · ")}
+        </div>
         {marketHistory && marketHistory.length > 1
-          ? <MiniAreaChart data={marketHistory} dataKey="stocks" color="#34D399" height={220} showPeriodSelector={true} />
-          : <><Variation history={history} dataKey="stocks" color="#34D399" /><MiniAreaChart data={history} dataKey="stocks" color="#34D399" height={220} showPeriodSelector={true} /></>
+          ? <MiniAreaChart data={marketHistory} dataKey="stocks" color="#34D399" height={220} showPeriodSelector={true} intradayData={{ "24h": stocksHistory24h, "7d": stocksHistory7d }} />
+          : <><Variation history={history} dataKey="stocks" color="#34D399" /><MiniAreaChart data={history} dataKey="stocks" color="#34D399" height={220} showPeriodSelector={true} intradayData={{ "24h": stocksHistory24h, "7d": stocksHistory7d }} /></>
         }
       </Card>
 
@@ -3451,9 +3440,9 @@ function AppContent({ user }) {
         }
       } catch (e) { console.error("Crypto daily error:", e); }
 
-      // ── Crypto intraday 24h (5min) ─────────────────────────────────────────
+      // ── Crypto intraday 24h (horaire = ~24 points) ────────────────────────
       try {
-        const r24 = await cgFetch("https://api.coingecko.com/api/v3/coins/ethereum/market_chart?vs_currency=eur&days=1&interval=hourly");
+        const r24 = await cgFetch("https://api.coingecko.com/api/v3/coins/ethereum/market_chart?vs_currency=eur&days=1");
         const d24 = await r24.json();
         if (d24.prices) {
           const pts = d24.prices.map(([ts, price]) => ({
@@ -3499,10 +3488,10 @@ function AppContent({ user }) {
         console.log(`Stock daily: ${stockPoints.length} points`);
       } catch (e) { console.error("Stock daily error:", e); }
 
-      // ── Bourse intraday 24h (5min) ─────────────────────────────────────────
+      // ── Bourse intraday 24h (horaire = ~24 points) ────────────────────────
       try {
         const resps24 = await Promise.all(positions_daily.map(p =>
-          fetch(`${WORKER}?symbol=${p.symbol}&interval=5m&range=1d`, { cache:"no-store" }).then(r => r.json())
+          fetch(`${WORKER}?symbol=${p.symbol}&interval=1h&range=1d`, { cache:"no-store" }).then(r => r.json())
         ));
         const pts = positions_daily.reduce((byDate, pos, i) => {
           const result = resps24[i]?.chart?.result?.[0];
@@ -3556,29 +3545,54 @@ function AppContent({ user }) {
     const reTot  = realestate.reduce((s, p) => s + p.estimatedPrice, 0);
     const staticTotal = savTot + bkTot + scTot + reTot;
 
-    // Helper: fusionner deux séries par date
-    const merge = (cryptoPts, stocksPts, cryptoKey, stocksKey) => {
+    // Helper: arrondir datetime à l'heure (pour aligner CoinGecko et Yahoo)
+    const roundToHour = (dateStr) => {
+      if (dateStr.length <= 10) return dateStr;
+      return dateStr.slice(0, 13) + ":00"; // "2024-03-18T14:00"
+    };
+
+    // Helper: fusionner deux séries par date (arrondie à l'heure pour intraday)
+    const merge = (cryptoPts, stocksPts, cryptoKey, stocksKey, roundHour = false) => {
       const sMap = {};
-      stocksPts.forEach(p => { sMap[p.date] = p[stocksKey]; });
-      return cryptoPts
-        .filter(p => sMap[p.date] !== undefined)
-        .map(p => ({ date: p.date, total: parseFloat((p[cryptoKey] + (sMap[p.date] || 0) + staticTotal).toFixed(2)) }));
+      stocksPts.forEach(p => {
+        const key = roundHour ? roundToHour(p.date) : p.date;
+        sMap[key] = p[stocksKey];
+      });
+      const result = [];
+      cryptoPts.forEach(p => {
+        const key = roundHour ? roundToHour(p.date) : p.date;
+        if (sMap[key] !== undefined) {
+          result.push({ date: p.date, total: parseFloat((p[cryptoKey] + (sMap[key] || 0) + staticTotal).toFixed(2)) });
+        }
+      });
+      return result;
     };
 
     // Daily
-    const dailyPts = merge(marketHistory.crypto, marketHistory.stocks, "crypto", "stocks");
+    const dailyPts = merge(marketHistory.crypto, marketHistory.stocks, "crypto", "stocks", false);
     if (dailyPts.length > 0) setMarketHistory(prev => ({ ...prev, total: dailyPts }));
 
-    // 24h intraday
+    // 24h intraday — aligner à l'heure
     if (marketHistory.crypto24h?.length && marketHistory.stocks24h?.length) {
-      const pts24 = merge(marketHistory.crypto24h, marketHistory.stocks24h, "crypto", "stocks");
+      const pts24 = merge(marketHistory.crypto24h, marketHistory.stocks24h, "crypto", "stocks", true);
       if (pts24.length > 0) setMarketHistory(prev => ({ ...prev, total24h: pts24 }));
+      else {
+        // Fallback: utiliser crypto24h seul + staticTotal + stocks actuel
+        const lastStocks = marketHistory.stocks[marketHistory.stocks.length - 1]?.stocks || 0;
+        const fb = marketHistory.crypto24h.map(p => ({ date: p.date, total: parseFloat((p.crypto + lastStocks + staticTotal).toFixed(2)) }));
+        if (fb.length > 0) setMarketHistory(prev => ({ ...prev, total24h: fb }));
+      }
     }
 
-    // 7d intraday
+    // 7d intraday — aligner à l'heure
     if (marketHistory.crypto7d?.length && marketHistory.stocks7d?.length) {
-      const pts7 = merge(marketHistory.crypto7d, marketHistory.stocks7d, "crypto", "stocks");
+      const pts7 = merge(marketHistory.crypto7d, marketHistory.stocks7d, "crypto", "stocks", true);
       if (pts7.length > 0) setMarketHistory(prev => ({ ...prev, total7d: pts7 }));
+      else {
+        const lastStocks = marketHistory.stocks[marketHistory.stocks.length - 1]?.stocks || 0;
+        const fb = marketHistory.crypto7d.map(p => ({ date: p.date, total: parseFloat((p.crypto + lastStocks + staticTotal).toFixed(2)) }));
+        if (fb.length > 0) setMarketHistory(prev => ({ ...prev, total7d: fb }));
+      }
     }
   }, [marketHistory.crypto, marketHistory.stocks, marketHistory.crypto24h, marketHistory.crypto7d,
       marketHistory.stocks24h, marketHistory.stocks7d, savings, bank, scpi, realestate, oraPrice]);
