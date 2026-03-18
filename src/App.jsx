@@ -2010,11 +2010,21 @@ function BudgetView({ uid, quickAddTx, setQuickAddTx, onCatsChange }) {
   }, [uid]);
 
   // Load budget from Firestore on mount
+  // IMPORTANT: on fusionne quickAddTx APRES chargement Firebase pour éviter la race condition
   useEffect(() => {
     if (!uid) return;
     Promise.all([fbGet(uid, "budget_tx"), fbGet(uid, "budget_cats")]).then(([fbTx, fbCats]) => {
-      if (fbTx)   setTransactions(fbTx.map((t, i) => ({ id: t.id || `legacy-${i}`, ...t })));
-      else { // Fallback localStorage
+      if (fbTx) {
+        const loaded = fbTx.map((t, i) => ({ id: t.id || `legacy-${i}`, ...t }));
+        // Fusionner avec les quickAddTx en attente (non encore dans Firebase)
+        setTransactions(prev => {
+          const pendingIds = new Set(prev.map(t => t.id));
+          const fbIds = new Set(loaded.map(t => t.id));
+          // Garder les transactions locales qui ne sont pas encore dans Firebase
+          const localPending = prev.filter(t => !fbIds.has(t.id));
+          return [...loaded, ...localPending];
+        });
+      } else {
         try { const raw = JSON.parse(localStorage.getItem(BUDGET_KEY) || "[]"); if(raw.length) setTransactions(raw.map((t,i)=>({id:t.id||`lg-${i}`,...t}))); } catch {}
       }
       if (fbCats) setCats(fbCats);
@@ -3305,13 +3315,23 @@ function AppContent({ user }) {
     fetchMarketHistory();
   }, []);
 
-  // Calcul du total global historique (crypto + stocks fusionnés par date)
+  // Calcul du total global historique (crypto + stocks + actifs non cotés)
+  // On utilise les vrais totaux actuels du state pour les actifs non cotés (épargne, immo, SCPI, banque)
   useEffect(() => {
     if (!marketHistory.crypto?.length || !marketHistory.stocks?.length) return;
     const stocksByDate = {};
     marketHistory.stocks.forEach(p => { stocksByDate[p.date] = p.stocks; });
-    // Constantes non cotées (épargne + immo + scpi + banque) — valeurs stables
-    const staticTotal = 549.89 + 75.03 + 10500 + 22950 + 5000 + 5000;
+
+    // Actifs non cotés : valeurs stables = on utilise leur valeur actuelle comme constante
+    // savings, bank, scpi, realestate, PEA manuel
+    const savingsTotal = [...savings.peg, ...savings.percol].reduce((s, f) => {
+      const vl = (f.type === "ora_linked" && oraPrice > 0) ? oraPrice : f.manualVl;
+      return s + vl * f.qty;
+    }, 0);
+    const bankTotalVal   = bank.reduce((s, b) => s + b.balance, 0);
+    const scpiTotalVal   = scpi.reduce((s, p) => s + p.pricePerPart * p.parts, 0);
+    const staticTotal    = savingsTotal + bankTotalVal + scpiTotalVal + realestateTotal;
+
     const totalPoints = marketHistory.crypto
       .filter(p => stocksByDate[p.date] !== undefined)
       .map(p => ({
@@ -3319,7 +3339,7 @@ function AppContent({ user }) {
         total: parseFloat((p.crypto + (stocksByDate[p.date] || 0) + staticTotal).toFixed(2)),
       }));
     if (totalPoints.length > 0) setMarketHistory(prev => ({ ...prev, total: totalPoints }));
-  }, [marketHistory.crypto, marketHistory.stocks]);
+  }, [marketHistory.crypto, marketHistory.stocks, savings, bank, scpi, realestateTotal, oraPrice]);
 
   // ── Worker universel Cloudflare pour toutes les cotations ───────────────────
   // Un seul Worker gère tous les symboles via Yahoo Finance
