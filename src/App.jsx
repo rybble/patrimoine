@@ -157,9 +157,9 @@ function MiniAreaChart({ data, dataKey, color, height = 60, showPeriodSelector =
   };
 
   const tickFmt = v => {
-    if (v >= 1000000) return `${(v/1000000).toFixed(1)}M`;
-    if (v >= 1000) return `${(v/1000).toFixed(0)}k`;
-    return v.toFixed(0);
+    if (v >= 1000000) return `${(v/1000000).toFixed(2)}M`;
+    if (v >= 1000) return `${(v/1000).toFixed(2)}k`;
+    return v.toFixed(2);
   };
 
   return (
@@ -446,7 +446,7 @@ function Tag({ children, color }) {
 }
 
 // ─── OVERVIEW ─────────────────────────────────────────────────────────────────
-function Overview({ cryptoData, cryptoPrices, stocks, bank, savings, oraPrice, realestateTotal, scpiTotal, onNavigate, history }) {
+function Overview({ cryptoData, cryptoPrices, stocks, bank, savings, oraPrice, realestateTotal, scpiTotal, onNavigate, history, marketHistoryTotal }) {
   const getVl = (f) => (f.type === "ora_linked" && oraPrice > 0) ? oraPrice : f.manualVl;
   const cryptoTotal = cryptoData.reduce((s, c) => s + (cryptoPrices[c.code]?.eur || 0) * c.qty, 0);
   const stocksTotal = stocks.reduce((s, st) => s + st.price * st.qty, 0);
@@ -482,8 +482,10 @@ function Overview({ cryptoData, cryptoPrices, stocks, bank, savings, oraPrice, r
           {fmt(grandTotal)}
         </div>
         <div style={{ fontSize: 12, color: "#64748B", marginTop: 6, marginBottom: 14 }}>Prix crypto en EUR · CoinGecko live</div>
-        <Variation history={history} dataKey="total" color="#818CF8" />
-        <MiniAreaChart data={history} dataKey="total" color="#818CF8" height={220} showPeriodSelector={true} showPeriodSelector={true} />
+        {marketHistoryTotal && marketHistoryTotal.length > 1
+          ? <><Variation history={marketHistoryTotal} dataKey="total" color="#818CF8" /><MiniAreaChart data={marketHistoryTotal} dataKey="total" color="#818CF8" height={220} showPeriodSelector={true} /></>
+          : <><Variation history={history} dataKey="total" color="#818CF8" /><MiniAreaChart data={history} dataKey="total" color="#818CF8" height={220} showPeriodSelector={true} /></>
+        }
       </Card>
 
       {/* Stats globales */}
@@ -3153,7 +3155,7 @@ function AppContent({ user }) {
   const [lastUpdate, setLastUpdate] = useState(null);
   const [oraPrice, setOraPrice] = useState(0);
   const [history, setHistory] = useState(() => loadHistory());
-  const [marketHistory, setMarketHistory] = useState({ stocks: [], crypto: [] });
+  const [marketHistory, setMarketHistory] = useState({ stocks: [], crypto: [], total: [] });
   const [fbSynced, setFbSynced] = useState(false);
   const [fbStatus, setFbStatus] = useState("");
   const [showQuickAdd, setShowQuickAdd] = useState(false);
@@ -3239,50 +3241,85 @@ function AppContent({ user }) {
   useEffect(() => { if (fbSynced) debouncedSave("savings",    savings);     }, [savings]);
   useEffect(() => { if (fbSynced) debouncedSave("history",    history);     }, [history]);
 
-  // Fetch 90 days ETH history in EUR from CoinGecko for crypto chart
-  // Fetch 180 days AAPL+TSLA from Finnhub for stocks chart
+  // Fetch historical prices to build performance charts based on actual cotations
   useEffect(() => {
     const fetchMarketHistory = async () => {
+      // ── Crypto : ETH 90 jours (proxy portefeuille crypto) ──────────────────
       try {
-        // Crypto: ETH 90 days in EUR — use as portfolio trend proxy
         const ethRes = await cgFetch("https://api.coingecko.com/api/v3/coins/ethereum/market_chart?vs_currency=eur&days=90&interval=daily");
         const ethData = await ethRes.json();
         if (ethData.prices) {
-          // Scale ETH price to portfolio equivalent (ETH qty * price)
           const ethQty = 1.0258;
           const cryptoPoints = ethData.prices.map(([ts, price]) => ({
             date: new Date(ts).toISOString().slice(0, 10),
-            crypto: Math.round(price * ethQty),
+            crypto: parseFloat((price * ethQty).toFixed(2)),
           }));
           setMarketHistory(prev => ({ ...prev, crypto: cryptoPoints }));
         }
       } catch (e) { console.error("Crypto history error:", e); }
 
+      // ── Bourse : AAPL + TSLA + BYD + CSPX via Worker ──────────────────────
       try {
-        const to = Math.floor(Date.now() / 1000);
-        const from = to - 180 * 24 * 3600;
-        const [rAAPL, rTSLA] = await Promise.all([
-          fetch(`https://ora-proxy.rybble.workers.dev?symbol=AAPL&interval=1wk&range=6mo`, { cache:"no-store" }).then(r => r.json()),
-          fetch(`https://ora-proxy.rybble.workers.dev?symbol=TSLA&interval=1wk&range=6mo`, { cache:"no-store" }).then(r => r.json()),
+        const [rAAPL, rTSLA, rBYD, rCSPX] = await Promise.all([
+          fetch(`https://ora-proxy.rybble.workers.dev?symbol=AAPL&interval=1d&range=3mo`, { cache:"no-store" }).then(r => r.json()),
+          fetch(`https://ora-proxy.rybble.workers.dev?symbol=TSLA&interval=1d&range=3mo`, { cache:"no-store" }).then(r => r.json()),
+          fetch(`https://ora-proxy.rybble.workers.dev?symbol=0285.HK&interval=1d&range=3mo`, { cache:"no-store" }).then(r => r.json()),
+          fetch(`https://ora-proxy.rybble.workers.dev?symbol=CSPX.L&interval=1d&range=3mo`, { cache:"no-store" }).then(r => r.json()),
         ]);
-        const aaplR = rAAPL?.chart?.result?.[0];
-        const tslaR = rTSLA?.chart?.result?.[0];
-        if (aaplR?.timestamp && tslaR?.timestamp) {
-          const aaplQty = 0.0466, tslaQty = 0.012771, usdToEur = 0.92;
-          const aaplClose = aaplR.indicators?.quote?.[0]?.close || [];
-          const tslaClose = tslaR.indicators?.quote?.[0]?.close || [];
-          const tslaByDate = {};
-          tslaR.timestamp.forEach((ts, i) => { tslaByDate[new Date(ts*1000).toISOString().slice(0,10)] = tslaClose[i]; });
-          const points = aaplR.timestamp.map((ts, i) => {
-            const date = new Date(ts*1000).toISOString().slice(0,10);
-            return { date, stocks: Math.round(((aaplClose[i]||0)*aaplQty + (tslaByDate[date]||0)*tslaQty)*usdToEur) };
-          }).filter(p => p.stocks > 0);
-          if (points.length > 0) setMarketHistory(prev => ({ ...prev, stocks: points }));
+
+        // Positions actuelles
+        const positions = [
+          { data: rAAPL, qty: 0.0466,    currency: "USD" },
+          { data: rTSLA, qty: 0.012771,  currency: "USD" },
+          { data: rBYD,  qty: 0.463606,  currency: "HKD" },
+          { data: rCSPX, qty: 0.211707,  currency: "USD" },
+        ];
+        const usdToEur = 0.92, hkdToEur = 0.118;
+
+        // Construire un index date → valeur pour chaque actif
+        const byDate = {};
+        for (const pos of positions) {
+          const result = pos.data?.chart?.result?.[0];
+          if (!result?.timestamp) continue;
+          const closes = result.indicators?.quote?.[0]?.close || [];
+          const fx = pos.currency === "USD" ? usdToEur : pos.currency === "HKD" ? hkdToEur : 1;
+          result.timestamp.forEach((ts, i) => {
+            const date = new Date(ts * 1000).toISOString().slice(0, 10);
+            if (!byDate[date]) byDate[date] = 0;
+            byDate[date] += (closes[i] || 0) * pos.qty * fx;
+          });
         }
+
+        const stockPoints = Object.entries(byDate)
+          .filter(([, v]) => v > 0)
+          .sort(([a], [b]) => a.localeCompare(b))
+          .map(([date, v]) => ({ date, stocks: parseFloat(v.toFixed(2)) }));
+
+        if (stockPoints.length > 0) setMarketHistory(prev => ({ ...prev, stocks: stockPoints }));
+        console.log(`Stock history: ${stockPoints.length} points via Worker (AAPL+TSLA+BYD+CSPX)`);
       } catch (e) { console.error("Stock history error:", e); }
+
+      // ── Total global : crypto + stocks sur 90 jours ────────────────────────
+      // Calculé après que les deux séries sont disponibles (via useEffect séparé)
     };
     fetchMarketHistory();
   }, []);
+
+  // Calcul du total global historique (crypto + stocks fusionnés par date)
+  useEffect(() => {
+    if (!marketHistory.crypto?.length || !marketHistory.stocks?.length) return;
+    const stocksByDate = {};
+    marketHistory.stocks.forEach(p => { stocksByDate[p.date] = p.stocks; });
+    // Constantes non cotées (épargne + immo + scpi + banque) — valeurs stables
+    const staticTotal = 549.89 + 75.03 + 10500 + 22950 + 5000 + 5000;
+    const totalPoints = marketHistory.crypto
+      .filter(p => stocksByDate[p.date] !== undefined)
+      .map(p => ({
+        date: p.date,
+        total: parseFloat((p.crypto + (stocksByDate[p.date] || 0) + staticTotal).toFixed(2)),
+      }));
+    if (totalPoints.length > 0) setMarketHistory(prev => ({ ...prev, total: totalPoints }));
+  }, [marketHistory.crypto, marketHistory.stocks]);
 
   // ── Worker universel Cloudflare pour toutes les cotations ───────────────────
   // Un seul Worker gère tous les symboles via Yahoo Finance
@@ -3518,7 +3555,7 @@ function AppContent({ user }) {
         )}
 
         {/* Views */}
-        {view === "overview"   && <Overview cryptoData={cryptoData} cryptoPrices={cryptoPrices} stocks={stocks} bank={bank} savings={savings} oraPrice={oraPrice} realestateTotal={realestateTotal} scpiTotal={scpiTotal} onNavigate={setView} history={history} />}
+        {view === "overview"   && <Overview cryptoData={cryptoData} cryptoPrices={cryptoPrices} stocks={stocks} bank={bank} savings={savings} oraPrice={oraPrice} realestateTotal={realestateTotal} scpiTotal={scpiTotal} onNavigate={setView} history={history} marketHistoryTotal={marketHistory.total} />}
         {view === "crypto"     && <CryptoView cryptoData={cryptoData} setCryptoData={setCryptoData} cryptoPrices={cryptoPrices} loading={loading} history={history} cryptoHistory={marketHistory.crypto} />}
         {view === "stocks"     && <StocksView stocks={stocks} setStocks={setStocks} history={history} marketHistory={marketHistory.stocks} />}
         {view === "savings"    && <SavingsView savings={savings} setSavings={setSavings} oraPrice={oraPrice} />}
@@ -3535,9 +3572,20 @@ function AppContent({ user }) {
         <QuickAddModal
           cats={quickAddCats}
           onClose={() => setShowQuickAdd(false)}
-          onAdd={(tx) => {
+          onAdd={async (tx) => {
+            // 1. Mettre à jour l'état local pour BudgetView si monté
             setQuickAddTx(prev => [...prev, tx]);
-            // Déclencher sauvegarde Firebase via un event custom
+            // 2. Sauvegarder directement en Firebase sans dépendre du montage de BudgetView
+            if (user?.uid) {
+              try {
+                const snap = await fbGet(user.uid, "budget_tx");
+                const existing = Array.isArray(snap) ? snap : [];
+                await fbSet(user.uid, "budget_tx", [...existing, tx]);
+                console.log("[QuickAdd] Sauvegardé directement en Firebase ✅");
+              } catch(e) {
+                console.warn("[QuickAdd] Erreur Firebase:", e);
+              }
+            }
             window.dispatchEvent(new CustomEvent("patrimoine:quickadd", { detail: tx }));
           }}
         />
