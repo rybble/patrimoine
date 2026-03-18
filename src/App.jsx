@@ -124,13 +124,62 @@ function PeriodSelector({ value, onChange }) {
   );
 }
 
-function MiniAreaChart({ data, dataKey, color, height = 60, showPeriodSelector = false }) {
+// Formate un label de date/heure selon la période
+function formatXLabel(dateStr, period) {
+  if (!dateStr) return "";
+  // Format ISO datetime: "2024-03-18T14:30:00" ou "2024-03-18"
+  const isDateTime = dateStr.length > 10;
+  if (isDateTime) {
+    const d = new Date(dateStr);
+    if (period === "24h") {
+      // HH:MM toutes les 15 min
+      return d.toLocaleTimeString("fr-FR", { hour:"2-digit", minute:"2-digit" });
+    }
+    if (period === "7d") {
+      // "lun 14h" toutes les 4h
+      return d.toLocaleDateString("fr-FR", { weekday:"short" }) + " " + d.getHours() + "h";
+    }
+    return d.toLocaleDateString("fr-FR", { month:"2-digit", day:"2-digit" });
+  }
+  // Format date seule: "2024-03-18"
+  return dateStr.slice(5); // MM-DD
+}
+
+function getXTickInterval(data, period) {
+  if (!data?.length) return "preserveStartEnd";
+  if (period === "24h") {
+    // 1 tick toutes les 15 min → tous les 3 points si données à 5min, tous les 1 si à 15min
+    const totalPts = data.length;
+    const tickEvery = Math.max(1, Math.floor(totalPts / 12)); // ~12 ticks sur 24h
+    return tickEvery - 1;
+  }
+  if (period === "7d") {
+    // 1 tick toutes les 4h → données horaires = tick tous les 4 points
+    const totalPts = data.length;
+    const tickEvery = Math.max(1, Math.floor(totalPts / 14)); // ~14 ticks sur 7j
+    return tickEvery - 1;
+  }
+  return "preserveStartEnd";
+}
+
+function MiniAreaChart({ data, dataKey, color, height = 60, showPeriodSelector = false, onPeriodChange, intradayData }) {
   const [period, setPeriod] = useState("all");
-  const filtered = showPeriodSelector ? filterByPeriod(data, period) : data;
+
+  // Utiliser données intraday si disponibles pour 24h/7d
+  const activeData = (intradayData && (period === "24h" || period === "7d"))
+    ? (intradayData[period] || data)
+    : data;
+
+  const filtered = showPeriodSelector ? filterByPeriod(activeData, period) : activeData;
+
+  const handlePeriodChange = (p) => {
+    setPeriod(p);
+    if (onPeriodChange) onPeriodChange(p);
+  };
 
   if (!filtered || filtered.length < 2) return (
     <div style={{ height, display:"flex", alignItems:"center", justifyContent:"center", color:"#334155", fontSize:12 }}>
-      Pas encore assez de données historiques
+      {(period === "24h" || period === "7d") ? "⏳ Chargement données intraday…" : "Pas encore assez de données historiques"}
     </div>
   );
 
@@ -150,7 +199,7 @@ function MiniAreaChart({ data, dataKey, color, height = 60, showPeriodSelector =
     return (
       <div style={{ background:"#0F1929", border:"1px solid #1E3050", borderRadius:8,
         padding:"8px 14px", fontSize:12, color:"#E2E8F0", boxShadow:"0 4px 20px rgba(0,0,0,0.5)" }}>
-        <div style={{ color:"#64748B", marginBottom:3 }}>{label}</div>
+        <div style={{ color:"#64748B", marginBottom:3 }}>{formatXLabel(label, period)}</div>
         <div style={{ color:lineColor, fontWeight:700, fontSize:14 }}>{fmt(payload[0].value)}</div>
       </div>
     );
@@ -162,12 +211,14 @@ function MiniAreaChart({ data, dataKey, color, height = 60, showPeriodSelector =
     return v.toFixed(2);
   };
 
+  const xInterval = getXTickInterval(filtered, period);
+
   return (
     <div style={{ background:"transparent" }}>
       {showPeriodSelector && (
         <div style={{ display:"flex", gap:3, marginBottom:10 }}>
           {PERIODS.map(p => (
-            <button key={p.key} onClick={() => setPeriod(p.key)} style={{
+            <button key={p.key} onClick={() => handlePeriodChange(p.key)} style={{
               background: period===p.key ? "rgba(0,200,160,0.15)" : "transparent",
               border: `1px solid ${period===p.key ? "rgba(0,200,160,0.5)" : "rgba(255,255,255,0.07)"}`,
               borderRadius:5, color: period===p.key ? "#00C8A0" : "#475569",
@@ -175,7 +226,6 @@ function MiniAreaChart({ data, dataKey, color, height = 60, showPeriodSelector =
               transition:"all 0.15s"
             }}>{p.label}</button>
           ))}
-          {/* Badge variation */}
           {vals.length >= 2 && (() => {
             const pct = ((vals[vals.length-1] - vals[0]) / (vals[0]||1)) * 100;
             return (
@@ -198,13 +248,12 @@ function MiniAreaChart({ data, dataKey, color, height = 60, showPeriodSelector =
               <stop offset="100%" stopColor={gradColor} stopOpacity={0.01} />
             </linearGradient>
           </defs>
-          <CartesianGrid
-            strokeDasharray="0"
-            stroke="rgba(255,255,255,0.04)"
-            horizontal={true} vertical={false} />
-          <XAxis dataKey="date" tick={{ fontSize:10, fill:"#475569" }} tickLine={false} axisLine={false}
-            tickFormatter={d => d?.length === 10 ? d.slice(5) : d}
-            interval="preserveStartEnd" />
+          <CartesianGrid strokeDasharray="0" stroke="rgba(255,255,255,0.04)" horizontal={true} vertical={false} />
+          <XAxis
+            dataKey="date"
+            tick={{ fontSize:10, fill:"#475569" }} tickLine={false} axisLine={false}
+            tickFormatter={d => formatXLabel(d, period)}
+            interval={xInterval} />
           <YAxis
             orientation="right"
             domain={[yMin, yMax]}
@@ -446,7 +495,7 @@ function Tag({ children, color }) {
 }
 
 // ─── OVERVIEW ─────────────────────────────────────────────────────────────────
-function Overview({ cryptoData, cryptoPrices, stocks, bank, savings, oraPrice, realestateTotal, scpiTotal, onNavigate, history, marketHistoryTotal }) {
+function Overview({ cryptoData, cryptoPrices, stocks, bank, savings, oraPrice, realestateTotal, scpiTotal, onNavigate, history, marketHistoryTotal, marketHistoryIntraday }) {
   const getVl = (f) => (f.type === "ora_linked" && oraPrice > 0) ? oraPrice : f.manualVl;
   const cryptoTotal = cryptoData.reduce((s, c) => s + (cryptoPrices[c.code]?.eur || 0) * c.qty, 0);
   const stocksTotal = stocks.reduce((s, st) => s + st.price * st.qty, 0);
@@ -483,7 +532,7 @@ function Overview({ cryptoData, cryptoPrices, stocks, bank, savings, oraPrice, r
         </div>
         <div style={{ fontSize: 12, color: "#64748B", marginTop: 6, marginBottom: 14 }}>Prix crypto en EUR · CoinGecko live</div>
         {marketHistoryTotal && marketHistoryTotal.length > 1
-          ? <><Variation history={marketHistoryTotal} dataKey="total" color="#818CF8" /><MiniAreaChart data={marketHistoryTotal} dataKey="total" color="#818CF8" height={220} showPeriodSelector={true} /></>
+          ? <><Variation history={marketHistoryTotal} dataKey="total" color="#818CF8" /><MiniAreaChart data={marketHistoryTotal} dataKey="total" color="#818CF8" height={220} showPeriodSelector={true} intradayData={{ "24h": marketHistoryIntraday?.total24h, "7d": marketHistoryIntraday?.total7d }} /></>
           : <><Variation history={history} dataKey="total" color="#818CF8" /><MiniAreaChart data={history} dataKey="total" color="#818CF8" height={220} showPeriodSelector={true} /></>
         }
       </Card>
@@ -692,7 +741,7 @@ function CryptoTreemap({ cryptoData, cryptoPrices }) {
 }
 
 
-function CryptoView({ cryptoData, setCryptoData, cryptoPrices, loading, history, cryptoHistory }) {
+function CryptoView({ cryptoData, setCryptoData, cryptoPrices, loading, history, cryptoHistory, cryptoHistory24h, cryptoHistory7d }) {
   const [editingCode, setEditingCode] = useState(null);
   const [editQty, setEditQty] = useState("");
 
@@ -1128,7 +1177,7 @@ function StockSearchBar({ onAdd, workerUrl = "https://ora-proxy.rybble.workers.d
   );
 }
 
-function StocksView({ stocks, setStocks, history, marketHistory }) {
+function StocksView({ stocks, setStocks, history, marketHistory, stocksHistory24h, stocksHistory7d }) {
   const [editing, setEditing] = useState(null);
   const [form, setForm] = useState({});
   const [importStatus, setImportStatus] = useState("");
@@ -2248,7 +2297,7 @@ function BudgetView({ uid, quickAddTx, setQuickAddTx, onCatsChange }) {
 
       {/* ── Nav tabs + year selector ── */}
       <div style={{ display:"flex", gap:6, marginBottom:18, flexWrap:"wrap", alignItems:"center" }}>
-        {[["overview","📊 Synthèse"],["detail","📋 Détail"],["catstat","🔬 Stats catégorie"],["categories","🏷 Catégories"],["add","➕ Ajouter"],["transactions","📝 Transactions"],["sync","🔗 Sources"]].map(([k,l]) => (
+        {[["overview","📊 Synthèse"],["detail","📋 Détail"],["compare","📅 Comparaison"],["catstat","🔬 Stats catégorie"],["categories","🏷 Catégories"],["add","➕ Ajouter"],["transactions","📝 Transactions"],["sync","🔗 Sources"]].map(([k,l]) => (
           <Pill key={k} label={l} active={activeTab===k} onClick={() => setActiveTab(k)} />
         ))}
         <div style={{ marginLeft:"auto", display:"flex", gap:6 }}>
@@ -2456,6 +2505,110 @@ function BudgetView({ uid, quickAddTx, setQuickAddTx, onCatsChange }) {
       {/* ══════════════════════════════════════════════════════════════════════
           TAB : STATS PAR CATÉGORIE
       ══════════════════════════════════════════════════════════════════════ */}
+      {activeTab === "compare" && (() => {
+        // Regrouper entrées et sorties par (année, mois)
+        const MOIS_LABELS = ["Jan","Fév","Mar","Avr","Mai","Jun","Jul","Aoû","Sep","Oct","Nov","Déc"];
+        const allYears = [...new Set(transactions.map(t => t.annee))].sort((a,b)=>a-b);
+        // Palette de couleurs par année
+        const YEAR_COLORS_ENT = ["#34D399","#60A5FA","#A78BFA","#FBBF24","#F472B6"];
+        const YEAR_COLORS_SOR = ["#F87171","#FB923C","#FCD34D","#86EFAC","#93C5FD"];
+
+        // Construire données par mois pour chaque année
+        const dataByMonth = MOIS_LABELS.map((label, mi) => {
+          const point = { mois: label };
+          allYears.forEach(yr => {
+            const ent = transactions.filter(t => t.annee===yr && t.mois===mi+1 && t.es==="Entrée").reduce((s,t)=>s+t.montant,0);
+            const sor = transactions.filter(t => t.annee===yr && t.mois===mi+1 && t.es==="Sortie").reduce((s,t)=>s+t.montant,0);
+            point[`ent_${yr}`] = Math.round(ent * 100) / 100;
+            point[`sor_${yr}`] = Math.round(sor * 100) / 100;
+          });
+          return point;
+        });
+
+        const CustomTooltipCompare = ({ active, payload, label }) => {
+          if (!active || !payload?.length) return null;
+          return (
+            <div style={{ background:"#0F1929", border:"1px solid #1E3050", borderRadius:10, padding:"10px 16px", fontSize:12, color:"#E2E8F0", boxShadow:"0 4px 20px rgba(0,0,0,0.5)", minWidth:180 }}>
+              <div style={{ color:"#64748B", marginBottom:6, fontWeight:700 }}>{label}</div>
+              {payload.map((p, i) => (
+                <div key={i} style={{ display:"flex", justifyContent:"space-between", gap:16, marginBottom:2 }}>
+                  <span style={{ color: p.color }}>{p.name}</span>
+                  <span style={{ fontWeight:700, color:"#F1F5F9" }}>{fmt(p.value)}</span>
+                </div>
+              ))}
+            </div>
+          );
+        };
+
+        return (
+          <div>
+            <div style={{ marginBottom:18 }}>
+              <div style={{ fontSize:15, fontWeight:700, color:"#F1F5F9", marginBottom:4 }}>Comparaison annuelle — Entrées</div>
+              <div style={{ fontSize:12, color:"#64748B", marginBottom:12 }}>Entrées par mois, toutes années superposées</div>
+              <ResponsiveContainer width="100%" height={220}>
+                <BarChart data={dataByMonth} margin={{ top:8, right:20, bottom:4, left:0 }} barGap={2} barCategoryGap="20%">
+                  <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" vertical={false} />
+                  <XAxis dataKey="mois" tick={{ fontSize:11, fill:"#475569" }} tickLine={false} axisLine={false} />
+                  <YAxis orientation="right" tick={{ fontSize:10, fill:"#475569" }} tickLine={false} axisLine={false}
+                    tickFormatter={v => v>=1000?`${(v/1000).toFixed(1)}k`:v.toFixed(0)} width={48} />
+                  <Tooltip content={<CustomTooltipCompare />} />
+                  <Legend wrapperStyle={{ fontSize:11, color:"#64748B" }} />
+                  {allYears.map((yr, i) => (
+                    <Bar key={`ent_${yr}`} dataKey={`ent_${yr}`} name={`Entrées ${yr}`}
+                      fill={YEAR_COLORS_ENT[i % YEAR_COLORS_ENT.length]}
+                      radius={[3,3,0,0]} opacity={0.85} />
+                  ))}
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+
+            <div style={{ marginBottom:18 }}>
+              <div style={{ fontSize:15, fontWeight:700, color:"#F1F5F9", marginBottom:4 }}>Comparaison annuelle — Dépenses</div>
+              <div style={{ fontSize:12, color:"#64748B", marginBottom:12 }}>Dépenses par mois, toutes années superposées</div>
+              <ResponsiveContainer width="100%" height={220}>
+                <BarChart data={dataByMonth} margin={{ top:8, right:20, bottom:4, left:0 }} barGap={2} barCategoryGap="20%">
+                  <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" vertical={false} />
+                  <XAxis dataKey="mois" tick={{ fontSize:11, fill:"#475569" }} tickLine={false} axisLine={false} />
+                  <YAxis orientation="right" tick={{ fontSize:10, fill:"#475569" }} tickLine={false} axisLine={false}
+                    tickFormatter={v => v>=1000?`${(v/1000).toFixed(1)}k`:v.toFixed(0)} width={48} />
+                  <Tooltip content={<CustomTooltipCompare />} />
+                  <Legend wrapperStyle={{ fontSize:11, color:"#64748B" }} />
+                  {allYears.map((yr, i) => (
+                    <Bar key={`sor_${yr}`} dataKey={`sor_${yr}`} name={`Dépenses ${yr}`}
+                      fill={YEAR_COLORS_SOR[i % YEAR_COLORS_SOR.length]}
+                      radius={[3,3,0,0]} opacity={0.85} />
+                  ))}
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+
+            <div>
+              <div style={{ fontSize:15, fontWeight:700, color:"#F1F5F9", marginBottom:4 }}>Solde net mensuel</div>
+              <div style={{ fontSize:12, color:"#64748B", marginBottom:12 }}>Entrées − Dépenses par mois, toutes années</div>
+              <ResponsiveContainer width="100%" height={220}>
+                <BarChart data={dataByMonth.map(d => {
+                  const pt = { mois: d.mois };
+                  allYears.forEach(yr => { pt[`solde_${yr}`] = (d[`ent_${yr}`]||0) - (d[`sor_${yr}`]||0); });
+                  return pt;
+                })} margin={{ top:8, right:20, bottom:4, left:0 }} barGap={2} barCategoryGap="20%">
+                  <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" vertical={false} />
+                  <XAxis dataKey="mois" tick={{ fontSize:11, fill:"#475569" }} tickLine={false} axisLine={false} />
+                  <YAxis orientation="right" tick={{ fontSize:10, fill:"#475569" }} tickLine={false} axisLine={false}
+                    tickFormatter={v => v>=1000?`${(v/1000).toFixed(1)}k`:v<-1000?`${(v/1000).toFixed(1)}k`:v.toFixed(0)} width={52} />
+                  <Tooltip content={<CustomTooltipCompare />} />
+                  <Legend wrapperStyle={{ fontSize:11, color:"#64748B" }} />
+                  {allYears.map((yr, i) => (
+                    <Bar key={`solde_${yr}`} dataKey={`solde_${yr}`} name={`Solde ${yr}`}
+                      fill={YEAR_COLORS_ENT[i % YEAR_COLORS_ENT.length]}
+                      radius={[3,3,0,0]} opacity={0.85} />
+                  ))}
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+        );
+      })()}
+
       {activeTab === "catstat" && (
         <div>
           {/* ── Filtre entête ── */}
@@ -3163,7 +3316,7 @@ function AppContent({ user }) {
   const [lastUpdate, setLastUpdate] = useState(null);
   const [oraPrice, setOraPrice] = useState(0);
   const [history, setHistory] = useState(() => loadHistory());
-  const [marketHistory, setMarketHistory] = useState({ stocks: [], crypto: [], total: [] });
+  const [marketHistory, setMarketHistory] = useState({ stocks: [], crypto: [], total: [], crypto24h: [], crypto7d: [], stocks24h: [], stocks7d: [] });
   const [fbSynced, setFbSynced] = useState(false);
   const [fbStatus, setFbStatus] = useState("");
   const [showQuickAdd, setShowQuickAdd] = useState(false);
@@ -3250,65 +3403,143 @@ function AppContent({ user }) {
   useEffect(() => { if (fbSynced) debouncedSave("history",    history);     }, [history]);
 
   // Fetch historical prices to build performance charts based on actual cotations
+  // Helper: construire une série de points de valeur pour un ensemble de positions
+  const buildStockSeries = useCallback((responses, positions, usdToEur, hkdToEur, dateKey="date") => {
+    const byDate = {};
+    for (const pos of positions) {
+      const result = pos.data?.chart?.result?.[0];
+      if (!result?.timestamp) continue;
+      const closes = result.indicators?.quote?.[0]?.close || [];
+      const fx = pos.currency === "USD" ? usdToEur : pos.currency === "HKD" ? hkdToEur : 1;
+      result.timestamp.forEach((ts, i) => {
+        const d = new Date(ts * 1000);
+        const key = dateKey === "datetime"
+          ? d.toISOString().slice(0, 16) // "2024-03-18T14:30"
+          : d.toISOString().slice(0, 10); // "2024-03-18"
+        if (!byDate[key]) byDate[key] = 0;
+        byDate[key] += (closes[i] || 0) * pos.qty * fx;
+      });
+    }
+    return Object.entries(byDate)
+      .filter(([, v]) => v > 0)
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([date, v]) => ({ date, stocks: parseFloat(v.toFixed(2)) }));
+  }, []);
+
   useEffect(() => {
+    const WORKER = "https://ora-proxy.rybble.workers.dev";
+    const positions_daily = [
+      { qty: 0.0466,   currency: "USD", symbol: "AAPL"   },
+      { qty: 0.012771, currency: "USD", symbol: "TSLA"   },
+      { qty: 0.463606, currency: "HKD", symbol: "0285.HK" },
+      { qty: 0.211707, currency: "USD", symbol: "CSPX.L" },
+    ];
+    const usdToEur = 0.92, hkdToEur = 0.118;
+    const ethQty = 1.0258;
+
     const fetchMarketHistory = async () => {
-      // ── Crypto : ETH 90 jours (proxy portefeuille crypto) ──────────────────
+      // ── Crypto daily (90j) ─────────────────────────────────────────────────
       try {
         const ethRes = await cgFetch("https://api.coingecko.com/api/v3/coins/ethereum/market_chart?vs_currency=eur&days=90&interval=daily");
         const ethData = await ethRes.json();
         if (ethData.prices) {
-          const ethQty = 1.0258;
-          const cryptoPoints = ethData.prices.map(([ts, price]) => ({
+          const pts = ethData.prices.map(([ts, price]) => ({
             date: new Date(ts).toISOString().slice(0, 10),
             crypto: parseFloat((price * ethQty).toFixed(2)),
           }));
-          setMarketHistory(prev => ({ ...prev, crypto: cryptoPoints }));
+          setMarketHistory(prev => ({ ...prev, crypto: pts }));
         }
-      } catch (e) { console.error("Crypto history error:", e); }
+      } catch (e) { console.error("Crypto daily error:", e); }
 
-      // ── Bourse : AAPL + TSLA + BYD + CSPX via Worker ──────────────────────
+      // ── Crypto intraday 24h (5min) ─────────────────────────────────────────
       try {
-        const [rAAPL, rTSLA, rBYD, rCSPX] = await Promise.all([
-          fetch(`https://ora-proxy.rybble.workers.dev?symbol=AAPL&interval=1d&range=3mo`, { cache:"no-store" }).then(r => r.json()),
-          fetch(`https://ora-proxy.rybble.workers.dev?symbol=TSLA&interval=1d&range=3mo`, { cache:"no-store" }).then(r => r.json()),
-          fetch(`https://ora-proxy.rybble.workers.dev?symbol=0285.HK&interval=1d&range=3mo`, { cache:"no-store" }).then(r => r.json()),
-          fetch(`https://ora-proxy.rybble.workers.dev?symbol=CSPX.L&interval=1d&range=3mo`, { cache:"no-store" }).then(r => r.json()),
-        ]);
+        const r24 = await cgFetch("https://api.coingecko.com/api/v3/coins/ethereum/market_chart?vs_currency=eur&days=1&interval=hourly");
+        const d24 = await r24.json();
+        if (d24.prices) {
+          const pts = d24.prices.map(([ts, price]) => ({
+            date: new Date(ts).toISOString().slice(0, 16),
+            crypto: parseFloat((price * ethQty).toFixed(2)),
+          }));
+          setMarketHistory(prev => ({ ...prev, crypto24h: pts }));
+        }
+      } catch (e) { console.error("Crypto 24h error:", e); }
 
-        // Positions actuelles
-        const positions = [
-          { data: rAAPL, qty: 0.0466,    currency: "USD" },
-          { data: rTSLA, qty: 0.012771,  currency: "USD" },
-          { data: rBYD,  qty: 0.463606,  currency: "HKD" },
-          { data: rCSPX, qty: 0.211707,  currency: "USD" },
-        ];
-        const usdToEur = 0.92, hkdToEur = 0.118;
+      // ── Crypto intraday 7j (horaire) ───────────────────────────────────────
+      try {
+        const r7 = await cgFetch("https://api.coingecko.com/api/v3/coins/ethereum/market_chart?vs_currency=eur&days=7&interval=hourly");
+        const d7 = await r7.json();
+        if (d7.prices) {
+          const pts = d7.prices.map(([ts, price]) => ({
+            date: new Date(ts).toISOString().slice(0, 16),
+            crypto: parseFloat((price * ethQty).toFixed(2)),
+          }));
+          setMarketHistory(prev => ({ ...prev, crypto7d: pts }));
+        }
+      } catch (e) { console.error("Crypto 7d error:", e); }
 
-        // Construire un index date → valeur pour chaque actif
-        const byDate = {};
-        for (const pos of positions) {
+      // ── Bourse daily (3 mois) ──────────────────────────────────────────────
+      try {
+        const resps = await Promise.all(positions_daily.map(p =>
+          fetch(`${WORKER}?symbol=${p.symbol}&interval=1d&range=3mo`, { cache:"no-store" }).then(r => r.json())
+        ));
+        const posWithData = positions_daily.map((p, i) => ({ ...p, data: resps[i] }));
+        const pts = posWithData.reduce((byDate, pos) => {
           const result = pos.data?.chart?.result?.[0];
-          if (!result?.timestamp) continue;
+          if (!result?.timestamp) return byDate;
           const closes = result.indicators?.quote?.[0]?.close || [];
           const fx = pos.currency === "USD" ? usdToEur : pos.currency === "HKD" ? hkdToEur : 1;
           result.timestamp.forEach((ts, i) => {
             const date = new Date(ts * 1000).toISOString().slice(0, 10);
-            if (!byDate[date]) byDate[date] = 0;
-            byDate[date] += (closes[i] || 0) * pos.qty * fx;
+            byDate[date] = (byDate[date] || 0) + (closes[i] || 0) * pos.qty * fx;
           });
-        }
-
-        const stockPoints = Object.entries(byDate)
-          .filter(([, v]) => v > 0)
-          .sort(([a], [b]) => a.localeCompare(b))
-          .map(([date, v]) => ({ date, stocks: parseFloat(v.toFixed(2)) }));
-
+          return byDate;
+        }, {});
+        const stockPoints = Object.entries(pts).filter(([,v])=>v>0).sort(([a],[b])=>a.localeCompare(b)).map(([date,v])=>({ date, stocks: parseFloat(v.toFixed(2)) }));
         if (stockPoints.length > 0) setMarketHistory(prev => ({ ...prev, stocks: stockPoints }));
-        console.log(`Stock history: ${stockPoints.length} points via Worker (AAPL+TSLA+BYD+CSPX)`);
-      } catch (e) { console.error("Stock history error:", e); }
+        console.log(`Stock daily: ${stockPoints.length} points`);
+      } catch (e) { console.error("Stock daily error:", e); }
 
-      // ── Total global : crypto + stocks sur 90 jours ────────────────────────
-      // Calculé après que les deux séries sont disponibles (via useEffect séparé)
+      // ── Bourse intraday 24h (5min) ─────────────────────────────────────────
+      try {
+        const resps24 = await Promise.all(positions_daily.map(p =>
+          fetch(`${WORKER}?symbol=${p.symbol}&interval=5m&range=1d`, { cache:"no-store" }).then(r => r.json())
+        ));
+        const pts = positions_daily.reduce((byDate, pos, i) => {
+          const result = resps24[i]?.chart?.result?.[0];
+          if (!result?.timestamp) return byDate;
+          const closes = result.indicators?.quote?.[0]?.close || [];
+          const fx = pos.currency === "USD" ? usdToEur : pos.currency === "HKD" ? hkdToEur : 1;
+          result.timestamp.forEach((ts, j) => {
+            const date = new Date(ts * 1000).toISOString().slice(0, 16);
+            byDate[date] = (byDate[date] || 0) + (closes[j] || 0) * pos.qty * fx;
+          });
+          return byDate;
+        }, {});
+        const pts24 = Object.entries(pts).filter(([,v])=>v>0).sort(([a],[b])=>a.localeCompare(b)).map(([date,v])=>({ date, stocks: parseFloat(v.toFixed(2)) }));
+        if (pts24.length > 0) setMarketHistory(prev => ({ ...prev, stocks24h: pts24 }));
+        console.log(`Stock 24h: ${pts24.length} points`);
+      } catch (e) { console.error("Stock 24h error:", e); }
+
+      // ── Bourse intraday 7j (horaire) ───────────────────────────────────────
+      try {
+        const resps7 = await Promise.all(positions_daily.map(p =>
+          fetch(`${WORKER}?symbol=${p.symbol}&interval=1h&range=5d`, { cache:"no-store" }).then(r => r.json())
+        ));
+        const pts = positions_daily.reduce((byDate, pos, i) => {
+          const result = resps7[i]?.chart?.result?.[0];
+          if (!result?.timestamp) return byDate;
+          const closes = result.indicators?.quote?.[0]?.close || [];
+          const fx = pos.currency === "USD" ? usdToEur : pos.currency === "HKD" ? hkdToEur : 1;
+          result.timestamp.forEach((ts, j) => {
+            const date = new Date(ts * 1000).toISOString().slice(0, 16);
+            byDate[date] = (byDate[date] || 0) + (closes[j] || 0) * pos.qty * fx;
+          });
+          return byDate;
+        }, {});
+        const pts7 = Object.entries(pts).filter(([,v])=>v>0).sort(([a],[b])=>a.localeCompare(b)).map(([date,v])=>({ date, stocks: parseFloat(v.toFixed(2)) }));
+        if (pts7.length > 0) setMarketHistory(prev => ({ ...prev, stocks7d: pts7 }));
+        console.log(`Stock 7d: ${pts7.length} points`);
+      } catch (e) { console.error("Stock 7d error:", e); }
     };
     fetchMarketHistory();
   }, []);
@@ -3316,9 +3547,6 @@ function AppContent({ user }) {
   // Calcul du total global historique (crypto + stocks + actifs non cotés)
   useEffect(() => {
     if (!marketHistory.crypto?.length || !marketHistory.stocks?.length) return;
-    const stocksByDate = {};
-    marketHistory.stocks.forEach(p => { stocksByDate[p.date] = p.stocks; });
-    // Calculer staticTotal depuis les vrais totaux du state
     const savTot = [...savings.peg, ...savings.percol].reduce((s, f) => {
       const vl = (f.type === "ora_linked" && oraPrice > 0) ? oraPrice : f.manualVl;
       return s + vl * f.qty;
@@ -3327,14 +3555,33 @@ function AppContent({ user }) {
     const scTot  = scpi.reduce((s, p) => s + p.pricePerPart * p.parts, 0);
     const reTot  = realestate.reduce((s, p) => s + p.estimatedPrice, 0);
     const staticTotal = savTot + bkTot + scTot + reTot;
-    const totalPoints = marketHistory.crypto
-      .filter(p => stocksByDate[p.date] !== undefined)
-      .map(p => ({
-        date: p.date,
-        total: parseFloat((p.crypto + (stocksByDate[p.date] || 0) + staticTotal).toFixed(2)),
-      }));
-    if (totalPoints.length > 0) setMarketHistory(prev => ({ ...prev, total: totalPoints }));
-  }, [marketHistory.crypto, marketHistory.stocks, savings, bank, scpi, realestate, oraPrice]);
+
+    // Helper: fusionner deux séries par date
+    const merge = (cryptoPts, stocksPts, cryptoKey, stocksKey) => {
+      const sMap = {};
+      stocksPts.forEach(p => { sMap[p.date] = p[stocksKey]; });
+      return cryptoPts
+        .filter(p => sMap[p.date] !== undefined)
+        .map(p => ({ date: p.date, total: parseFloat((p[cryptoKey] + (sMap[p.date] || 0) + staticTotal).toFixed(2)) }));
+    };
+
+    // Daily
+    const dailyPts = merge(marketHistory.crypto, marketHistory.stocks, "crypto", "stocks");
+    if (dailyPts.length > 0) setMarketHistory(prev => ({ ...prev, total: dailyPts }));
+
+    // 24h intraday
+    if (marketHistory.crypto24h?.length && marketHistory.stocks24h?.length) {
+      const pts24 = merge(marketHistory.crypto24h, marketHistory.stocks24h, "crypto", "stocks");
+      if (pts24.length > 0) setMarketHistory(prev => ({ ...prev, total24h: pts24 }));
+    }
+
+    // 7d intraday
+    if (marketHistory.crypto7d?.length && marketHistory.stocks7d?.length) {
+      const pts7 = merge(marketHistory.crypto7d, marketHistory.stocks7d, "crypto", "stocks");
+      if (pts7.length > 0) setMarketHistory(prev => ({ ...prev, total7d: pts7 }));
+    }
+  }, [marketHistory.crypto, marketHistory.stocks, marketHistory.crypto24h, marketHistory.crypto7d,
+      marketHistory.stocks24h, marketHistory.stocks7d, savings, bank, scpi, realestate, oraPrice]);
 
   // ── Worker universel Cloudflare pour toutes les cotations ───────────────────
   // Un seul Worker gère tous les symboles via Yahoo Finance
@@ -3570,9 +3817,9 @@ function AppContent({ user }) {
         )}
 
         {/* Views */}
-        {view === "overview"   && <Overview cryptoData={cryptoData} cryptoPrices={cryptoPrices} stocks={stocks} bank={bank} savings={savings} oraPrice={oraPrice} realestateTotal={realestateTotal} scpiTotal={scpiTotal} onNavigate={setView} history={history} marketHistoryTotal={marketHistory.total} />}
-        {view === "crypto"     && <CryptoView cryptoData={cryptoData} setCryptoData={setCryptoData} cryptoPrices={cryptoPrices} loading={loading} history={history} cryptoHistory={marketHistory.crypto} />}
-        {view === "stocks"     && <StocksView stocks={stocks} setStocks={setStocks} history={history} marketHistory={marketHistory.stocks} />}
+        {view === "overview"   && <Overview cryptoData={cryptoData} cryptoPrices={cryptoPrices} stocks={stocks} bank={bank} savings={savings} oraPrice={oraPrice} realestateTotal={realestateTotal} scpiTotal={scpiTotal} onNavigate={setView} history={history} marketHistoryTotal={marketHistory.total} marketHistoryIntraday={marketHistory} />}
+        {view === "crypto"     && <CryptoView cryptoData={cryptoData} setCryptoData={setCryptoData} cryptoPrices={cryptoPrices} loading={loading} history={history} cryptoHistory={marketHistory.crypto} cryptoHistory24h={marketHistory.crypto24h} cryptoHistory7d={marketHistory.crypto7d} />}
+        {view === "stocks"     && <StocksView stocks={stocks} setStocks={setStocks} history={history} marketHistory={marketHistory.stocks} stocksHistory24h={marketHistory.stocks24h} stocksHistory7d={marketHistory.stocks7d} />}
         {view === "savings"    && <SavingsView savings={savings} setSavings={setSavings} oraPrice={oraPrice} />}
         {view === "scpi"       && <ScpiView scpi={scpi} setScpi={setScpi} history={history} />}
         {view === "realestate" && <RealEstateView realestate={realestate} setRealestate={setRealestate} history={history} />}
