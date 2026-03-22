@@ -1997,6 +1997,150 @@ function parseBudgetCSV(text) {
   return parsed;
 }
 
+
+// ══════════════════════════════════════════════════════════════════════════════
+// SANKEY BUDGET — Revenus → Catégories de dépenses
+// Rendu en SVG pur (pas de lib externe)
+// ══════════════════════════════════════════════════════════════════════════════
+function SankeyBudget({ transactions, curYear, selectedMonth }) {
+  const W = 700, H = 420, PAD = 20;
+  const NODE_W = 22, GAP = 8;
+
+  // Calculer les données
+  const txs = transactions.filter(t =>
+    t.annee === curYear && (!selectedMonth || t.mois === selectedMonth)
+  );
+
+  const totalEntrees = txs.filter(t => t.es === "Entrée").reduce((s,t) => s+t.montant, 0);
+  const catSorties = {};
+  txs.filter(t => t.es === "Sortie").forEach(t => {
+    catSorties[t.type] = (catSorties[t.type]||0) + t.montant;
+  });
+  const totalSorties = Object.values(catSorties).reduce((s,v)=>s+v,0);
+  const solde = totalEntrees - totalSorties;
+
+  const cats = Object.entries(catSorties)
+    .sort((a,b) => b[1]-a[1])
+    .slice(0, 12); // max 12 catégories
+
+  if (!totalEntrees && !cats.length) return (
+    <div style={{ textAlign:"center", color:"#475569", padding:"40px 0", fontSize:13 }}>
+      Pas de données pour cette période
+    </div>
+  );
+
+  const fmt = (v) => v >= 1000 ? `${(v/1000).toFixed(1)}k€` : `${Math.round(v)}€`;
+
+  // Palette couleurs catégories
+  const PALETTE = ["#818CF8","#34D399","#F472B6","#FBBF24","#60A5FA",
+    "#A78BFA","#FB923C","#2DD4BF","#E879F9","#4ADE80","#F87171","#38BDF8"];
+
+  // Colonnes X
+  const xLeft  = PAD + NODE_W;          // colonne Revenus
+  const xRight = W - PAD - NODE_W*2;    // colonne Catégories
+
+  // Hauteur utile
+  const availH = H - PAD*2;
+
+  // Nœud gauche : Revenus total
+  const leftH = availH;
+  const leftY = PAD;
+
+  // Nœuds droits : catégories + solde
+  const allRight = [...cats];
+  if (solde > 0) allRight.push(["Épargne / Solde", solde]);
+  const totalRight = allRight.reduce((s,[,v])=>s+v, 0) || 1;
+
+  // Calculer positions nœuds droits
+  const totalGaps = (allRight.length - 1) * GAP;
+  const availForNodes = availH - totalGaps;
+
+  let rightNodes = [];
+  let yOff = PAD;
+  allRight.forEach(([name, val], i) => {
+    const h = Math.max(4, (val / totalRight) * availForNodes);
+    rightNodes.push({ name, val, y: yOff, h, color: i < cats.length ? PALETTE[i % PALETTE.length] : "#34D399" });
+    yOff += h + GAP;
+  });
+
+  // Flux depuis revenus vers chaque catégorie
+  const scaleY = availH / (totalRight || 1);
+  let leftOffset = 0;
+
+  const paths = rightNodes.map((node) => {
+    const flowH_left  = node.val * scaleY;
+    const flowH_right = node.h;
+
+    const y0L = leftY + leftOffset;
+    const y1L = y0L + flowH_left;
+    const y0R = node.y;
+    const y1R = node.y + flowH_right;
+
+    const cx = (xLeft + NODE_W + xRight) / 2;
+
+    const path = `M ${xLeft + NODE_W} ${y0L}
+      C ${cx} ${y0L}, ${cx} ${y0R}, ${xRight} ${y0R}
+      L ${xRight} ${y1R}
+      C ${cx} ${y1R}, ${cx} ${y1L}, ${xLeft + NODE_W} ${y1L}
+      Z`;
+
+    leftOffset += flowH_left;
+    return { ...node, path };
+  });
+
+  const periodLabel = selectedMonth
+    ? `${["Jan","Fév","Mar","Avr","Mai","Jun","Jul","Aoû","Sep","Oct","Nov","Déc"][selectedMonth-1]} ${curYear}`
+    : `Année ${curYear}`;
+
+  return (
+    <div style={{ width:"100%", overflowX:"auto" }}>
+      <div style={{ fontSize:12, color:"#64748B", marginBottom:8 }}>
+        Flux budgétaire — {periodLabel} · Revenus {fmt(totalEntrees)} → Dépenses {fmt(totalSorties)}{solde>0?` · Solde ${fmt(solde)}`:""}
+      </div>
+      <svg viewBox={`0 0 ${W} ${H}`} style={{ width:"100%", maxWidth:W, display:"block" }}>
+        {/* Flux (paths) */}
+        {paths.map((p, i) => (
+          <path key={i} d={p.path}
+            fill={p.color} fillOpacity={0.25}
+            stroke={p.color} strokeOpacity={0.5} strokeWidth={0.5}>
+            <title>{p.name} : {fmt(p.val)}</title>
+          </path>
+        ))}
+
+        {/* Nœud gauche — Revenus */}
+        <rect x={PAD} y={leftY} width={NODE_W} height={leftH}
+          fill="#34D399" rx={4} />
+        <text x={PAD + NODE_W + 8} y={leftY + 16}
+          fill="#34D399" fontSize={12} fontWeight={700}>Revenus</text>
+        <text x={PAD + NODE_W + 8} y={leftY + 32}
+          fill="#94A3B8" fontSize={11}>{fmt(totalEntrees)}</text>
+
+        {/* Nœuds droits — catégories */}
+        {rightNodes.map((node, i) => (
+          <g key={i}>
+            <rect x={xRight} y={node.y} width={NODE_W} height={node.h}
+              fill={node.color} rx={2} />
+            {node.h >= 14 && (
+              <>
+                <text x={xRight + NODE_W + 8} y={node.y + Math.min(node.h/2+4, 14)}
+                  fill={node.color} fontSize={11} fontWeight={600}>
+                  {node.name.length > 18 ? node.name.slice(0,17)+"…" : node.name}
+                </text>
+                {node.h >= 26 && (
+                  <text x={xRight + NODE_W + 8} y={node.y + Math.min(node.h/2+18, 28)}
+                    fill="#64748B" fontSize={10}>
+                    {fmt(node.val)} · {((node.val/totalRight)*100).toFixed(0)}%
+                  </text>
+                )}
+              </>
+            )}
+          </g>
+        ))}
+      </svg>
+    </div>
+  );
+}
+
 function BudgetView({ uid, quickAddTx, setQuickAddTx, onCatsChange }) {
   // ── State ────────────────────────────────────────────────────────────────
   const [transactions, setTransactions] = useState([]);
@@ -2496,6 +2640,17 @@ function BudgetView({ uid, quickAddTx, setQuickAddTx, onCatsChange }) {
               </Card>
             );
           })}
+          {/* ── Sankey : Revenus → Catégories ── */}
+          <Card style={{ marginTop:14, padding:"14px 18px" }}>
+            <div style={{ fontSize:13, fontWeight:700, color:"#F1F5F9", marginBottom:12 }}>
+              🌊 Flux budgétaire — Revenus → Dépenses par catégorie
+            </div>
+            <SankeyBudget
+              transactions={transactions}
+              curYear={curYear}
+              selectedMonth={selectedMonth}
+            />
+          </Card>
         </div>
       )}
 
