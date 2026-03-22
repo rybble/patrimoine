@@ -1999,144 +1999,230 @@ function parseBudgetCSV(text) {
 
 
 // ══════════════════════════════════════════════════════════════════════════════
-// SANKEY BUDGET — Revenus → Catégories de dépenses
-// Rendu en SVG pur (pas de lib externe)
+// SANKEY BUDGET V2 — Multi-sources → Nœud Budget → Catégories de dépenses
+// Format : Entrées (gauche) → Budget (centre) → Sorties (droite)
 // ══════════════════════════════════════════════════════════════════════════════
-function SankeyBudget({ transactions, curYear, selectedMonth }) {
-  const W = 700, H = 420, PAD = 20;
-  const NODE_W = 22, GAP = 8;
+function SankeyBudget({ transactions, curYear, selectedMonth, fmt, getColor }) {
+  const W = 800, H_BASE = 500;
+  const NODE_W = 28, GAP = 10, PAD_X = 140, PAD_Y = 30;
 
-  // Calculer les données
+  const PALETTE_OUT = [
+    "#F87171","#FB923C","#FBBF24","#A3E635","#34D399",
+    "#22D3EE","#60A5FA","#818CF8","#A78BFA","#E879F9",
+    "#F472B6","#94A3B8","#CBD5E1","#FCA5A5","#FCD34D",
+  ];
+
   const txs = transactions.filter(t =>
     t.annee === curYear && (!selectedMonth || t.mois === selectedMonth)
   );
 
-  const totalEntrees = txs.filter(t => t.es === "Entrée").reduce((s,t) => s+t.montant, 0);
+  // ── Sources (Entrées) ──────────────────────────────────────────────────────
+  const catEntrees = {};
+  txs.filter(t => t.es === "Entrée").forEach(t => {
+    catEntrees[t.type] = (catEntrees[t.type]||0) + t.montant;
+  });
+  const sourceNodes = Object.entries(catEntrees)
+    .sort((a,b) => b[1]-a[1])
+    .map(([name, val]) => ({ name, val }));
+  const totalEntrees = sourceNodes.reduce((s,n)=>s+n.val, 0);
+
+  // ── Destinations (Sorties) ─────────────────────────────────────────────────
   const catSorties = {};
   txs.filter(t => t.es === "Sortie").forEach(t => {
     catSorties[t.type] = (catSorties[t.type]||0) + t.montant;
   });
-  const totalSorties = Object.values(catSorties).reduce((s,v)=>s+v,0);
+  const destNodes = Object.entries(catSorties)
+    .sort((a,b) => b[1]-a[1])
+    .map(([name, val], i) => ({ name, val, color: PALETTE_OUT[i % PALETTE_OUT.length] }));
+  const totalSorties = destNodes.reduce((s,n)=>s+n.val, 0);
   const solde = totalEntrees - totalSorties;
 
-  const cats = Object.entries(catSorties)
-    .sort((a,b) => b[1]-a[1])
-    .slice(0, 12); // max 12 catégories
+  // Ajouter nœud Épargne si solde positif
+  if (solde > 0) destNodes.push({ name: "Épargne", val: solde, color: "#34D399" });
 
-  if (!totalEntrees && !cats.length) return (
-    <div style={{ textAlign:"center", color:"#475569", padding:"40px 0", fontSize:13 }}>
+  const totalRight = destNodes.reduce((s,n)=>s+n.val, 0) || 1;
+
+  if (!totalEntrees && !destNodes.length) return (
+    <div style={{ textAlign:"center", color:"#475569", padding:"60px 0", fontSize:13 }}>
       Pas de données pour cette période
     </div>
   );
 
-  const fmt = (v) => v >= 1000 ? `${(v/1000).toFixed(1)}k€` : `${Math.round(v)}€`;
+  // ── Hauteur dynamique ──────────────────────────────────────────────────────
+  const minH = Math.max(H_BASE, (Math.max(sourceNodes.length, destNodes.length)) * 42 + PAD_Y*2);
+  const H = minH;
+  const availH = H - PAD_Y * 2;
 
-  // Palette couleurs catégories
-  const PALETTE = ["#818CF8","#34D399","#F472B6","#FBBF24","#60A5FA",
-    "#A78BFA","#FB923C","#2DD4BF","#E879F9","#4ADE80","#F87171","#38BDF8"];
+  // ── Nœud central "Budget" ─────────────────────────────────────────────────
+  const CX = W / 2 - NODE_W / 2;
+  const centerH = availH;
+  const centerY = PAD_Y;
 
-  // Colonnes X
-  const xLeft  = PAD + NODE_W;          // colonne Revenus
-  const xRight = W - PAD - NODE_W*2;    // colonne Catégories
-
-  // Hauteur utile
-  const availH = H - PAD*2;
-
-  // Nœud gauche : Revenus total
-  const leftH = availH;
-  const leftY = PAD;
-
-  // Nœuds droits : catégories + solde
-  const allRight = [...cats];
-  if (solde > 0) allRight.push(["Épargne / Solde", solde]);
-  const totalRight = allRight.reduce((s,[,v])=>s+v, 0) || 1;
-
-  // Calculer positions nœuds droits
-  const totalGaps = (allRight.length - 1) * GAP;
-  const availForNodes = availH - totalGaps;
-
-  let rightNodes = [];
-  let yOff = PAD;
-  allRight.forEach(([name, val], i) => {
-    const h = Math.max(4, (val / totalRight) * availForNodes);
-    rightNodes.push({ name, val, y: yOff, h, color: i < cats.length ? PALETTE[i % PALETTE.length] : "#34D399" });
-    yOff += h + GAP;
+  // ── Positions nœuds gauche (sources) ─────────────────────────────────────
+  const totalGapsL = (sourceNodes.length - 1) * GAP;
+  const availForL  = availH - totalGapsL;
+  let yOffL = PAD_Y;
+  const leftNodes = sourceNodes.map(n => {
+    const h = Math.max(8, (n.val / totalEntrees) * availForL);
+    const node = { ...n, y: yOffL, h, color: "#34D399" };
+    yOffL += h + GAP;
+    return node;
   });
 
-  // Flux depuis revenus vers chaque catégorie
-  const scaleY = availH / (totalRight || 1);
-  let leftOffset = 0;
+  // ── Positions nœuds droite (destinations) ────────────────────────────────
+  const totalGapsR = (destNodes.length - 1) * GAP;
+  const availForR  = availH - totalGapsR;
+  let yOffR = PAD_Y;
+  const rightNodes = destNodes.map(n => {
+    const h = Math.max(8, (n.val / totalRight) * availForR);
+    const node = { ...n, y: yOffR, h };
+    yOffR += h + GAP;
+    return node;
+  });
 
-  const paths = rightNodes.map((node) => {
-    const flowH_left  = node.val * scaleY;
-    const flowH_right = node.h;
+  // ── Flux gauche → centre ──────────────────────────────────────────────────
+  const xLeft = PAD_X - NODE_W;
+  let leftCenterOff = 0;
+  const pathsLeft = leftNodes.map(node => {
+    const flowH = (node.val / totalEntrees) * centerH;
+    const y0L = node.y, y1L = node.y + node.h;
+    const y0C = centerY + leftCenterOff, y1C = y0C + flowH;
+    const mx = (xLeft + NODE_W + CX) / 2;
+    const path = `M${xLeft+NODE_W} ${y0L} C${mx} ${y0L},${mx} ${y0C},${CX} ${y0C}
+      L${CX} ${y1C} C${mx} ${y1C},${mx} ${y1L},${xLeft+NODE_W} ${y1L} Z`;
+    leftCenterOff += flowH;
+    return { ...node, path };
+  });
 
-    const y0L = leftY + leftOffset;
-    const y1L = y0L + flowH_left;
-    const y0R = node.y;
-    const y1R = node.y + flowH_right;
-
-    const cx = (xLeft + NODE_W + xRight) / 2;
-
-    const path = `M ${xLeft + NODE_W} ${y0L}
-      C ${cx} ${y0L}, ${cx} ${y0R}, ${xRight} ${y0R}
-      L ${xRight} ${y1R}
-      C ${cx} ${y1R}, ${cx} ${y1L}, ${xLeft + NODE_W} ${y1L}
-      Z`;
-
-    leftOffset += flowH_left;
+  // ── Flux centre → droite ──────────────────────────────────────────────────
+  const xRight = W - PAD_X;
+  let rightCenterOff = 0;
+  const pathsRight = rightNodes.map(node => {
+    const flowH = (node.val / totalRight) * centerH;
+    const y0R = node.y, y1R = node.y + node.h;
+    const y0C = centerY + rightCenterOff, y1C = y0C + flowH;
+    const mx = (CX + NODE_W + xRight) / 2;
+    const path = `M${CX+NODE_W} ${y0C} C${mx} ${y0C},${mx} ${y0R},${xRight} ${y0R}
+      L${xRight} ${y1R} C${mx} ${y1R},${mx} ${y1C},${CX+NODE_W} ${y1C} Z`;
+    rightCenterOff += flowH;
     return { ...node, path };
   });
 
   const periodLabel = selectedMonth
     ? `${["Jan","Fév","Mar","Avr","Mai","Jun","Jul","Aoû","Sep","Oct","Nov","Déc"][selectedMonth-1]} ${curYear}`
-    : `Année ${curYear}`;
+    : String(curYear);
 
   return (
-    <div style={{ width:"100%", overflowX:"auto" }}>
-      <div style={{ fontSize:12, color:"#64748B", marginBottom:8 }}>
-        Flux budgétaire — {periodLabel} · Revenus {fmt(totalEntrees)} → Dépenses {fmt(totalSorties)}{solde>0?` · Solde ${fmt(solde)}`:""}
+    <div>
+      {/* Résumé chiffré */}
+      <div style={{ display:"flex", gap:24, marginBottom:20, flexWrap:"wrap" }}>
+        <div style={{ background:"rgba(52,211,153,0.1)", border:"1px solid rgba(52,211,153,0.2)", borderRadius:10, padding:"10px 18px" }}>
+          <div style={{ fontSize:11, color:"#64748B", marginBottom:3 }}>💚 Revenus</div>
+          <div style={{ fontSize:20, fontWeight:800, color:"#34D399" }}>{fmt(totalEntrees)}</div>
+        </div>
+        <div style={{ background:"rgba(248,113,113,0.1)", border:"1px solid rgba(248,113,113,0.2)", borderRadius:10, padding:"10px 18px" }}>
+          <div style={{ fontSize:11, color:"#64748B", marginBottom:3 }}>💸 Dépenses</div>
+          <div style={{ fontSize:20, fontWeight:800, color:"#F87171" }}>{fmt(totalSorties)}</div>
+        </div>
+        {solde > 0 && (
+          <div style={{ background:"rgba(129,140,248,0.1)", border:"1px solid rgba(129,140,248,0.2)", borderRadius:10, padding:"10px 18px" }}>
+            <div style={{ fontSize:11, color:"#64748B", marginBottom:3 }}>🏦 Solde</div>
+            <div style={{ fontSize:20, fontWeight:800, color:"#818CF8" }}>{fmt(solde)}</div>
+          </div>
+        )}
+        <div style={{ background:"rgba(100,116,139,0.1)", border:"1px solid rgba(100,116,139,0.2)", borderRadius:10, padding:"10px 18px" }}>
+          <div style={{ fontSize:11, color:"#64748B", marginBottom:3 }}>📅 Période</div>
+          <div style={{ fontSize:15, fontWeight:700, color:"#F1F5F9" }}>{periodLabel}</div>
+        </div>
       </div>
-      <svg viewBox={`0 0 ${W} ${H}`} style={{ width:"100%", maxWidth:W, display:"block" }}>
-        {/* Flux (paths) */}
-        {paths.map((p, i) => (
-          <path key={i} d={p.path}
-            fill={p.color} fillOpacity={0.25}
-            stroke={p.color} strokeOpacity={0.5} strokeWidth={0.5}>
-            <title>{p.name} : {fmt(p.val)}</title>
-          </path>
-        ))}
 
-        {/* Nœud gauche — Revenus */}
-        <rect x={PAD} y={leftY} width={NODE_W} height={leftH}
-          fill="#34D399" rx={4} />
-        <text x={PAD + NODE_W + 8} y={leftY + 16}
-          fill="#34D399" fontSize={12} fontWeight={700}>Revenus</text>
-        <text x={PAD + NODE_W + 8} y={leftY + 32}
-          fill="#94A3B8" fontSize={11}>{fmt(totalEntrees)}</text>
+      {/* Sankey SVG */}
+      <div style={{ width:"100%", overflowX:"auto", background:"rgba(15,23,42,0.4)", borderRadius:12, padding:"16px 8px" }}>
+        <svg viewBox={`0 0 ${W} ${H}`} style={{ width:"100%", minWidth:500, display:"block" }}>
 
-        {/* Nœuds droits — catégories */}
-        {rightNodes.map((node, i) => (
-          <g key={i}>
-            <rect x={xRight} y={node.y} width={NODE_W} height={node.h}
-              fill={node.color} rx={2} />
-            {node.h >= 14 && (
-              <>
-                <text x={xRight + NODE_W + 8} y={node.y + Math.min(node.h/2+4, 14)}
-                  fill={node.color} fontSize={11} fontWeight={600}>
-                  {node.name.length > 18 ? node.name.slice(0,17)+"…" : node.name}
+          {/* ── Flux gauche → centre ── */}
+          {pathsLeft.map((p,i) => (
+            <path key={`l${i}`} d={p.path}
+              fill={p.color} fillOpacity={0.18}
+              stroke={p.color} strokeOpacity={0.4} strokeWidth={1}>
+              <title>{p.name} → Budget : {fmt(p.val)}</title>
+            </path>
+          ))}
+
+          {/* ── Flux centre → droite ── */}
+          {pathsRight.map((p,i) => (
+            <path key={`r${i}`} d={p.path}
+              fill={p.color} fillOpacity={0.22}
+              stroke={p.color} strokeOpacity={0.5} strokeWidth={1}>
+              <title>{p.name} : {fmt(p.val)} ({((p.val/totalRight)*100).toFixed(1)}%)</title>
+            </path>
+          ))}
+
+          {/* ── Nœud central Budget ── */}
+          <rect x={CX} y={centerY} width={NODE_W} height={centerH}
+            fill="#6366F1" rx={5} opacity={0.9} />
+          <text x={CX+NODE_W/2} y={centerY + centerH/2 - 8}
+            textAnchor="middle" fill="#fff" fontSize={11} fontWeight={700}>Budget</text>
+          <text x={CX+NODE_W/2} y={centerY + centerH/2 + 8}
+            textAnchor="middle" fill="#A5B4FC" fontSize={10}>{fmt(totalEntrees)}</text>
+
+          {/* ── Nœuds gauche (sources) ── */}
+          {leftNodes.map((n,i) => (
+            <g key={`ln${i}`}>
+              <rect x={xLeft} y={n.y} width={NODE_W} height={n.h}
+                fill={n.color} rx={3} opacity={0.9} />
+              {/* Label à gauche */}
+              <text x={xLeft - 10} y={n.y + n.h/2 + 4}
+                textAnchor="end" fill="#34D399" fontSize={11} fontWeight={600}>
+                {n.name.length > 16 ? n.name.slice(0,15)+"…" : n.name}
+              </text>
+              {n.h >= 20 && (
+                <text x={xLeft - 10} y={n.y + n.h/2 + 17}
+                  textAnchor="end" fill="#64748B" fontSize={10}>
+                  {fmt(n.val)}
                 </text>
-                {node.h >= 26 && (
-                  <text x={xRight + NODE_W + 8} y={node.y + Math.min(node.h/2+18, 28)}
-                    fill="#64748B" fontSize={10}>
-                    {fmt(node.val)} · {((node.val/totalRight)*100).toFixed(0)}%
-                  </text>
-                )}
-              </>
-            )}
-          </g>
-        ))}
-      </svg>
+              )}
+            </g>
+          ))}
+
+          {/* ── Nœuds droite (destinations) ── */}
+          {rightNodes.map((n,i) => (
+            <g key={`rn${i}`}>
+              <rect x={xRight} y={n.y} width={NODE_W} height={n.h}
+                fill={n.color} rx={3} opacity={0.9} />
+              {/* Label à droite */}
+              <text x={xRight + NODE_W + 10} y={n.y + Math.min(n.h/2 + 4, n.h > 16 ? n.h/2+4 : 12)}
+                fill={n.color} fontSize={11} fontWeight={600}>
+                {n.name.length > 18 ? n.name.slice(0,17)+"…" : n.name}
+              </text>
+              {n.h >= 18 && (
+                <text x={xRight + NODE_W + 10} y={n.y + Math.min(n.h/2 + 17, n.h > 28 ? n.h/2+17 : 24)}
+                  fill="#94A3B8" fontSize={10}>
+                  {fmt(n.val)} · {((n.val/totalRight)*100).toFixed(1)}%
+                </text>
+              )}
+            </g>
+          ))}
+        </svg>
+      </div>
+
+      {/* Légende détaillée sorties */}
+      <div style={{ marginTop:20 }}>
+        <div style={{ fontSize:12, color:"#64748B", marginBottom:10, fontWeight:600, letterSpacing:"0.05em" }}>
+          DÉTAIL DES DÉPENSES
+        </div>
+        <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill, minmax(220px, 1fr))", gap:8 }}>
+          {rightNodes.filter(n => n.name !== "Épargne").map((n,i) => (
+            <div key={i} style={{ display:"flex", alignItems:"center", gap:10, background:"rgba(255,255,255,0.03)", borderRadius:8, padding:"8px 12px", border:`1px solid ${n.color}22` }}>
+              <div style={{ width:10, height:10, borderRadius:"50%", background:n.color, flexShrink:0 }} />
+              <div style={{ flex:1, minWidth:0 }}>
+                <div style={{ fontSize:12, color:"#F1F5F9", fontWeight:600, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{n.name}</div>
+                <div style={{ fontSize:11, color:"#64748B" }}>{fmt(n.val)} · {((n.val/totalRight)*100).toFixed(1)}%</div>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
     </div>
   );
 }
@@ -2438,7 +2524,7 @@ function BudgetView({ uid, quickAddTx, setQuickAddTx, onCatsChange }) {
 
       {/* ── Nav tabs + year selector ── */}
       <div style={{ display:"flex", gap:6, marginBottom:18, flexWrap:"wrap", alignItems:"center" }}>
-        {[["overview","📊 Synthèse"],["detail","📋 Détail"],["compare","📅 Comparaison"],["catstat","🔬 Stats catégorie"],["categories","🏷 Catégories"],["add","➕ Ajouter"],["transactions","📝 Transactions"],["sync","🔗 Sources"]].map(([k,l]) => (
+        {[["overview","📊 Synthèse"],["detail","📋 Détail"],["sankey","🌊 Flux"],["compare","📅 Comparaison"],["catstat","🔬 Stats catégorie"],["categories","🏷 Catégories"],["add","➕ Ajouter"],["transactions","📝 Transactions"],["sync","🔗 Sources"]].map(([k,l]) => (
           <Pill key={k} label={l} active={activeTab===k} onClick={() => setActiveTab(k)} />
         ))}
         <div style={{ marginLeft:"auto", display:"flex", gap:6 }}>
@@ -2640,23 +2726,37 @@ function BudgetView({ uid, quickAddTx, setQuickAddTx, onCatsChange }) {
               </Card>
             );
           })}
-          {/* ── Sankey : Revenus → Catégories ── */}
-          <Card style={{ marginTop:14, padding:"14px 18px" }}>
-            <div style={{ fontSize:13, fontWeight:700, color:"#F1F5F9", marginBottom:12 }}>
-              🌊 Flux budgétaire — Revenus → Dépenses par catégorie
-            </div>
-            <SankeyBudget
-              transactions={transactions}
-              curYear={curYear}
-              selectedMonth={selectedMonth}
-            />
-          </Card>
         </div>
       )}
 
       {/* ══════════════════════════════════════════════════════════════════════
           TAB : STATS PAR CATÉGORIE
       ══════════════════════════════════════════════════════════════════════ */}
+      {activeTab === "sankey" && (
+        <div>
+          {/* Filtre mois */}
+          <div style={{ display:"flex", gap:8, marginBottom:20, flexWrap:"wrap" }}>
+            <button onClick={()=>setSelectedMonth(null)}
+              style={{ background:!selectedMonth?"rgba(99,102,241,0.25)":"rgba(255,255,255,0.04)", border:!selectedMonth?"1px solid rgba(99,102,241,0.5)":"1px solid rgba(255,255,255,0.08)", borderRadius:8, color:!selectedMonth?"#A5B4FC":"#94A3B8", padding:"5px 14px", fontSize:12, cursor:"pointer", fontWeight:600 }}>
+              Année entière
+            </button>
+            {bilan.map(row => (
+              <button key={row.mo} onClick={()=>setSelectedMonth(selectedMonth===row.mo ? null : row.mo)}
+                style={{ background:selectedMonth===row.mo?"rgba(99,102,241,0.25)":"rgba(255,255,255,0.04)", border:selectedMonth===row.mo?"1px solid rgba(99,102,241,0.5)":"1px solid rgba(255,255,255,0.08)", borderRadius:8, color:selectedMonth===row.mo?"#A5B4FC":"#94A3B8", padding:"5px 14px", fontSize:12, cursor:"pointer", fontWeight:600 }}>
+                {row.label}
+              </button>
+            ))}
+          </div>
+          <SankeyBudget
+            transactions={transactions}
+            curYear={curYear}
+            selectedMonth={selectedMonth}
+            fmt={fmt}
+            getColor={getColor}
+          />
+        </div>
+      )}
+
       {activeTab === "compare" && (() => {
         // Regrouper entrées et sorties par (année, mois)
         const MOIS_LABELS = ["Jan","Fév","Mar","Avr","Mai","Jun","Jul","Aoû","Sep","Oct","Nov","Déc"];
