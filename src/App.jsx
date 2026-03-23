@@ -482,7 +482,307 @@ function Tag({ children, color }) {
 }
 
 // ─── OVERVIEW ─────────────────────────────────────────────────────────────────
-function Overview({ cryptoData, cryptoPrices, stocks, bank, savings, oraPrice, realestateTotal, scpiTotal, onNavigate, history, marketHistoryTotal, marketHistoryIntraday }) {
+
+// ══════════════════════════════════════════════════════════════════════════════
+// OBJECTIFS FINANCIERS
+// ══════════════════════════════════════════════════════════════════════════════
+function ObjectifsFinanciers({ uid }) {
+  const [objectifs, setObjectifs] = useState([]);
+  const [showForm, setShowForm] = useState(false);
+  const [editObj, setEditObj] = useState(null);
+  const [form, setForm] = useState({ nom:"", cible:0, actuel:0, categorie:"Épargne", dateLimit:"", couleur:"#818CF8" });
+
+  const CATEGORIES = ["Épargne","Investissement","Immobilier","Voyage","Retraite","Urgence","Autre"];
+  const COULEURS = ["#818CF8","#34D399","#F87171","#FBBF24","#60A5FA","#F472B6","#FB923C","#A78BFA"];
+
+  useEffect(() => {
+    if (!uid) return;
+    fbGet(uid, "objectifs").then(v => { if (Array.isArray(v)) setObjectifs(v); });
+  }, [uid]);
+
+  const save = async (list) => {
+    setObjectifs(list);
+    if (uid) await fbSet(uid, "objectifs", list);
+  };
+
+  const handleSubmit = () => {
+    if (!form.nom || !form.cible) return;
+    const obj = { ...form, id: editObj?.id || Date.now(), cible: parseFloat(form.cible), actuel: parseFloat(form.actuel)||0 };
+    const updated = editObj
+      ? objectifs.map(o => o.id === editObj.id ? obj : o)
+      : [...objectifs, obj];
+    save(updated);
+    setShowForm(false); setEditObj(null);
+    setForm({ nom:"", cible:0, actuel:0, categorie:"Épargne", dateLimit:"", couleur:"#818CF8" });
+  };
+
+  const handleEdit = (obj) => {
+    setEditObj(obj);
+    setForm({ nom:obj.nom, cible:obj.cible, actuel:obj.actuel, categorie:obj.categorie, dateLimit:obj.dateLimit||"", couleur:obj.couleur||"#818CF8" });
+    setShowForm(true);
+  };
+
+  const handleDelete = (id) => save(objectifs.filter(o => o.id !== id));
+
+  const updateActuel = async (id, val) => {
+    const updated = objectifs.map(o => o.id === id ? { ...o, actuel: parseFloat(val)||0 } : o);
+    save(updated);
+  };
+
+  if (objectifs.length === 0 && !showForm) return (
+    <Card style={{ marginBottom:16, padding:"18px 20px" }}>
+      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:4 }}>
+        <div style={{ fontSize:14, fontWeight:700, color:"#F1F5F9" }}>🎯 Objectifs financiers</div>
+        <button onClick={() => setShowForm(true)} style={{ background:"rgba(129,140,248,0.2)", border:"1px solid rgba(129,140,248,0.4)", borderRadius:8, color:"#818CF8", padding:"5px 12px", fontSize:12, cursor:"pointer", fontWeight:600 }}>+ Ajouter</button>
+      </div>
+      <div style={{ color:"#475569", fontSize:13 }}>Aucun objectif défini. Crée ton premier objectif !</div>
+    </Card>
+  );
+
+  return (
+    <Card style={{ marginBottom:16, padding:"18px 20px" }}>
+      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:16 }}>
+        <div style={{ fontSize:14, fontWeight:700, color:"#F1F5F9" }}>🎯 Objectifs financiers</div>
+        <button onClick={() => { setShowForm(!showForm); setEditObj(null); setForm({ nom:"", cible:0, actuel:0, categorie:"Épargne", dateLimit:"", couleur:"#818CF8" }); }}
+          style={{ background:"rgba(129,140,248,0.2)", border:"1px solid rgba(129,140,248,0.4)", borderRadius:8, color:"#818CF8", padding:"5px 12px", fontSize:12, cursor:"pointer", fontWeight:600 }}>
+          {showForm ? "Annuler" : "+ Ajouter"}
+        </button>
+      </div>
+
+      {/* Formulaire */}
+      {showForm && (
+        <div style={{ background:"rgba(255,255,255,0.03)", borderRadius:10, padding:"14px 16px", marginBottom:16, border:"1px solid rgba(255,255,255,0.08)" }}>
+          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, marginBottom:10 }}>
+            <div>
+              <div style={{ fontSize:11, color:"#64748B", marginBottom:4 }}>Nom de l'objectif</div>
+              <input value={form.nom} onChange={e=>setForm(f=>({...f,nom:e.target.value}))}
+                placeholder="ex: Apport immobilier"
+                style={{ width:"100%", background:"#1E293B", border:"1px solid #334155", borderRadius:6, color:"#F1F5F9", padding:"7px 10px", fontSize:13, boxSizing:"border-box" }} />
+            </div>
+            <div>
+              <div style={{ fontSize:11, color:"#64748B", marginBottom:4 }}>Catégorie</div>
+              <select value={form.categorie} onChange={e=>setForm(f=>({...f,categorie:e.target.value}))}
+                style={{ width:"100%", background:"#1E293B", border:"1px solid #334155", borderRadius:6, color:"#F1F5F9", padding:"7px 10px", fontSize:13 }}>
+                {CATEGORIES.map(c => <option key={c}>{c}</option>)}
+              </select>
+            </div>
+            <div>
+              <div style={{ fontSize:11, color:"#64748B", marginBottom:4 }}>Montant cible (€)</div>
+              <input type="number" value={form.cible} onChange={e=>setForm(f=>({...f,cible:e.target.value}))}
+                style={{ width:"100%", background:"#1E293B", border:"1px solid #334155", borderRadius:6, color:"#F1F5F9", padding:"7px 10px", fontSize:13, boxSizing:"border-box" }} />
+            </div>
+            <div>
+              <div style={{ fontSize:11, color:"#64748B", marginBottom:4 }}>Montant actuel (€)</div>
+              <input type="number" value={form.actuel} onChange={e=>setForm(f=>({...f,actuel:e.target.value}))}
+                style={{ width:"100%", background:"#1E293B", border:"1px solid #334155", borderRadius:6, color:"#F1F5F9", padding:"7px 10px", fontSize:13, boxSizing:"border-box" }} />
+            </div>
+            <div>
+              <div style={{ fontSize:11, color:"#64748B", marginBottom:4 }}>Date limite (optionnel)</div>
+              <input type="date" value={form.dateLimit} onChange={e=>setForm(f=>({...f,dateLimit:e.target.value}))}
+                style={{ width:"100%", background:"#1E293B", border:"1px solid #334155", borderRadius:6, color:"#F1F5F9", padding:"7px 10px", fontSize:13, boxSizing:"border-box" }} />
+            </div>
+            <div>
+              <div style={{ fontSize:11, color:"#64748B", marginBottom:4 }}>Couleur</div>
+              <div style={{ display:"flex", gap:6, flexWrap:"wrap" }}>
+                {COULEURS.map(c => (
+                  <div key={c} onClick={() => setForm(f=>({...f,couleur:c}))}
+                    style={{ width:22, height:22, borderRadius:"50%", background:c, cursor:"pointer", border: form.couleur===c ? "3px solid #fff" : "2px solid transparent" }} />
+                ))}
+              </div>
+            </div>
+          </div>
+          <button onClick={handleSubmit}
+            style={{ background:form.couleur, border:"none", borderRadius:8, color:"#0B1120", padding:"8px 18px", fontSize:13, fontWeight:700, cursor:"pointer" }}>
+            {editObj ? "Mettre à jour" : "Créer l'objectif"}
+          </button>
+        </div>
+      )}
+
+      {/* Liste objectifs */}
+      <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
+        {objectifs.map(obj => {
+          const pct = Math.min(100, obj.cible > 0 ? (obj.actuel / obj.cible) * 100 : 0);
+          const reste = Math.max(0, obj.cible - obj.actuel);
+          const col = obj.couleur || "#818CF8";
+          const done = pct >= 100;
+
+          // Calcul jours restants
+          let joursLabel = "";
+          if (obj.dateLimit) {
+            const jours = Math.ceil((new Date(obj.dateLimit) - new Date()) / 86400000);
+            joursLabel = jours > 0 ? `${jours}j restants` : "Échéance dépassée";
+          }
+
+          return (
+            <div key={obj.id} style={{ background:"rgba(255,255,255,0.03)", borderRadius:10, padding:"14px 16px", border:`1px solid ${col}33` }}>
+              <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:8 }}>
+                <div>
+                  <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+                    <div style={{ width:10, height:10, borderRadius:"50%", background:col }} />
+                    <span style={{ fontSize:14, fontWeight:700, color:"#F1F5F9" }}>{obj.nom}</span>
+                    {done && <span style={{ fontSize:11, background:"rgba(52,211,153,0.2)", color:"#34D399", borderRadius:4, padding:"1px 6px" }}>✅ Atteint</span>}
+                  </div>
+                  <div style={{ fontSize:11, color:"#475569", marginTop:2 }}>
+                    {obj.categorie}{joursLabel ? ` · ${joursLabel}` : ""}
+                  </div>
+                </div>
+                <div style={{ display:"flex", gap:6 }}>
+                  <button onClick={() => handleEdit(obj)}
+                    style={{ background:"rgba(255,255,255,0.06)", border:"none", borderRadius:6, color:"#94A3B8", padding:"4px 8px", fontSize:11, cursor:"pointer" }}>✏️</button>
+                  <button onClick={() => handleDelete(obj.id)}
+                    style={{ background:"rgba(248,113,113,0.1)", border:"none", borderRadius:6, color:"#F87171", padding:"4px 8px", fontSize:11, cursor:"pointer" }}>✕</button>
+                </div>
+              </div>
+
+              {/* Barre de progression */}
+              <div style={{ marginBottom:8 }}>
+                <div style={{ display:"flex", justifyContent:"space-between", marginBottom:4 }}>
+                  <span style={{ fontSize:12, color:col, fontWeight:700 }}>{fmt(obj.actuel)}</span>
+                  <span style={{ fontSize:12, color:"#64748B" }}>objectif : {fmt(obj.cible)}</span>
+                </div>
+                <div style={{ height:10, background:"rgba(255,255,255,0.08)", borderRadius:5, overflow:"hidden" }}>
+                  <div style={{
+                    width:`${pct}%`, height:"100%", borderRadius:5,
+                    background: done
+                      ? "linear-gradient(90deg, #34D399, #6EE7B7)"
+                      : `linear-gradient(90deg, ${col}, ${col}99)`,
+                    transition:"width 0.6s ease"
+                  }} />
+                </div>
+                <div style={{ display:"flex", justifyContent:"space-between", marginTop:3 }}>
+                  <span style={{ fontSize:11, color:"#64748B" }}>{pct.toFixed(1)}%</span>
+                  {!done && <span style={{ fontSize:11, color:"#64748B" }}>reste {fmt(reste)}</span>}
+                </div>
+              </div>
+
+              {/* Mise à jour rapide du montant actuel */}
+              <div style={{ display:"flex", gap:8, alignItems:"center" }}>
+                <span style={{ fontSize:11, color:"#475569" }}>Mettre à jour :</span>
+                <input type="number" defaultValue={obj.actuel}
+                  onBlur={e => updateActuel(obj.id, e.target.value)}
+                  style={{ width:100, background:"#1E293B", border:"1px solid #334155", borderRadius:6, color:"#F1F5F9", padding:"4px 8px", fontSize:12 }} />
+                <span style={{ fontSize:11, color:"#475569" }}>€</span>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </Card>
+  );
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// ALERTES BUDGET
+// ══════════════════════════════════════════════════════════════════════════════
+function AlertesBudget({ uid, transactions, curYear, curMonth }) {
+  const [alertes, setAlertes] = useState([]);
+  const [showForm, setShowForm] = useState(false);
+  const [form, setForm] = useState({ categorie:"", plafond:0, couleur:"#F87171" });
+
+  useEffect(() => {
+    if (!uid) return;
+    fbGet(uid, "alertes_budget").then(v => { if (Array.isArray(v)) setAlertes(v); });
+  }, [uid]);
+
+  const save = async (list) => {
+    setAlertes(list);
+    if (uid) await fbSet(uid, "alertes_budget", list);
+  };
+
+  const addAlerte = () => {
+    if (!form.categorie || !form.plafond) return;
+    save([...alertes, { id: Date.now(), ...form, plafond: parseFloat(form.plafond) }]);
+    setForm({ categorie:"", plafond:0, couleur:"#F87171" });
+    setShowForm(false);
+  };
+
+  // Calculer dépenses du mois courant par catégorie
+  const depensesParCat = {};
+  transactions
+    .filter(t => t.annee === curYear && t.mois === curMonth && t.es === "Sortie")
+    .forEach(t => { depensesParCat[t.type] = (depensesParCat[t.type]||0) + t.montant; });
+
+  const alertesActives = alertes.filter(a => {
+    const dep = depensesParCat[a.categorie] || 0;
+    return dep > 0;
+  });
+
+  if (alertesActives.length === 0 && !showForm) {
+    if (alertes.length === 0) return (
+      <Card style={{ marginBottom:14, padding:"14px 18px" }}>
+        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+          <div style={{ fontSize:13, fontWeight:700, color:"#F1F5F9" }}>🔔 Alertes budget</div>
+          <button onClick={() => setShowForm(true)} style={{ background:"rgba(248,113,113,0.15)", border:"1px solid rgba(248,113,113,0.3)", borderRadius:8, color:"#F87171", padding:"4px 10px", fontSize:11, cursor:"pointer" }}>+ Alerte</button>
+        </div>
+        <div style={{ fontSize:12, color:"#475569", marginTop:6 }}>Aucune alerte configurée</div>
+      </Card>
+    );
+  }
+
+  return (
+    <Card style={{ marginBottom:14, padding:"14px 18px" }}>
+      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:12 }}>
+        <div style={{ fontSize:13, fontWeight:700, color:"#F1F5F9" }}>🔔 Alertes budget — {["Jan","Fév","Mar","Avr","Mai","Jun","Jul","Aoû","Sep","Oct","Nov","Déc"][curMonth-1]}</div>
+        <button onClick={() => setShowForm(!showForm)} style={{ background:"rgba(248,113,113,0.15)", border:"1px solid rgba(248,113,113,0.3)", borderRadius:8, color:"#F87171", padding:"4px 10px", fontSize:11, cursor:"pointer" }}>
+          {showForm ? "Annuler" : "+ Alerte"}
+        </button>
+      </div>
+
+      {showForm && (
+        <div style={{ background:"rgba(255,255,255,0.03)", borderRadius:8, padding:"12px", marginBottom:12, display:"flex", gap:8, flexWrap:"wrap", alignItems:"flex-end" }}>
+          <div>
+            <div style={{ fontSize:11, color:"#64748B", marginBottom:3 }}>Catégorie</div>
+            <input value={form.categorie} onChange={e=>setForm(f=>({...f,categorie:e.target.value}))}
+              placeholder="ex: Nourriture"
+              style={{ background:"#1E293B", border:"1px solid #334155", borderRadius:6, color:"#F1F5F9", padding:"6px 10px", fontSize:13, width:140 }} />
+          </div>
+          <div>
+            <div style={{ fontSize:11, color:"#64748B", marginBottom:3 }}>Plafond (€/mois)</div>
+            <input type="number" value={form.plafond} onChange={e=>setForm(f=>({...f,plafond:e.target.value}))}
+              style={{ background:"#1E293B", border:"1px solid #334155", borderRadius:6, color:"#F1F5F9", padding:"6px 10px", fontSize:13, width:100 }} />
+          </div>
+          <button onClick={addAlerte} style={{ background:"#F87171", border:"none", borderRadius:8, color:"#0B1120", padding:"7px 14px", fontSize:13, fontWeight:700, cursor:"pointer" }}>Ajouter</button>
+        </div>
+      )}
+
+      <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
+        {alertes.map(a => {
+          const dep = depensesParCat[a.categorie] || 0;
+          const pct = Math.min(100, (dep / a.plafond) * 100);
+          const depasse = dep > a.plafond;
+          const proche = pct >= 80 && !depasse;
+          const col = depasse ? "#F87171" : proche ? "#FBBF24" : "#34D399";
+
+          return (
+            <div key={a.id} style={{ background:"rgba(255,255,255,0.02)", borderRadius:8, padding:"10px 12px", border:`1px solid ${col}33` }}>
+              <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:4 }}>
+                <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+                  <span style={{ fontSize:13, color:col }}>
+                    {depasse ? "🔴" : proche ? "🟡" : "🟢"}
+                  </span>
+                  <span style={{ fontSize:13, fontWeight:600, color:"#F1F5F9" }}>{a.categorie}</span>
+                  {depasse && <span style={{ fontSize:10, background:"rgba(248,113,113,0.2)", color:"#F87171", borderRadius:4, padding:"1px 6px" }}>DÉPASSÉ</span>}
+                </div>
+                <div style={{ display:"flex", gap:12, alignItems:"center" }}>
+                  <span style={{ fontSize:13, fontWeight:700, color:col }}>{fmt(dep)}</span>
+                  <span style={{ fontSize:11, color:"#475569" }}>/ {fmt(a.plafond)}</span>
+                  <button onClick={() => save(alertes.filter(x => x.id !== a.id))}
+                    style={{ background:"none", border:"none", color:"#475569", cursor:"pointer", fontSize:13 }}>✕</button>
+                </div>
+              </div>
+              <div style={{ height:6, background:"rgba(255,255,255,0.08)", borderRadius:3 }}>
+                <div style={{ width:`${pct}%`, height:"100%", borderRadius:3, background:col, transition:"width 0.4s" }} />
+              </div>
+              <div style={{ fontSize:10, color:"#64748B", marginTop:3 }}>{pct.toFixed(0)}% du plafond</div>
+            </div>
+          );
+        })}
+      </div>
+    </Card>
+  );
+}
+
+function Overview({ cryptoData, cryptoPrices, stocks, bank, savings, oraPrice, realestateTotal, scpiTotal, onNavigate, history, marketHistoryTotal, marketHistoryIntraday, uid }) {
   const getVl = (f) => (f.type === "ora_linked" && oraPrice > 0) ? oraPrice : f.manualVl;
   const cryptoTotal = cryptoData.reduce((s, c) => s + (cryptoPrices[c.code]?.eur || 0) * c.qty, 0);
   const stocksTotal = stocks.reduce((s, st) => s + st.price * st.qty, 0);
@@ -553,6 +853,20 @@ function Overview({ cryptoData, cryptoPrices, stocks, bank, savings, oraPrice, r
           </Card>
         ))}
       </div>
+
+      {/* ── Objectifs financiers ──────────────────────────── */}
+      <ObjectifsFinanciers uid={uid} />
+
+      {/* ── Évolution patrimoine net ───────────────────────── */}
+      {history && history.length > 1 && (
+        <Card style={{ marginBottom:16, padding:"14px 18px" }}>
+          <div style={{ fontSize:13, fontWeight:700, color:"#F1F5F9", marginBottom:10 }}>
+            📈 Évolution du patrimoine net — depuis le début
+          </div>
+          <Variation history={history} dataKey="total" color="#818CF8" />
+          <MiniAreaChart data={history} dataKey="total" color="#818CF8" height={180} showPeriodSelector={true} />
+        </Card>
+      )}
 
       {/* Graphique répartition — sous les sections, pleine largeur */}
       <Card style={{ display: "flex", flexDirection: "column", alignItems: "center", marginBottom: 20, padding: "16px 20px" }}>
@@ -2548,6 +2862,86 @@ function BudgetView({ uid, quickAddTx, setQuickAddTx, onCatsChange }) {
       ══════════════════════════════════════════════════════════════════════ */}
       {activeTab === "overview" && (
         <div>
+          {/* ── Alertes budget ──────────────────────────────────── */}
+          <AlertesBudget
+            uid={uid}
+            transactions={transactions}
+            curYear={curYear}
+            curMonth={new Date().getMonth() + 1}
+          />
+          {/* ── Solde prévisionnel ─────────────────────────────── */}
+          {(() => {
+            const now = new Date();
+            const mo = now.getMonth() + 1;
+            const yr = now.getFullYear();
+            const jourDuMois = now.getDate();
+            const joursTotal = new Date(yr, mo, 0).getDate();
+            const joursRestants = joursTotal - jourDuMois;
+
+            // Revenus et dépenses du mois en cours
+            const txMois = transactions.filter(t => t.annee === yr && t.mois === mo);
+            const revenusMois = txMois.filter(t => t.es === "Entrée").reduce((s,t) => s+t.montant, 0);
+            const depensesMois = txMois.filter(t => t.es === "Sortie").reduce((s,t) => s+t.montant, 0);
+
+            // Moyenne dépenses sur 12 derniers mois (hors mois courant)
+            const moisPassés = [];
+            for (let i = 1; i <= 12; i++) {
+              let m = mo - i; let y = yr;
+              if (m <= 0) { m += 12; y -= 1; }
+              moisPassés.push({ y, m });
+            }
+            const depMoyMensuelle = moisPassés.reduce((s, {y, m}) => {
+              return s + transactions.filter(t => t.annee===y && t.mois===m && t.es==="Sortie").reduce((a,t)=>a+t.montant, 0);
+            }, 0) / 12;
+
+            // Projection dépenses restantes (au prorata des jours restants)
+            const projDepRestantes = (depMoyMensuelle / joursTotal) * joursRestants;
+            const soldePrev = revenusMois - depensesMois - projDepRestantes;
+            const tauxConso = revenusMois > 0 ? (depensesMois / revenusMois) * 100 : 0;
+            const col = soldePrev > 0 ? "#34D399" : "#F87171";
+            const MOIS_NOM = ["Jan","Fév","Mar","Avr","Mai","Jun","Jul","Aoû","Sep","Oct","Nov","Déc"];
+
+            return (
+              <Card style={{ marginBottom:14, padding:"16px 20px", background:"rgba(15,23,42,0.6)", border:`1px solid ${col}33` }}>
+                <div style={{ fontSize:11, color:"#64748B", textTransform:"uppercase", letterSpacing:"0.1em", marginBottom:10 }}>
+                  📊 Solde prévisionnel — {MOIS_NOM[mo-1]} {yr}
+                </div>
+                <div style={{ display:"flex", gap:16, flexWrap:"wrap", marginBottom:12 }}>
+                  <div>
+                    <div style={{ fontSize:11, color:"#64748B", marginBottom:2 }}>Revenus encaissés</div>
+                    <div style={{ fontSize:20, fontWeight:800, color:"#34D399" }}>{fmt(revenusMois)}</div>
+                  </div>
+                  <div>
+                    <div style={{ fontSize:11, color:"#64748B", marginBottom:2 }}>Dépenses effectuées</div>
+                    <div style={{ fontSize:20, fontWeight:800, color:"#F87171" }}>{fmt(depensesMois)}</div>
+                  </div>
+                  <div>
+                    <div style={{ fontSize:11, color:"#64748B", marginBottom:2 }}>Projection restante</div>
+                    <div style={{ fontSize:20, fontWeight:800, color:"#FBBF24" }}>−{fmt(projDepRestantes)}</div>
+                  </div>
+                  <div>
+                    <div style={{ fontSize:11, color:"#64748B", marginBottom:2 }}>Solde prévu fin de mois</div>
+                    <div style={{ fontSize:24, fontWeight:800, color:col }}>{soldePrev >= 0 ? "+" : ""}{fmt(soldePrev)}</div>
+                  </div>
+                </div>
+                {/* Barre de consommation du budget */}
+                <div style={{ marginBottom:6 }}>
+                  <div style={{ display:"flex", justifyContent:"space-between", marginBottom:4 }}>
+                    <span style={{ fontSize:11, color:"#64748B" }}>Consommation budget</span>
+                    <span style={{ fontSize:11, color: tauxConso > 90 ? "#F87171" : tauxConso > 70 ? "#FBBF24" : "#34D399", fontWeight:600 }}>{tauxConso.toFixed(0)}%</span>
+                  </div>
+                  <div style={{ height:8, background:"rgba(255,255,255,0.08)", borderRadius:4, overflow:"hidden" }}>
+                    <div style={{ width:`${Math.min(100,tauxConso)}%`, height:"100%", borderRadius:4,
+                      background: tauxConso > 90 ? "#F87171" : tauxConso > 70 ? "#FBBF24" : "#34D399",
+                      transition:"width 0.5s" }} />
+                  </div>
+                </div>
+                <div style={{ fontSize:11, color:"#475569" }}>
+                  Jour {jourDuMois}/{joursTotal} · {joursRestants} jours restants · Moy. dép. historique : {fmt(depMoyMensuelle)}/mois
+                </div>
+              </Card>
+            );
+          })()}
           <div style={{ display:"flex", gap:10, flexWrap:"wrap", marginBottom:18 }}>
             <StatCard label="Entrées" value={fmt(totalE_yr)} sub={`${curYear} · ${bilan.length} mois`} color="#34D399" icon="📥" />
             <StatCard label="Sorties" value={fmt(totalS_yr)} sub={`Moy. ${fmt(totalS_yr/(bilan.length||1))}/mois`} color="#F87171" icon="📤" />
@@ -4101,7 +4495,7 @@ function AppContent({ user }) {
         )}
 
         {/* Views */}
-        {view === "overview"   && <Overview cryptoData={cryptoData} cryptoPrices={cryptoPrices} stocks={stocks} bank={bank} savings={savings} oraPrice={oraPrice} realestateTotal={realestateTotal} scpiTotal={scpiTotal} onNavigate={setView} history={history} marketHistoryTotal={marketHistory.total} marketHistoryIntraday={marketHistory} />}
+        {view === "overview"   && <Overview cryptoData={cryptoData} cryptoPrices={cryptoPrices} stocks={stocks} bank={bank} savings={savings} oraPrice={oraPrice} realestateTotal={realestateTotal} scpiTotal={scpiTotal} onNavigate={setView} history={history} marketHistoryTotal={marketHistory.total} marketHistoryIntraday={marketHistory} uid={user?.uid} />}
         {view === "crypto"     && <CryptoView cryptoData={cryptoData} setCryptoData={setCryptoData} cryptoPrices={cryptoPrices} loading={loading} history={history} cryptoHistory={marketHistory.crypto} cryptoHistory24h={marketHistory.crypto24h} cryptoHistory7d={marketHistory.crypto7d} />}
         {view === "stocks"     && <StocksView stocks={stocks} setStocks={setStocks} history={history} marketHistory={marketHistory.stocks} stocksHistory24h={marketHistory.stocks24h} stocksHistory7d={marketHistory.stocks7d} peaValue={(() => { const pea = stocks.filter(s=>s.account==="pea").reduce((s,st)=>s+st.price*st.qty,0); return pea || 549.89; })()} nonCoteValue={stocks.filter(s=>["APOLLO","EQTF"].includes(s.symbol)).reduce((s,st)=>s+st.price*st.qty,0)} />}
         {view === "savings"    && <SavingsView savings={savings} setSavings={setSavings} oraPrice={oraPrice} />}
