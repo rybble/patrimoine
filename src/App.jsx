@@ -4350,6 +4350,7 @@ function AppContent({ user }) {
   const [showQuickAdd, setShowQuickAdd] = useState(false);
   const [quickAddCats, setQuickAddCats] = useState({ entree: DEFAULT_CATS_ENTREE, sortie: DEFAULT_CATS_SORTIE });
   const [quickAddTx,   setQuickAddTx]   = useState([]); // "", "saving", "saved", "error"
+  const [transactions] = useState(() => { try { return JSON.parse(localStorage.getItem(BUDGET_KEY) || "[]"); } catch { return []; } });
 
   // ── Firebase sync ─────────────────────────────────────────────────────────
   const uid = user?.uid;
