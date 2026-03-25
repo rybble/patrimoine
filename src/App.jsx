@@ -483,405 +483,6 @@ function Tag({ children, color }) {
 
 // ─── OVERVIEW ─────────────────────────────────────────────────────────────────
 
-
-// ══════════════════════════════════════════════════════════════════════════════
-// SCORE SANTÉ FINANCIÈRE
-// ══════════════════════════════════════════════════════════════════════════════
-function ScoresSante({ transactions, grandTotal, bankTotal, cryptoTotal, stocksTotal, savingsTotal, realestateTotal, scpiTotal }) {
-  const now = new Date();
-  const mo = now.getMonth() + 1;
-  const yr = now.getFullYear();
-
-  // Taux d'épargne moyen 3 derniers mois
-  let tauxEpargneMoy = 0;
-  let nbMois = 0;
-  for (let i = 1; i <= 3; i++) {
-    let m = mo - i; let y = yr;
-    if (m <= 0) { m += 12; y -= 1; }
-    const txs = transactions.filter(t => t.annee===y && t.mois===m);
-    const rev = txs.filter(t=>t.es==="Entrée").reduce((s,t)=>s+t.montant,0);
-    const dep = txs.filter(t=>t.es==="Sortie").reduce((s,t)=>s+t.montant,0);
-    if (rev > 0) { tauxEpargneMoy += (rev-dep)/rev*100; nbMois++; }
-  }
-  tauxEpargneMoy = nbMois > 0 ? tauxEpargneMoy/nbMois : 0;
-
-  // Diversification (nb classes actifs > 0)
-  const nbActifs = [cryptoTotal,stocksTotal,savingsTotal,bankTotal,realestateTotal,scpiTotal].filter(v=>v>0).length;
-
-  // Épargne de précaution (6 mois de dépenses)
-  const depMoyMensuelle = (() => {
-    let total = 0; let n = 0;
-    for (let i = 1; i <= 6; i++) {
-      let m = mo - i; let y = yr;
-      if (m <= 0) { m += 12; y -= 1; }
-      const dep = transactions.filter(t=>t.annee===y&&t.mois===m&&t.es==="Sortie").reduce((s,t)=>s+t.montant,0);
-      if (dep > 0) { total += dep; n++; }
-    }
-    return n > 0 ? total/n : 0;
-  })();
-  const epargnePreco = depMoyMensuelle > 0 ? Math.min(100, (bankTotal / (depMoyMensuelle * 6)) * 100) : 0;
-
-  // Score sur 100
-  const scoreEpargne      = Math.min(30, tauxEpargneMoy >= 20 ? 30 : tauxEpargneMoy >= 10 ? 20 : tauxEpargneMoy > 0 ? 10 : 0);
-  const scoreDiversif     = Math.min(20, nbActifs * (20/6));
-  const scorePreco        = Math.min(25, epargnePreco * 0.25);
-  const scorePatrimoine   = Math.min(25, grandTotal >= 100000 ? 25 : grandTotal >= 50000 ? 18 : grandTotal >= 20000 ? 12 : grandTotal > 0 ? 6 : 0);
-  const scoreTotal        = Math.round(scoreEpargne + scoreDiversif + scorePreco + scorePatrimoine);
-
-  const scoreColor = scoreTotal >= 75 ? "#34D399" : scoreTotal >= 50 ? "#FBBF24" : "#F87171";
-  const scoreLabel = scoreTotal >= 75 ? "Excellent" : scoreTotal >= 50 ? "Correct" : scoreTotal >= 25 ? "À améliorer" : "Fragile";
-
-  const criteres = [
-    { label: "Taux d'épargne", score: Math.round(scoreEpargne), max: 30, detail: `${tauxEpargneMoy.toFixed(1)}% moy.`, color: scoreEpargne >= 20 ? "#34D399" : scoreEpargne >= 12 ? "#FBBF24" : "#F87171" },
-    { label: "Diversification", score: Math.round(scoreDiversif), max: 20, detail: `${nbActifs}/6 classes`, color: scoreDiversif >= 15 ? "#34D399" : scoreDiversif >= 8 ? "#FBBF24" : "#F87171" },
-    { label: "Épargne de précaution", score: Math.round(scorePreco), max: 25, detail: `${epargnePreco.toFixed(0)}% de 6 mois`, color: scorePreco >= 20 ? "#34D399" : scorePreco >= 12 ? "#FBBF24" : "#F87171" },
-    { label: "Patrimoine net", score: Math.round(scorePatrimoine), max: 25, detail: fmt(grandTotal), color: scorePatrimoine >= 18 ? "#34D399" : scorePatrimoine >= 10 ? "#FBBF24" : "#F87171" },
-  ];
-
-  return (
-    <Card style={{ marginBottom:16, padding:"18px 20px" }}>
-      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:16 }}>
-        <div style={{ fontSize:14, fontWeight:700, color:"#F1F5F9" }}>🏥 Score de santé financière</div>
-        <div style={{ textAlign:"right" }}>
-          <div style={{ fontSize:36, fontWeight:900, color:scoreColor, lineHeight:1 }}>{scoreTotal}</div>
-          <div style={{ fontSize:12, color:scoreColor, fontWeight:600 }}>{scoreLabel} /100</div>
-        </div>
-      </div>
-
-      {/* Barre globale */}
-      <div style={{ height:10, background:"rgba(255,255,255,0.08)", borderRadius:5, overflow:"hidden", marginBottom:16 }}>
-        <div style={{ width:`${scoreTotal}%`, height:"100%", borderRadius:5, background:`linear-gradient(90deg, ${scoreColor}, ${scoreColor}99)`, transition:"width 0.8s ease" }} />
-      </div>
-
-      {/* Détail critères */}
-      <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
-        {criteres.map((c,i) => (
-          <div key={i}>
-            <div style={{ display:"flex", justifyContent:"space-between", marginBottom:3 }}>
-              <span style={{ fontSize:12, color:"#94A3B8" }}>{c.label}</span>
-              <div style={{ display:"flex", gap:12 }}>
-                <span style={{ fontSize:11, color:"#64748B" }}>{c.detail}</span>
-                <span style={{ fontSize:12, fontWeight:700, color:c.color }}>{c.score}/{c.max}</span>
-              </div>
-            </div>
-            <div style={{ height:5, background:"rgba(255,255,255,0.06)", borderRadius:3 }}>
-              <div style={{ width:`${(c.score/c.max)*100}%`, height:"100%", borderRadius:3, background:c.color, transition:"width 0.6s" }} />
-            </div>
-          </div>
-        ))}
-      </div>
-    </Card>
-  );
-}
-
-// ══════════════════════════════════════════════════════════════════════════════
-// DÉPENSES RÉCURRENTES
-// ══════════════════════════════════════════════════════════════════════════════
-function DepensesRecurrentes({ transactions, curYear, selectedMonth }) {
-  // Détecter les récurrences : même catégorie présente dans 3+ mois consécutifs
-  // avec un montant similaire (±20%)
-  const detectRecurrences = () => {
-    const byTypeMois = {};
-    transactions.filter(t => t.es === "Sortie").forEach(t => {
-      const key = t.type;
-      if (!byTypeMois[key]) byTypeMois[key] = [];
-      byTypeMois[key].push({ mois: t.mois, annee: t.annee, montant: t.montant, note: t.note });
-    });
-
-    const recurrentes = [];
-    Object.entries(byTypeMois).forEach(([type, txs]) => {
-      // Grouper par mois/année
-      const byPeriod = {};
-      txs.forEach(t => {
-        const k = `${t.annee}-${String(t.mois).padStart(2,"0")}`;
-        if (!byPeriod[k]) byPeriod[k] = 0;
-        byPeriod[k] += t.montant;
-      });
-      const periods = Object.keys(byPeriod).sort();
-      if (periods.length < 3) return;
-
-      // Vérifier régularité (présent dans les 3 derniers mois)
-      const now = new Date();
-      const derniersMois = [];
-      for (let i = 1; i <= 3; i++) {
-        let m = now.getMonth() + 1 - i; let y = now.getFullYear();
-        if (m <= 0) { m += 12; y -= 1; }
-        derniersMois.push(`${y}-${String(m).padStart(2,"0")}`);
-      }
-      const presentDerniersMois = derniersMois.filter(p => byPeriod[p]).length;
-      if (presentDerniersMois < 2) return;
-
-      const montants = Object.values(byPeriod);
-      const moy = montants.reduce((s,v)=>s+v,0)/montants.length;
-      const variation = montants.length > 1 ? Math.max(...montants)/Math.min(...montants) - 1 : 0;
-      const fixe = variation < 0.15;
-
-      recurrentes.push({
-        type, moy: parseFloat(moy.toFixed(2)), fixe,
-        variation: (variation*100).toFixed(0),
-        nbMois: periods.length,
-        dernierMontant: byPeriod[periods[periods.length-1]] || moy,
-      });
-    });
-
-    return recurrentes.sort((a,b) => b.moy - a.moy);
-  };
-
-  const recurrentes = detectRecurrences();
-  const totalRecurrent = recurrentes.reduce((s,r)=>s+r.moy, 0);
-
-  // Filtrer selon la période sélectionnée
-  const txPeriode = transactions.filter(t =>
-    t.annee === curYear && (!selectedMonth || t.mois === selectedMonth) && t.es === "Sortie"
-  );
-  const totalSorties = txPeriode.reduce((s,t)=>s+t.montant,0);
-  const recurrentesCePeriode = txPeriode.filter(t => recurrentes.some(r => r.type === t.type));
-  const totalRecurrentPeriode = recurrentesCePeriode.reduce((s,t)=>s+t.montant,0);
-
-  if (recurrentes.length === 0) return null;
-
-  return (
-    <Card style={{ marginBottom:14, padding:"14px 18px" }}>
-      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:12 }}>
-        <div style={{ fontSize:13, fontWeight:700, color:"#F1F5F9" }}>🔄 Dépenses récurrentes</div>
-        <div style={{ textAlign:"right" }}>
-          <div style={{ fontSize:13, fontWeight:700, color:"#FBBF24" }}>{fmt(totalRecurrent)}/mois moy.</div>
-          {totalSorties > 0 && <div style={{ fontSize:11, color:"#64748B" }}>{((totalRecurrentPeriode/totalSorties)*100).toFixed(0)}% des dépenses</div>}
-        </div>
-      </div>
-
-      <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill, minmax(200px, 1fr))", gap:8 }}>
-        {recurrentes.map((r,i) => (
-          <div key={i} style={{ background:"rgba(255,255,255,0.03)", borderRadius:8, padding:"8px 12px", border:`1px solid ${r.fixe?"#FBBF2233":"#94A3B833"}` }}>
-            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
-              <span style={{ fontSize:12, color:"#F1F5F9", fontWeight:600 }}>{r.type}</span>
-              <span style={{ fontSize:11, background: r.fixe?"rgba(251,191,36,0.15)":"rgba(148,163,184,0.1)", color:r.fixe?"#FBBF24":"#94A3B8", borderRadius:4, padding:"1px 5px" }}>
-                {r.fixe ? "🔒 Fixe" : "〜 Variable"}
-              </span>
-            </div>
-            <div style={{ fontSize:14, fontWeight:700, color:"#FBBF24", marginTop:3 }}>{fmt(r.moy)}/mois</div>
-            <div style={{ fontSize:10, color:"#475569" }}>{r.nbMois} mois · var. ±{r.variation}%</div>
-          </div>
-        ))}
-      </div>
-    </Card>
-  );
-}
-
-// ══════════════════════════════════════════════════════════════════════════════
-// INFLATION PERSONNELLE
-// ══════════════════════════════════════════════════════════════════════════════
-function InflationPersonnelle({ transactions }) {
-  const now = new Date();
-  const yr = now.getFullYear();
-
-  // Comparer année N vs N-1 par catégorie
-  const cats = [...new Set(transactions.filter(t=>t.es==="Sortie").map(t=>t.type))].sort();
-
-  const data = cats.map(cat => {
-    const depN   = transactions.filter(t=>t.es==="Sortie"&&t.type===cat&&t.annee===yr).reduce((s,t)=>s+t.montant,0);
-    const depN1  = transactions.filter(t=>t.es==="Sortie"&&t.type===cat&&t.annee===yr-1).reduce((s,t)=>s+t.montant,0);
-    if (!depN && !depN1) return null;
-    const delta = depN1 > 0 ? ((depN - depN1) / depN1) * 100 : null;
-    return { cat, depN, depN1, delta };
-  }).filter(Boolean).sort((a,b) => (b.delta||0) - (a.delta||0));
-
-  const totalN  = transactions.filter(t=>t.es==="Sortie"&&t.annee===yr).reduce((s,t)=>s+t.montant,0);
-  const totalN1 = transactions.filter(t=>t.es==="Sortie"&&t.annee===yr-1).reduce((s,t)=>s+t.montant,0);
-  const deltaTotal = totalN1 > 0 ? ((totalN - totalN1) / totalN1) * 100 : null;
-
-  if (data.length < 2) return (
-    <div style={{ textAlign:"center", color:"#475569", padding:"30px 0", fontSize:13 }}>
-      Pas assez de données (2 années requises)
-    </div>
-  );
-
-  return (
-    <div>
-      {/* Résumé global */}
-      <Card style={{ marginBottom:14, padding:"14px 18px" }}>
-        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:10 }}>
-          <div style={{ fontSize:13, fontWeight:700, color:"#F1F5F9" }}>📈 Évolution globale des dépenses</div>
-          {deltaTotal !== null && (
-            <div style={{ fontSize:18, fontWeight:800, color: deltaTotal > 0 ? "#F87171" : "#34D399" }}>
-              {deltaTotal > 0 ? "+" : ""}{deltaTotal.toFixed(1)}%
-            </div>
-          )}
-        </div>
-        <div style={{ display:"flex", gap:16, flexWrap:"wrap" }}>
-          <div>
-            <div style={{ fontSize:11, color:"#64748B" }}>{yr-1}</div>
-            <div style={{ fontSize:18, fontWeight:700, color:"#94A3B8" }}>{fmt(totalN1)}</div>
-          </div>
-          <div style={{ fontSize:20, color:"#475569", alignSelf:"center" }}>→</div>
-          <div>
-            <div style={{ fontSize:11, color:"#64748B" }}>{yr}</div>
-            <div style={{ fontSize:18, fontWeight:700, color:"#F1F5F9" }}>{fmt(totalN)}</div>
-          </div>
-        </div>
-      </Card>
-
-      {/* Par catégorie */}
-      <div style={{ display:"flex", flexDirection:"column", gap:6 }}>
-        {data.filter(d=>d.delta!==null).map((d,i) => {
-          const col = d.delta > 10 ? "#F87171" : d.delta > 0 ? "#FBBF24" : "#34D399";
-          const pctBar = Math.min(100, Math.abs(d.delta||0));
-          return (
-            <div key={i} style={{ background:"rgba(255,255,255,0.02)", borderRadius:8, padding:"10px 14px", border:`1px solid ${col}22` }}>
-              <div style={{ display:"flex", justifyContent:"space-between", marginBottom:4 }}>
-                <span style={{ fontSize:13, color:"#F1F5F9", fontWeight:600 }}>{d.cat}</span>
-                <div style={{ display:"flex", gap:16, alignItems:"center" }}>
-                  <span style={{ fontSize:11, color:"#64748B" }}>{fmt(d.depN1)} → {fmt(d.depN)}</span>
-                  <span style={{ fontSize:13, fontWeight:700, color:col }}>{d.delta>0?"+":""}{d.delta.toFixed(1)}%</span>
-                </div>
-              </div>
-              <div style={{ height:4, background:"rgba(255,255,255,0.06)", borderRadius:2 }}>
-                <div style={{ width:`${pctBar}%`, height:"100%", borderRadius:2, background:col }} />
-              </div>
-            </div>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-
-// ══════════════════════════════════════════════════════════════════════════════
-// RAPPORT MENSUEL
-// ══════════════════════════════════════════════════════════════════════════════
-function RapportMensuel({ uid, transactions, curYear, grandTotal, onClose }) {
-  const [moisRapport, setMoisRapport] = useState(new Date().getMonth() + 1);
-  const [anneeRapport, setAnneeRapport] = useState(new Date().getFullYear());
-  const MOIS_NOM = ["Janvier","Février","Mars","Avril","Mai","Juin","Juillet","Août","Septembre","Octobre","Novembre","Décembre"];
-
-  const txMois = transactions.filter(t => t.annee === anneeRapport && t.mois === moisRapport);
-  const entrees = txMois.filter(t=>t.es==="Entrée");
-  const sorties = txMois.filter(t=>t.es==="Sortie");
-  const totalE = entrees.reduce((s,t)=>s+t.montant,0);
-  const totalS = sorties.reduce((s,t)=>s+t.montant,0);
-  const solde = totalE - totalS;
-  const taux = totalE > 0 ? ((totalE-totalS)/totalE*100).toFixed(1) : "N/A";
-
-  const catSorties = {};
-  sorties.forEach(t => { catSorties[t.type] = (catSorties[t.type]||0)+t.montant; });
-  const topCats = Object.entries(catSorties).sort((a,b)=>b[1]-a[1]).slice(0,5);
-
-  // Mois précédent pour comparaison
-  let mP = moisRapport - 1; let yP = anneeRapport;
-  if (mP <= 0) { mP = 12; yP -= 1; }
-  const txPrec = transactions.filter(t=>t.annee===yP&&t.mois===mP);
-  const totalSPrec = txPrec.filter(t=>t.es==="Sortie").reduce((s,t)=>s+t.montant,0);
-  const deltaVsMois = totalSPrec > 0 ? ((totalS-totalSPrec)/totalSPrec*100).toFixed(1) : null;
-
-  const handlePrint = () => window.print();
-
-  const handleDownload = () => {
-    const lines = [
-      `RAPPORT MENSUEL — ${MOIS_NOM[moisRapport-1]} ${anneeRapport}`,
-      `Généré le ${new Date().toLocaleDateString("fr-FR")}`,
-      ``,
-      `═══════════════════════════════════`,
-      `BILAN DU MOIS`,
-      `═══════════════════════════════════`,
-      `Revenus     : ${fmt(totalE)}`,
-      `Dépenses    : ${fmt(totalS)}`,
-      `Solde net   : ${solde >= 0 ? "+" : ""}${fmt(solde)}`,
-      `Taux épargne: ${taux}%`,
-      deltaVsMois ? `vs mois préc: ${deltaVsMois > 0 ? "+" : ""}${deltaVsMois}% dépenses` : "",
-      ``,
-      `═══════════════════════════════════`,
-      `TOP DÉPENSES PAR CATÉGORIE`,
-      `═══════════════════════════════════`,
-      ...topCats.map(([cat,v]) => `${cat.padEnd(25)} ${fmt(v)} (${totalS>0?((v/totalS)*100).toFixed(1):0}%)`),
-      ``,
-      `═══════════════════════════════════`,
-      `DÉTAIL DES TRANSACTIONS`,
-      `═══════════════════════════════════`,
-      ...sorties.sort((a,b)=>b.montant-a.montant).map(t => `${t.type.padEnd(20)} ${fmt(t.montant).padStart(10)}  ${t.note||""}`),
-      ``,
-      `═══════════════════════════════════`,
-      `PATRIMOINE TOTAL: ${fmt(grandTotal)}`,
-      `═══════════════════════════════════`,
-    ].join("\n");
-
-    const blob = new Blob([lines], { type:"text/plain;charset=utf-8" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url; a.download = `rapport_${anneeRapport}_${String(moisRapport).padStart(2,"0")}.txt`;
-    a.click(); URL.revokeObjectURL(url);
-  };
-
-  return (
-    <div style={{ position:"fixed", top:0, left:0, right:0, bottom:0, background:"rgba(0,0,0,0.8)", zIndex:1000, display:"flex", alignItems:"center", justifyContent:"center", padding:16 }}>
-      <div style={{ background:"#0F1929", borderRadius:16, padding:"24px", maxWidth:600, width:"100%", maxHeight:"90vh", overflowY:"auto", border:"1px solid #1E293B" }}>
-        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:20 }}>
-          <div style={{ fontSize:18, fontWeight:800, color:"#F1F5F9" }}>📋 Rapport mensuel</div>
-          <button onClick={onClose} style={{ background:"none", border:"none", color:"#64748B", fontSize:20, cursor:"pointer" }}>✕</button>
-        </div>
-
-        {/* Sélecteur mois/année */}
-        <div style={{ display:"flex", gap:10, marginBottom:20 }}>
-          <select value={moisRapport} onChange={e=>setMoisRapport(parseInt(e.target.value))}
-            style={{ background:"#1E293B", border:"1px solid #334155", borderRadius:8, color:"#F1F5F9", padding:"6px 12px", fontSize:13 }}>
-            {MOIS_NOM.map((m,i) => <option key={i} value={i+1}>{m}</option>)}
-          </select>
-          <select value={anneeRapport} onChange={e=>setAnneeRapport(parseInt(e.target.value))}
-            style={{ background:"#1E293B", border:"1px solid #334155", borderRadius:8, color:"#F1F5F9", padding:"6px 12px", fontSize:13 }}>
-            {[...new Set(transactions.map(t=>t.annee))].sort((a,b)=>b-a).map(y => <option key={y}>{y}</option>)}
-          </select>
-        </div>
-
-        {/* Bilan */}
-        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, marginBottom:16 }}>
-          {[
-            { label:"Revenus", value:fmt(totalE), color:"#34D399" },
-            { label:"Dépenses", value:fmt(totalS), color:"#F87171" },
-            { label:"Solde", value:`${solde>=0?"+":""}${fmt(solde)}`, color:solde>=0?"#34D399":"#F87171" },
-            { label:"Taux d'épargne", value:`${taux}%`, color:"#818CF8" },
-          ].map((item,i) => (
-            <div key={i} style={{ background:"rgba(255,255,255,0.03)", borderRadius:10, padding:"12px 14px", border:`1px solid ${item.color}22` }}>
-              <div style={{ fontSize:11, color:"#64748B", marginBottom:3 }}>{item.label}</div>
-              <div style={{ fontSize:20, fontWeight:800, color:item.color }}>{item.value}</div>
-            </div>
-          ))}
-        </div>
-
-        {deltaVsMois && (
-          <div style={{ background:`rgba(${parseFloat(deltaVsMois)>0?"248,113,113":"52,211,153"},0.1)`, borderRadius:8, padding:"8px 14px", marginBottom:14, fontSize:12, color: parseFloat(deltaVsMois)>0?"#F87171":"#34D399" }}>
-            {parseFloat(deltaVsMois)>0?"📈":"📉"} Dépenses {parseFloat(deltaVsMois)>0?"+":""}{deltaVsMois}% vs {MOIS_NOM[mP-1]}
-          </div>
-        )}
-
-        {/* Top catégories */}
-        <div style={{ fontSize:12, color:"#64748B", fontWeight:600, letterSpacing:"0.05em", marginBottom:8 }}>TOP DÉPENSES</div>
-        <div style={{ marginBottom:16 }}>
-          {topCats.map(([cat,v],i) => (
-            <div key={i} style={{ display:"flex", justifyContent:"space-between", padding:"6px 0", borderBottom:"1px solid rgba(255,255,255,0.04)" }}>
-              <span style={{ fontSize:13, color:"#F1F5F9" }}>{cat}</span>
-              <div style={{ display:"flex", gap:12 }}>
-                <span style={{ fontSize:11, color:"#64748B" }}>{totalS>0?((v/totalS)*100).toFixed(1):0}%</span>
-                <span style={{ fontSize:13, fontWeight:700, color:"#F87171" }}>{fmt(v)}</span>
-              </div>
-            </div>
-          ))}
-        </div>
-
-        {/* Boutons export */}
-        <div style={{ display:"flex", gap:10 }}>
-          <button onClick={handleDownload}
-            style={{ flex:1, background:"rgba(129,140,248,0.2)", border:"1px solid rgba(129,140,248,0.4)", borderRadius:10, color:"#818CF8", padding:"10px", fontSize:13, fontWeight:700, cursor:"pointer" }}>
-            ⬇️ Télécharger .txt
-          </button>
-          <button onClick={handlePrint}
-            style={{ flex:1, background:"rgba(52,211,153,0.2)", border:"1px solid rgba(52,211,153,0.4)", borderRadius:10, color:"#34D399", padding:"10px", fontSize:13, fontWeight:700, cursor:"pointer" }}>
-            🖨️ Imprimer / PDF
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
 // ══════════════════════════════════════════════════════════════════════════════
 // OBJECTIFS FINANCIERS
 // ══════════════════════════════════════════════════════════════════════════════
@@ -1181,7 +782,7 @@ function AlertesBudget({ uid, transactions, curYear, curMonth }) {
   );
 }
 
-function Overview({ cryptoData, cryptoPrices, stocks, bank, savings, oraPrice, realestateTotal, scpiTotal, onNavigate, history, marketHistoryTotal, marketHistoryIntraday, uid, transactions }) {
+function Overview({ cryptoData, cryptoPrices, stocks, bank, savings, oraPrice, realestateTotal, scpiTotal, onNavigate, history, marketHistoryTotal, marketHistoryIntraday, uid }) {
   const getVl = (f) => (f.type === "ora_linked" && oraPrice > 0) ? oraPrice : f.manualVl;
   const cryptoTotal = cryptoData.reduce((s, c) => s + (cryptoPrices[c.code]?.eur || 0) * c.qty, 0);
   const stocksTotal = stocks.reduce((s, st) => s + st.price * st.qty, 0);
@@ -1253,20 +854,19 @@ function Overview({ cryptoData, cryptoPrices, stocks, bank, savings, oraPrice, r
         ))}
       </div>
 
-      {/* ── Score santé financière ────────────────────────── */}
-      <ScoresSante
-        transactions={transactions || []}
-        grandTotal={grandTotal}
-        bankTotal={bankTotal}
-        cryptoTotal={cryptoTotal}
-        stocksTotal={stocksTotal}
-        savingsTotal={savingsTotal}
-        realestateTotal={realestateTotal}
-        scpiTotal={scpiTotal}
-      />
-
       {/* ── Objectifs financiers ──────────────────────────── */}
       <ObjectifsFinanciers uid={uid} />
+
+      {/* ── Évolution patrimoine net ───────────────────────── */}
+      {history && history.length > 1 && (
+        <Card style={{ marginBottom:16, padding:"14px 18px" }}>
+          <div style={{ fontSize:13, fontWeight:700, color:"#F1F5F9", marginBottom:10 }}>
+            📈 Évolution du patrimoine net — depuis le début
+          </div>
+          <Variation history={history} dataKey="total" color="#818CF8" />
+          <MiniAreaChart data={history} dataKey="total" color="#818CF8" height={180} showPeriodSelector={true} />
+        </Card>
+      )}
 
       {/* Graphique répartition — sous les sections, pleine largeur */}
       <Card style={{ display: "flex", flexDirection: "column", alignItems: "center", marginBottom: 20, padding: "16px 20px" }}>
@@ -1546,7 +1146,7 @@ function CryptoView({ cryptoData, setCryptoData, cryptoPrices, loading, history,
 
       {/* Graphique évolution */}
       <Card style={{ marginBottom: 14, padding: "14px 18px" }}>
-        <div style={{ fontSize: 12, color: "#64748B", marginBottom: 4 }}>Évolution Crypto (€) — Cumul portefeuille · {cryptoData.filter(c=>c.qty>0).length} cryptos via CoinGecko</div>
+        <div style={{ fontSize: 12, color: "#64748B", marginBottom: 4 }}>Évolution Crypto (€) — ETH via CoinGecko</div>
         {cryptoHistory && cryptoHistory.length > 1
           ? <MiniAreaChart data={cryptoHistory} dataKey="crypto" color="#818CF8" height={220} showPeriodSelector={true} intradayData={{ "24h": cryptoHistory24h, "7d": cryptoHistory7d }} />
           : <><Variation history={history} dataKey="crypto" color="#818CF8" /><MiniAreaChart data={history} dataKey="crypto" color="#818CF8" height={220} showPeriodSelector={true} intradayData={{ "24h": cryptoHistory24h, "7d": cryptoHistory7d }} /></>
@@ -3232,30 +2832,13 @@ function BudgetView({ uid, quickAddTx, setQuickAddTx, onCatsChange }) {
   // ── RENDER ─────────────────────────────────────────────────────────────────
   return (
     <div>
-      {showRapport && (
-        <RapportMensuel
-          uid={uid}
-          transactions={transactions}
-          curYear={curYear}
-          grandTotal={0}
-          onClose={() => setShowRapport(false)}
-        />
-      )}
-      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
-        <SectionTitle sub={`${curYear} · ${transactions.length} transactions · ${years.length} années`}>
+      <SectionTitle sub={`${curYear} · ${transactions.length} transactions · ${years.length} années`}>
         💰 Budget
       </SectionTitle>
-      </div>
 
       {/* ── Nav tabs + year selector ── */}
       <div style={{ display:"flex", gap:6, marginBottom:18, flexWrap:"wrap", alignItems:"center" }}>
-        <div style={{ display:"flex", justifyContent:"flex-end", marginBottom:8 }}>
-          <button onClick={() => setShowRapport(true)}
-            style={{ background:"rgba(129,140,248,0.15)", border:"1px solid rgba(129,140,248,0.3)", borderRadius:8, color:"#818CF8", padding:"5px 12px", fontSize:11, cursor:"pointer", fontWeight:600 }}>
-            📋 Rapport mensuel
-          </button>
-        </div>
-        {[["overview","📊 Synthèse"],["detail","📋 Détail"],["sankey","🌊 Flux"],["inflation","📊 Inflation"],["catstat","🔬 Stats catégorie"],["categories","🏷 Catégories"],["add","➕ Ajouter"],["transactions","📝 Transactions"],["sync","🔗 Sources"]].map(([k,l]) => (
+        {[["overview","📊 Synthèse"],["detail","📋 Détail"],["sankey","🌊 Flux"],["compare","📅 Comparaison"],["catstat","🔬 Stats catégorie"],["categories","🏷 Catégories"],["add","➕ Ajouter"],["transactions","📝 Transactions"],["sync","🔗 Sources"]].map(([k,l]) => (
           <Pill key={k} label={l} active={activeTab===k} onClick={() => setActiveTab(k)} />
         ))}
         <div style={{ marginLeft:"auto", display:"flex", gap:6 }}>
@@ -3359,63 +2942,6 @@ function BudgetView({ uid, quickAddTx, setQuickAddTx, onCatsChange }) {
               </Card>
             );
           })()}
-
-          {/* ── Taux d'épargne mensuel ─────────────────────────── */}
-          {(() => {
-            const MOIS_LABELS = ["Jan","Fév","Mar","Avr","Mai","Jun","Jul","Aoû","Sep","Oct","Nov","Déc"];
-            const now = new Date();
-            const tauxData = [];
-            for (let i = 11; i >= 0; i--) {
-              let m = now.getMonth() + 1 - i; let y = now.getFullYear();
-              while (m <= 0) { m += 12; y -= 1; }
-              const txs = transactions.filter(t => t.annee === y && t.mois === m);
-              const rev = txs.filter(t => t.es === "Entrée").reduce((s,t)=>s+t.montant,0);
-              const dep = txs.filter(t => t.es === "Sortie").reduce((s,t)=>s+t.montant,0);
-              if (rev > 0) tauxData.push({ label: MOIS_LABELS[m-1], taux: parseFloat(Math.max(0,((rev-dep)/rev)*100).toFixed(1)) });
-            }
-            if (tauxData.length < 2) return null;
-            const tauxMoyen = tauxData.reduce((s,d)=>s+d.taux,0)/tauxData.length;
-            const dernierTaux = tauxData[tauxData.length-1]?.taux || 0;
-            const maxTaux = Math.max(...tauxData.map(d=>d.taux), 30);
-            const col = dernierTaux >= 20 ? "#34D399" : dernierTaux >= 10 ? "#FBBF24" : "#F87171";
-            return (
-              <Card style={{ marginBottom:14, padding:"16px 20px" }}>
-                <div style={{ fontSize:11, color:"#64748B", textTransform:"uppercase", letterSpacing:"0.1em", marginBottom:12 }}>
-                  💰 Taux d'épargne mensuel — 12 derniers mois
-                </div>
-                <div style={{ display:"flex", gap:20, marginBottom:14, flexWrap:"wrap", alignItems:"flex-end" }}>
-                  <div>
-                    <div style={{ fontSize:11, color:"#64748B", marginBottom:2 }}>Mois en cours</div>
-                    <div style={{ fontSize:28, fontWeight:800, color:col }}>{dernierTaux.toFixed(1)}%</div>
-                  </div>
-                  <div>
-                    <div style={{ fontSize:11, color:"#64748B", marginBottom:2 }}>Moyenne 12 mois</div>
-                    <div style={{ fontSize:22, fontWeight:700, color:"#94A3B8" }}>{tauxMoyen.toFixed(1)}%</div>
-                  </div>
-                  <div style={{ fontSize:11, color:"#64748B", lineHeight:1.8 }}>
-                    <div>≥ 20% <span style={{ color:"#34D399" }}>● Excellent</span></div>
-                    <div>10-20% <span style={{ color:"#FBBF24" }}>● Correct</span></div>
-                    <div>{"< 10%"} <span style={{ color:"#F87171" }}>● À améliorer</span></div>
-                  </div>
-                </div>
-                <div style={{ display:"flex", gap:3, alignItems:"flex-end", height:64, padding:"0 4px" }}>
-                  {tauxData.map((d,i) => {
-                    const h = Math.max(4, (d.taux/maxTaux)*56);
-                    const c = d.taux>=20?"#34D399":d.taux>=10?"#FBBF24":"#F87171";
-                    const isLast = i===tauxData.length-1;
-                    return (
-                      <div key={i} style={{ flex:1, display:"flex", flexDirection:"column", alignItems:"center", gap:2 }}>
-                        <div style={{ fontSize:8, color:isLast?c:"#475569", fontWeight:isLast?700:400 }}>{d.taux}%</div>
-                        <div style={{ width:"100%", height:h, background:isLast?c:c+"55", borderRadius:"3px 3px 0 0" }} />
-                        <div style={{ fontSize:8, color:"#475569" }}>{d.label}</div>
-                      </div>
-                    );
-                  })}
-                </div>
-              </Card>
-            );
-          })()}
-
           <div style={{ display:"flex", gap:10, flexWrap:"wrap", marginBottom:18 }}>
             <StatCard label="Entrées" value={fmt(totalE_yr)} sub={`${curYear} · ${bilan.length} mois`} color="#34D399" icon="📥" />
             <StatCard label="Sorties" value={fmt(totalS_yr)} sub={`Moy. ${fmt(totalS_yr/(bilan.length||1))}/mois`} color="#F87171" icon="📤" />
@@ -3594,12 +3120,6 @@ function BudgetView({ uid, quickAddTx, setQuickAddTx, onCatsChange }) {
               </Card>
             );
           })}
-          {/* ── Dépenses récurrentes ─── */}
-          <DepensesRecurrentes
-            transactions={transactions}
-            curYear={curYear}
-            selectedMonth={selectedMonth}
-          />
         </div>
       )}
 
@@ -3631,11 +3151,109 @@ function BudgetView({ uid, quickAddTx, setQuickAddTx, onCatsChange }) {
         </div>
       )}
 
-            {activeTab === "inflation" && (
-        <div>
-          <InflationPersonnelle transactions={transactions} />
-        </div>
-      )}
+      {activeTab === "compare" && (() => {
+        // Regrouper entrées et sorties par (année, mois)
+        const MOIS_LABELS = ["Jan","Fév","Mar","Avr","Mai","Jun","Jul","Aoû","Sep","Oct","Nov","Déc"];
+        const allYears = [...new Set(transactions.map(t => t.annee))].sort((a,b)=>a-b);
+        // Palette de couleurs par année
+        const YEAR_COLORS_ENT = ["#34D399","#60A5FA","#A78BFA","#FBBF24","#F472B6"];
+        const YEAR_COLORS_SOR = ["#F87171","#FB923C","#FCD34D","#86EFAC","#93C5FD"];
+
+        // Construire données par mois pour chaque année
+        const dataByMonth = MOIS_LABELS.map((label, mi) => {
+          const point = { mois: label };
+          allYears.forEach(yr => {
+            const ent = transactions.filter(t => t.annee===yr && t.mois===mi+1 && t.es==="Entrée").reduce((s,t)=>s+t.montant,0);
+            const sor = transactions.filter(t => t.annee===yr && t.mois===mi+1 && t.es==="Sortie").reduce((s,t)=>s+t.montant,0);
+            point[`ent_${yr}`] = Math.round(ent * 100) / 100;
+            point[`sor_${yr}`] = Math.round(sor * 100) / 100;
+          });
+          return point;
+        });
+
+        const CustomTooltipCompare = ({ active, payload, label }) => {
+          if (!active || !payload?.length) return null;
+          return (
+            <div style={{ background:"#0F1929", border:"1px solid #1E3050", borderRadius:10, padding:"10px 16px", fontSize:12, color:"#E2E8F0", boxShadow:"0 4px 20px rgba(0,0,0,0.5)", minWidth:180 }}>
+              <div style={{ color:"#64748B", marginBottom:6, fontWeight:700 }}>{label}</div>
+              {payload.map((p, i) => (
+                <div key={i} style={{ display:"flex", justifyContent:"space-between", gap:16, marginBottom:2 }}>
+                  <span style={{ color: p.color }}>{p.name}</span>
+                  <span style={{ fontWeight:700, color:"#F1F5F9" }}>{fmt(p.value)}</span>
+                </div>
+              ))}
+            </div>
+          );
+        };
+
+        return (
+          <div>
+            <div style={{ marginBottom:18 }}>
+              <div style={{ fontSize:15, fontWeight:700, color:"#F1F5F9", marginBottom:4 }}>Comparaison annuelle — Entrées</div>
+              <div style={{ fontSize:12, color:"#64748B", marginBottom:12 }}>Entrées par mois, toutes années superposées</div>
+              <ResponsiveContainer width="100%" height={220}>
+                <BarChart data={dataByMonth} margin={{ top:8, right:20, bottom:4, left:0 }} barGap={2} barCategoryGap="20%">
+                  <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" vertical={false} />
+                  <XAxis dataKey="mois" tick={{ fontSize:11, fill:"#475569" }} tickLine={false} axisLine={false} />
+                  <YAxis orientation="right" tick={{ fontSize:10, fill:"#475569" }} tickLine={false} axisLine={false}
+                    tickFormatter={v => v>=1000?`${(v/1000).toFixed(1)}k`:v.toFixed(0)} width={48} />
+                  <Tooltip content={<CustomTooltipCompare />} />
+                  <Legend wrapperStyle={{ fontSize:11, color:"#64748B" }} />
+                  {allYears.map((yr, i) => (
+                    <Bar key={`ent_${yr}`} dataKey={`ent_${yr}`} name={`Entrées ${yr}`}
+                      fill={YEAR_COLORS_ENT[i % YEAR_COLORS_ENT.length]}
+                      radius={[3,3,0,0]} opacity={0.85} />
+                  ))}
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+
+            <div style={{ marginBottom:18 }}>
+              <div style={{ fontSize:15, fontWeight:700, color:"#F1F5F9", marginBottom:4 }}>Comparaison annuelle — Dépenses</div>
+              <div style={{ fontSize:12, color:"#64748B", marginBottom:12 }}>Dépenses par mois, toutes années superposées</div>
+              <ResponsiveContainer width="100%" height={220}>
+                <BarChart data={dataByMonth} margin={{ top:8, right:20, bottom:4, left:0 }} barGap={2} barCategoryGap="20%">
+                  <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" vertical={false} />
+                  <XAxis dataKey="mois" tick={{ fontSize:11, fill:"#475569" }} tickLine={false} axisLine={false} />
+                  <YAxis orientation="right" tick={{ fontSize:10, fill:"#475569" }} tickLine={false} axisLine={false}
+                    tickFormatter={v => v>=1000?`${(v/1000).toFixed(1)}k`:v.toFixed(0)} width={48} />
+                  <Tooltip content={<CustomTooltipCompare />} />
+                  <Legend wrapperStyle={{ fontSize:11, color:"#64748B" }} />
+                  {allYears.map((yr, i) => (
+                    <Bar key={`sor_${yr}`} dataKey={`sor_${yr}`} name={`Dépenses ${yr}`}
+                      fill={YEAR_COLORS_SOR[i % YEAR_COLORS_SOR.length]}
+                      radius={[3,3,0,0]} opacity={0.85} />
+                  ))}
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+
+            <div>
+              <div style={{ fontSize:15, fontWeight:700, color:"#F1F5F9", marginBottom:4 }}>Solde net mensuel</div>
+              <div style={{ fontSize:12, color:"#64748B", marginBottom:12 }}>Entrées − Dépenses par mois, toutes années</div>
+              <ResponsiveContainer width="100%" height={220}>
+                <BarChart data={dataByMonth.map(d => {
+                  const pt = { mois: d.mois };
+                  allYears.forEach(yr => { pt[`solde_${yr}`] = (d[`ent_${yr}`]||0) - (d[`sor_${yr}`]||0); });
+                  return pt;
+                })} margin={{ top:8, right:20, bottom:4, left:0 }} barGap={2} barCategoryGap="20%">
+                  <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" vertical={false} />
+                  <XAxis dataKey="mois" tick={{ fontSize:11, fill:"#475569" }} tickLine={false} axisLine={false} />
+                  <YAxis orientation="right" tick={{ fontSize:10, fill:"#475569" }} tickLine={false} axisLine={false}
+                    tickFormatter={v => v>=1000?`${(v/1000).toFixed(1)}k`:v<-1000?`${(v/1000).toFixed(1)}k`:v.toFixed(0)} width={52} />
+                  <Tooltip content={<CustomTooltipCompare />} />
+                  <Legend wrapperStyle={{ fontSize:11, color:"#64748B" }} />
+                  {allYears.map((yr, i) => (
+                    <Bar key={`solde_${yr}`} dataKey={`solde_${yr}`} name={`Solde ${yr}`}
+                      fill={YEAR_COLORS_ENT[i % YEAR_COLORS_ENT.length]}
+                      radius={[3,3,0,0]} opacity={0.85} />
+                  ))}
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+        );
+      })()}
 
       {activeTab === "catstat" && (
         <div>
@@ -4350,7 +3968,6 @@ function AppContent({ user }) {
   const [showQuickAdd, setShowQuickAdd] = useState(false);
   const [quickAddCats, setQuickAddCats] = useState({ entree: DEFAULT_CATS_ENTREE, sortie: DEFAULT_CATS_SORTIE });
   const [quickAddTx,   setQuickAddTx]   = useState([]); // "", "saving", "saved", "error"
-  const [transactions] = useState(() => { try { return JSON.parse(localStorage.getItem(BUDGET_KEY) || "[]"); } catch { return []; } });
 
   // ── Firebase sync ─────────────────────────────────────────────────────────
   const uid = user?.uid;
@@ -4359,8 +3976,6 @@ function AppContent({ user }) {
   const uidRef      = useRef(uid);
   const syncedRef   = useRef(false);
   const saveTimers  = useRef({});
-  const cryptoDataRef = useRef(cryptoData);
-  useEffect(() => { cryptoDataRef.current = cryptoData; }, [cryptoData]);
   useEffect(() => { uidRef.current = uid; }, [uid]);
 
   // Sauvegarde directe (pas de debounce) — appelle fbSet immediatement
@@ -4469,84 +4084,43 @@ function AppContent({ user }) {
     const ethQty = 1.0258;
 
     const fetchMarketHistory = async () => {
-      // ── Crypto daily cumulé (90j) — toutes cryptos ────────────────────────
-      // Map CoinGecko ID → qty pour chaque crypto dans le portfolio
-      const CG_IDS = {
-        "ETH":"ethereum","BTC":"bitcoin","BNB":"binancecoin","SOL":"solana",
-        "TON":"the-open-network","HNT":"helium","USDC":"usd-coin","FLUX":"zelcash",
-        "ADA":"cardano","KAS":"kaspa","ETHW":"ethereum-pow-iou","ERG":"ergo",
-        "ETC":"ethereum-classic","POL":"matic-network","RXD":"radiant",
-      };
-      // Construire liste des cryptos à fetcher (celles présentes dans le portfolio)
-      const cryptoPositions = cryptoDataRef.current
-        .filter(c => CG_IDS[c.code] && c.qty > 0)
-        .map(c => ({ cgId: CG_IDS[c.code], qty: c.qty, code: c.code }));
-
-      // Daily 90j — on accumule toutes les cryptos sur les mêmes dates
+      // ── Crypto daily (90j) ─────────────────────────────────────────────────
       try {
-        const dailyResults = await Promise.allSettled(
-          cryptoPositions.map(p =>
-            cgFetch(`https://api.coingecko.com/api/v3/coins/${p.cgId}/market_chart?vs_currency=eur&days=90&interval=daily`)
-              .then(r => r.json()).then(d => ({ p, prices: d.prices || [] }))
-          )
-        );
-        const byDate = {};
-        dailyResults.forEach(r => {
-          if (r.status !== "fulfilled") return;
-          const { p, prices } = r.value;
-          prices.forEach(([ts, price]) => {
-            const date = new Date(ts).toISOString().slice(0, 10);
-            byDate[date] = (byDate[date] || 0) + price * p.qty;
-          });
-        });
-        const pts = Object.entries(byDate).filter(([,v])=>v>0).sort(([a],[b])=>a.localeCompare(b))
-          .map(([date,v]) => ({ date, crypto: parseFloat(v.toFixed(2)) }));
-        if (pts.length > 0) setMarketHistory(prev => ({ ...prev, crypto: pts }));
-        console.log(`Crypto daily cumul: ${pts.length} pts, ${cryptoPositions.length} cryptos`);
+        const ethRes = await cgFetch("https://api.coingecko.com/api/v3/coins/ethereum/market_chart?vs_currency=eur&days=90&interval=daily");
+        const ethData = await ethRes.json();
+        if (ethData.prices) {
+          const pts = ethData.prices.map(([ts, price]) => ({
+            date: new Date(ts).toISOString().slice(0, 10),
+            crypto: parseFloat((price * ethQty).toFixed(2)),
+          }));
+          setMarketHistory(prev => ({ ...prev, crypto: pts }));
+        }
       } catch (e) { console.error("Crypto daily error:", e); }
 
-      // ── Crypto intraday 24h cumulé ────────────────────────────────────────
+      // ── Crypto intraday 24h (horaire = ~24 points) ────────────────────────
       try {
-        const results24 = await Promise.allSettled(
-          cryptoPositions.map(p =>
-            cgFetch(`https://api.coingecko.com/api/v3/coins/${p.cgId}/market_chart?vs_currency=eur&days=1`)
-              .then(r => r.json()).then(d => ({ p, prices: d.prices || [] }))
-          )
-        );
-        const byHour = {};
-        results24.forEach(r => {
-          if (r.status !== "fulfilled") return;
-          const { p, prices } = r.value;
-          prices.forEach(([ts, price]) => {
-            const date = new Date(ts).toISOString().slice(0, 13) + ":00";
-            byHour[date] = (byHour[date] || 0) + price * p.qty;
-          });
-        });
-        const pts24 = Object.entries(byHour).sort(([a],[b])=>a.localeCompare(b))
-          .map(([date,v]) => ({ date, crypto: parseFloat(v.toFixed(2)) }));
-        if (pts24.length > 0) setMarketHistory(prev => ({ ...prev, crypto24h: pts24 }));
+        const r24 = await cgFetch("https://api.coingecko.com/api/v3/coins/ethereum/market_chart?vs_currency=eur&days=1");
+        const d24 = await r24.json();
+        if (d24.prices) {
+          const pts = d24.prices.map(([ts, price]) => ({
+            date: new Date(ts).toISOString().slice(0, 16),
+            crypto: parseFloat((price * ethQty).toFixed(2)),
+          }));
+          setMarketHistory(prev => ({ ...prev, crypto24h: pts }));
+        }
       } catch (e) { console.error("Crypto 24h error:", e); }
 
-      // ── Crypto intraday 7j cumulé ─────────────────────────────────────────
+      // ── Crypto intraday 7j (horaire) ───────────────────────────────────────
       try {
-        const results7 = await Promise.allSettled(
-          cryptoPositions.map(p =>
-            cgFetch(`https://api.coingecko.com/api/v3/coins/${p.cgId}/market_chart?vs_currency=eur&days=7&interval=hourly`)
-              .then(r => r.json()).then(d => ({ p, prices: d.prices || [] }))
-          )
-        );
-        const byHour7 = {};
-        results7.forEach(r => {
-          if (r.status !== "fulfilled") return;
-          const { p, prices } = r.value;
-          prices.forEach(([ts, price]) => {
-            const date = new Date(ts).toISOString().slice(0, 13) + ":00";
-            byHour7[date] = (byHour7[date] || 0) + price * p.qty;
-          });
-        });
-        const pts7d = Object.entries(byHour7).sort(([a],[b])=>a.localeCompare(b))
-          .map(([date,v]) => ({ date, crypto: parseFloat(v.toFixed(2)) }));
-        if (pts7d.length > 0) setMarketHistory(prev => ({ ...prev, crypto7d: pts7d }));
+        const r7 = await cgFetch("https://api.coingecko.com/api/v3/coins/ethereum/market_chart?vs_currency=eur&days=7&interval=hourly");
+        const d7 = await r7.json();
+        if (d7.prices) {
+          const pts = d7.prices.map(([ts, price]) => ({
+            date: new Date(ts).toISOString().slice(0, 16),
+            crypto: parseFloat((price * ethQty).toFixed(2)),
+          }));
+          setMarketHistory(prev => ({ ...prev, crypto7d: pts }));
+        }
       } catch (e) { console.error("Crypto 7d error:", e); }
 
       // ── Bourse daily (3 mois) ──────────────────────────────────────────────
@@ -4921,7 +4495,7 @@ function AppContent({ user }) {
         )}
 
         {/* Views */}
-        {view === "overview"   && <Overview cryptoData={cryptoData} cryptoPrices={cryptoPrices} stocks={stocks} bank={bank} savings={savings} oraPrice={oraPrice} realestateTotal={realestateTotal} scpiTotal={scpiTotal} onNavigate={setView} history={history} marketHistoryTotal={marketHistory.total} marketHistoryIntraday={marketHistory} uid={user?.uid} transactions={transactions} />}
+        {view === "overview"   && <Overview cryptoData={cryptoData} cryptoPrices={cryptoPrices} stocks={stocks} bank={bank} savings={savings} oraPrice={oraPrice} realestateTotal={realestateTotal} scpiTotal={scpiTotal} onNavigate={setView} history={history} marketHistoryTotal={marketHistory.total} marketHistoryIntraday={marketHistory} uid={user?.uid} />}
         {view === "crypto"     && <CryptoView cryptoData={cryptoData} setCryptoData={setCryptoData} cryptoPrices={cryptoPrices} loading={loading} history={history} cryptoHistory={marketHistory.crypto} cryptoHistory24h={marketHistory.crypto24h} cryptoHistory7d={marketHistory.crypto7d} />}
         {view === "stocks"     && <StocksView stocks={stocks} setStocks={setStocks} history={history} marketHistory={marketHistory.stocks} stocksHistory24h={marketHistory.stocks24h} stocksHistory7d={marketHistory.stocks7d} peaValue={(() => { const pea = stocks.filter(s=>s.account==="pea").reduce((s,st)=>s+st.price*st.qty,0); return pea || 549.89; })()} nonCoteValue={stocks.filter(s=>["APOLLO","EQTF"].includes(s.symbol)).reduce((s,st)=>s+st.price*st.qty,0)} />}
         {view === "savings"    && <SavingsView savings={savings} setSavings={setSavings} oraPrice={oraPrice} />}
