@@ -857,16 +857,6 @@ function Overview({ cryptoData, cryptoPrices, stocks, bank, savings, oraPrice, r
       {/* ── Objectifs financiers ──────────────────────────── */}
       <ObjectifsFinanciers uid={uid} />
 
-      {/* ── Évolution patrimoine net ───────────────────────── */}
-      {history && history.length > 1 && (
-        <Card style={{ marginBottom:16, padding:"14px 18px" }}>
-          <div style={{ fontSize:13, fontWeight:700, color:"#F1F5F9", marginBottom:10 }}>
-            📈 Évolution du patrimoine net — depuis le début
-          </div>
-          <Variation history={history} dataKey="total" color="#818CF8" />
-          <MiniAreaChart data={history} dataKey="total" color="#818CF8" height={180} showPeriodSelector={true} />
-        </Card>
-      )}
 
       {/* Graphique répartition — sous les sections, pleine largeur */}
       <Card style={{ display: "flex", flexDirection: "column", alignItems: "center", marginBottom: 20, padding: "16px 20px" }}>
