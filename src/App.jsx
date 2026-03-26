@@ -3295,8 +3295,6 @@ function BudgetView({ uid, quickAddTx, setQuickAddTx, onCatsChange }) {
         });
 
         // Tableau récap par mois pour la paire sélectionnée
-        const [inflYear1, setInflYear1_] = React.useState ? null : null; // will use outer state
-
         // KPIs globaux : variation entrées et sorties entre 2 années complètes
         const annualKpis = pairs.map(([yr1, yr2]) => {
           const totE1 = transactions.filter(t=>t.annee===yr1&&t.es==="Entrée").reduce((s,t)=>s+t.montant,0);
