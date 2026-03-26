@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from "react";
-import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer, AreaChart, Area, XAxis, YAxis, CartesianGrid, LineChart, Line, BarChart, Bar, Legend } from "recharts";
+import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer, AreaChart, Area, XAxis, YAxis, CartesianGrid, LineChart, Line, BarChart, Bar, Legend, ReferenceLine } from "recharts";
 import { initializeApp } from "firebase/app";
 import { getFirestore, doc, getDoc, setDoc } from "firebase/firestore";
 import { getAuth, signInWithEmailAndPassword, onAuthStateChanged, signOut } from "firebase/auth";
@@ -857,6 +857,16 @@ function Overview({ cryptoData, cryptoPrices, stocks, bank, savings, oraPrice, r
       {/* ── Objectifs financiers ──────────────────────────── */}
       <ObjectifsFinanciers uid={uid} />
 
+      {/* ── Évolution patrimoine net ───────────────────────── */}
+      {history && history.length > 1 && (
+        <Card style={{ marginBottom:16, padding:"14px 18px" }}>
+          <div style={{ fontSize:13, fontWeight:700, color:"#F1F5F9", marginBottom:10 }}>
+            📈 Évolution du patrimoine net — depuis le début
+          </div>
+          <Variation history={history} dataKey="total" color="#818CF8" />
+          <MiniAreaChart data={history} dataKey="total" color="#818CF8" height={180} showPeriodSelector={true} />
+        </Card>
+      )}
 
       {/* Graphique répartition — sous les sections, pleine largeur */}
       <Card style={{ display: "flex", flexDirection: "column", alignItems: "center", marginBottom: 20, padding: "16px 20px" }}>
@@ -2828,7 +2838,7 @@ function BudgetView({ uid, quickAddTx, setQuickAddTx, onCatsChange }) {
 
       {/* ── Nav tabs + year selector ── */}
       <div style={{ display:"flex", gap:6, marginBottom:18, flexWrap:"wrap", alignItems:"center" }}>
-        {[["overview","📊 Synthèse"],["detail","📋 Détail"],["sankey","🌊 Flux"],["catstat","🔬 Stats catégorie"],["categories","🏷 Catégories"],["add","➕ Ajouter"],["transactions","📝 Transactions"],["sync","🔗 Sources"]].map(([k,l]) => (
+        {[["overview","📊 Synthèse"],["detail","📋 Détail"],["sankey","🌊 Flux"],["compare","📅 Comparaison"],["inflation","📉 Inflation perso"],["catstat","🔬 Stats catégorie"],["categories","🏷 Catégories"],["add","➕ Ajouter"],["transactions","📝 Transactions"],["sync","🔗 Sources"]].map(([k,l]) => (
           <Pill key={k} label={l} active={activeTab===k} onClick={() => setActiveTab(k)} />
         ))}
         <div style={{ marginLeft:"auto", display:"flex", gap:6 }}>
@@ -3140,6 +3150,377 @@ function BudgetView({ uid, quickAddTx, setQuickAddTx, onCatsChange }) {
           />
         </div>
       )}
+
+      {activeTab === "compare" && (() => {
+        // Regrouper entrées et sorties par (année, mois)
+        const MOIS_LABELS = ["Jan","Fév","Mar","Avr","Mai","Jun","Jul","Aoû","Sep","Oct","Nov","Déc"];
+        const allYears = [...new Set(transactions.map(t => t.annee))].sort((a,b)=>a-b);
+        // Palette de couleurs par année
+        const YEAR_COLORS_ENT = ["#34D399","#60A5FA","#A78BFA","#FBBF24","#F472B6"];
+        const YEAR_COLORS_SOR = ["#F87171","#FB923C","#FCD34D","#86EFAC","#93C5FD"];
+
+        // Construire données par mois pour chaque année
+        const dataByMonth = MOIS_LABELS.map((label, mi) => {
+          const point = { mois: label };
+          allYears.forEach(yr => {
+            const ent = transactions.filter(t => t.annee===yr && t.mois===mi+1 && t.es==="Entrée").reduce((s,t)=>s+t.montant,0);
+            const sor = transactions.filter(t => t.annee===yr && t.mois===mi+1 && t.es==="Sortie").reduce((s,t)=>s+t.montant,0);
+            point[`ent_${yr}`] = Math.round(ent * 100) / 100;
+            point[`sor_${yr}`] = Math.round(sor * 100) / 100;
+          });
+          return point;
+        });
+
+        const CustomTooltipCompare = ({ active, payload, label }) => {
+          if (!active || !payload?.length) return null;
+          return (
+            <div style={{ background:"#0F1929", border:"1px solid #1E3050", borderRadius:10, padding:"10px 16px", fontSize:12, color:"#E2E8F0", boxShadow:"0 4px 20px rgba(0,0,0,0.5)", minWidth:180 }}>
+              <div style={{ color:"#64748B", marginBottom:6, fontWeight:700 }}>{label}</div>
+              {payload.map((p, i) => (
+                <div key={i} style={{ display:"flex", justifyContent:"space-between", gap:16, marginBottom:2 }}>
+                  <span style={{ color: p.color }}>{p.name}</span>
+                  <span style={{ fontWeight:700, color:"#F1F5F9" }}>{fmt(p.value)}</span>
+                </div>
+              ))}
+            </div>
+          );
+        };
+
+        return (
+          <div>
+            <div style={{ marginBottom:18 }}>
+              <div style={{ fontSize:15, fontWeight:700, color:"#F1F5F9", marginBottom:4 }}>Comparaison annuelle — Entrées</div>
+              <div style={{ fontSize:12, color:"#64748B", marginBottom:12 }}>Entrées par mois, toutes années superposées</div>
+              <ResponsiveContainer width="100%" height={220}>
+                <BarChart data={dataByMonth} margin={{ top:8, right:20, bottom:4, left:0 }} barGap={2} barCategoryGap="20%">
+                  <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" vertical={false} />
+                  <XAxis dataKey="mois" tick={{ fontSize:11, fill:"#475569" }} tickLine={false} axisLine={false} />
+                  <YAxis orientation="right" tick={{ fontSize:10, fill:"#475569" }} tickLine={false} axisLine={false}
+                    tickFormatter={v => v>=1000?`${(v/1000).toFixed(1)}k`:v.toFixed(0)} width={48} />
+                  <Tooltip content={<CustomTooltipCompare />} />
+                  <Legend wrapperStyle={{ fontSize:11, color:"#64748B" }} />
+                  {allYears.map((yr, i) => (
+                    <Bar key={`ent_${yr}`} dataKey={`ent_${yr}`} name={`Entrées ${yr}`}
+                      fill={YEAR_COLORS_ENT[i % YEAR_COLORS_ENT.length]}
+                      radius={[3,3,0,0]} opacity={0.85} />
+                  ))}
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+
+            <div style={{ marginBottom:18 }}>
+              <div style={{ fontSize:15, fontWeight:700, color:"#F1F5F9", marginBottom:4 }}>Comparaison annuelle — Dépenses</div>
+              <div style={{ fontSize:12, color:"#64748B", marginBottom:12 }}>Dépenses par mois, toutes années superposées</div>
+              <ResponsiveContainer width="100%" height={220}>
+                <BarChart data={dataByMonth} margin={{ top:8, right:20, bottom:4, left:0 }} barGap={2} barCategoryGap="20%">
+                  <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" vertical={false} />
+                  <XAxis dataKey="mois" tick={{ fontSize:11, fill:"#475569" }} tickLine={false} axisLine={false} />
+                  <YAxis orientation="right" tick={{ fontSize:10, fill:"#475569" }} tickLine={false} axisLine={false}
+                    tickFormatter={v => v>=1000?`${(v/1000).toFixed(1)}k`:v.toFixed(0)} width={48} />
+                  <Tooltip content={<CustomTooltipCompare />} />
+                  <Legend wrapperStyle={{ fontSize:11, color:"#64748B" }} />
+                  {allYears.map((yr, i) => (
+                    <Bar key={`sor_${yr}`} dataKey={`sor_${yr}`} name={`Dépenses ${yr}`}
+                      fill={YEAR_COLORS_SOR[i % YEAR_COLORS_SOR.length]}
+                      radius={[3,3,0,0]} opacity={0.85} />
+                  ))}
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+
+            <div>
+              <div style={{ fontSize:15, fontWeight:700, color:"#F1F5F9", marginBottom:4 }}>Solde net mensuel</div>
+              <div style={{ fontSize:12, color:"#64748B", marginBottom:12 }}>Entrées − Dépenses par mois, toutes années</div>
+              <ResponsiveContainer width="100%" height={220}>
+                <BarChart data={dataByMonth.map(d => {
+                  const pt = { mois: d.mois };
+                  allYears.forEach(yr => { pt[`solde_${yr}`] = (d[`ent_${yr}`]||0) - (d[`sor_${yr}`]||0); });
+                  return pt;
+                })} margin={{ top:8, right:20, bottom:4, left:0 }} barGap={2} barCategoryGap="20%">
+                  <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" vertical={false} />
+                  <XAxis dataKey="mois" tick={{ fontSize:11, fill:"#475569" }} tickLine={false} axisLine={false} />
+                  <YAxis orientation="right" tick={{ fontSize:10, fill:"#475569" }} tickLine={false} axisLine={false}
+                    tickFormatter={v => v>=1000?`${(v/1000).toFixed(1)}k`:v<-1000?`${(v/1000).toFixed(1)}k`:v.toFixed(0)} width={52} />
+                  <Tooltip content={<CustomTooltipCompare />} />
+                  <Legend wrapperStyle={{ fontSize:11, color:"#64748B" }} />
+                  {allYears.map((yr, i) => (
+                    <Bar key={`solde_${yr}`} dataKey={`solde_${yr}`} name={`Solde ${yr}`}
+                      fill={YEAR_COLORS_ENT[i % YEAR_COLORS_ENT.length]}
+                      radius={[3,3,0,0]} opacity={0.85} />
+                  ))}
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* ══════════════════════════════════════════════════════════════════════
+          TAB : INFLATION PERSONNELLE
+      ══════════════════════════════════════════════════════════════════════ */}
+      {activeTab === "inflation" && (() => {
+        const MOIS_LABELS = ["Jan","Fév","Mar","Avr","Mai","Jun","Jul","Aoû","Sep","Oct","Nov","Déc"];
+        const allYears = [...new Set(transactions.map(t => t.annee))].sort((a,b)=>a-b);
+
+        // Pour chaque mois (1–12) et chaque paire d'années consécutives, calculer la variation
+        // Données : pour chaque mois, entrées et sorties par année
+        const dataByMonth = MOIS_LABELS.map((label, mi) => {
+          const mo = mi + 1;
+          const point = { mois: label, mo };
+          allYears.forEach(yr => {
+            point[`ent_${yr}`]  = transactions.filter(t => t.annee===yr && t.mois===mo && t.es==="Entrée").reduce((s,t)=>s+t.montant,0);
+            point[`sor_${yr}`]  = transactions.filter(t => t.annee===yr && t.mois===mo && t.es==="Sortie").reduce((s,t)=>s+t.montant,0);
+          });
+          return point;
+        });
+
+        // Paires d'années disponibles (ex: 2024→2025, 2025→2026)
+        const pairs = [];
+        for (let i = 0; i < allYears.length - 1; i++) pairs.push([allYears[i], allYears[i+1]]);
+
+        // Couleurs par paire
+        const PAIR_COLORS_ENT = ["#34D399","#60A5FA","#A78BFA","#FBBF24"];
+        const PAIR_COLORS_SOR = ["#F87171","#FB923C","#FCD34D","#86EFAC"];
+
+        // Données variation % pour chaque mois et chaque paire
+        const evolutionPct = dataByMonth.map(d => {
+          const pt = { mois: d.mois };
+          pairs.forEach(([yr1, yr2], pi) => {
+            const e1 = d[`ent_${yr1}`] || 0, e2 = d[`ent_${yr2}`] || 0;
+            const s1 = d[`sor_${yr1}`] || 0, s2 = d[`sor_${yr2}`] || 0;
+            pt[`pct_ent_${yr1}_${yr2}`] = e1 > 0 ? Math.round((e2-e1)/e1*1000)/10 : null;
+            pt[`pct_sor_${yr1}_${yr2}`] = s1 > 0 ? Math.round((s2-s1)/s1*1000)/10 : null;
+          });
+          return pt;
+        });
+
+        // Tableau récap par mois pour la paire sélectionnée
+        const [inflYear1, setInflYear1_] = React.useState ? null : null; // will use outer state
+
+        // KPIs globaux : variation entrées et sorties entre 2 années complètes
+        const annualKpis = pairs.map(([yr1, yr2]) => {
+          const totE1 = transactions.filter(t=>t.annee===yr1&&t.es==="Entrée").reduce((s,t)=>s+t.montant,0);
+          const totE2 = transactions.filter(t=>t.annee===yr2&&t.es==="Entrée").reduce((s,t)=>s+t.montant,0);
+          const totS1 = transactions.filter(t=>t.annee===yr1&&t.es==="Sortie").reduce((s,t)=>s+t.montant,0);
+          const totS2 = transactions.filter(t=>t.annee===yr2&&t.es==="Sortie").reduce((s,t)=>s+t.montant,0);
+          const pctE = totE1 > 0 ? (totE2-totE1)/totE1*100 : null;
+          const pctS = totS1 > 0 ? (totS2-totS1)/totS1*100 : null;
+          return { yr1, yr2, totE1, totE2, totS1, totS2, pctE, pctS, delta: totS2-totS1 };
+        });
+
+        const CustomTooltipInflation = ({ active, payload, label }) => {
+          if (!active || !payload?.length) return null;
+          return (
+            <div style={{ background:"#0F1929", border:"1px solid #1E3050", borderRadius:10, padding:"10px 16px", fontSize:12, color:"#E2E8F0", boxShadow:"0 4px 20px rgba(0,0,0,0.5)", minWidth:200 }}>
+              <div style={{ color:"#64748B", marginBottom:6, fontWeight:700 }}>{label}</div>
+              {payload.filter(p => p.value != null).map((p, i) => (
+                <div key={i} style={{ display:"flex", justifyContent:"space-between", gap:16, marginBottom:3 }}>
+                  <span style={{ color: p.color }}>{p.name}</span>
+                  <span style={{ fontWeight:700, color: p.value > 0 ? "#F87171" : p.value < 0 ? "#34D399" : "#94A3B8" }}>
+                    {p.value > 0 ? "+" : ""}{p.value != null ? p.value.toFixed(1) : "—"}%
+                  </span>
+                </div>
+              ))}
+            </div>
+          );
+        };
+
+        const CustomTooltipAbs = ({ active, payload, label }) => {
+          if (!active || !payload?.length) return null;
+          return (
+            <div style={{ background:"#0F1929", border:"1px solid #1E3050", borderRadius:10, padding:"10px 16px", fontSize:12, color:"#E2E8F0", boxShadow:"0 4px 20px rgba(0,0,0,0.5)", minWidth:200 }}>
+              <div style={{ color:"#64748B", marginBottom:6, fontWeight:700 }}>{label}</div>
+              {payload.map((p, i) => (
+                <div key={i} style={{ display:"flex", justifyContent:"space-between", gap:16, marginBottom:2 }}>
+                  <span style={{ color: p.color }}>{p.name}</span>
+                  <span style={{ fontWeight:700, color:"#F1F5F9" }}>{fmt(p.value)}</span>
+                </div>
+              ))}
+            </div>
+          );
+        };
+
+        if (allYears.length < 2) return (
+          <Card style={{ padding:"32px 24px", textAlign:"center" }}>
+            <div style={{ fontSize:15, color:"#64748B" }}>⚠️ Il faut au moins 2 années de données pour afficher l'inflation personnelle.</div>
+          </Card>
+        );
+
+        return (
+          <div>
+            {/* ── KPIs annuels ── */}
+            {annualKpis.map(({ yr1, yr2, totE1, totE2, totS1, totS2, pctE, pctS, delta }) => (
+              <Card key={`${yr1}-${yr2}`} style={{ marginBottom:14, padding:"16px 20px", border:"1px solid rgba(251,191,36,0.15)", background:"rgba(15,23,42,0.7)" }}>
+                <div style={{ fontSize:11, color:"#FBBF24", textTransform:"uppercase", letterSpacing:"0.1em", marginBottom:12, fontWeight:700 }}>
+                  📉 {yr1} → {yr2} · Évolution annuelle
+                </div>
+                <div style={{ display:"flex", gap:14, flexWrap:"wrap" }}>
+                  {[
+                    { label:`Entrées ${yr1}`, val:totE1, color:"#34D399", icon:"📥" },
+                    { label:`Entrées ${yr2}`, val:totE2, color:"#34D399", icon:"📥" },
+                    { label:"Δ Entrées", val:totE2-totE1, pct:pctE, color: (totE2-totE1)>=0?"#34D399":"#F87171", icon:"📊" },
+                    { label:`Dépenses ${yr1}`, val:totS1, color:"#F87171", icon:"📤" },
+                    { label:`Dépenses ${yr2}`, val:totS2, color:"#F87171", icon:"📤" },
+                    { label:"Δ Dépenses", val:delta, pct:pctS, color: delta<=0?"#34D399":"#F87171", icon:"🔥" },
+                  ].map(({ label, val, pct, color, icon }) => (
+                    <div key={label} style={{ background:"rgba(255,255,255,0.04)", borderRadius:10, padding:"10px 14px", minWidth:120, border:"1px solid rgba(255,255,255,0.06)" }}>
+                      <div style={{ fontSize:10, color:"#64748B", marginBottom:4 }}>{icon} {label}</div>
+                      <div style={{ fontSize:17, fontWeight:800, color }}>{val>=0?"+":""}{fmt(val)}</div>
+                      {pct != null && (
+                        <div style={{ fontSize:11, color: pct<=0?"#34D399":"#F87171", marginTop:2, fontWeight:700 }}>
+                          {pct >= 0 ? "▲" : "▼"} {Math.abs(pct).toFixed(1)}%
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </Card>
+            ))}
+
+            {/* ── Graphique % variation dépenses par mois ── */}
+            <Card style={{ marginBottom:14, padding:"16px 20px" }}>
+              <div style={{ fontSize:14, fontWeight:700, color:"#F1F5F9", marginBottom:4 }}>Variation des dépenses mois par mois (N vs N-1)</div>
+              <div style={{ fontSize:12, color:"#64748B", marginBottom:14 }}>
+                En %, comparaison du même mois d'une année à l'autre. Rouge = inflation, vert = économies.
+              </div>
+              <ResponsiveContainer width="100%" height={240}>
+                <BarChart data={evolutionPct} margin={{ top:8, right:24, bottom:4, left:0 }} barGap={4} barCategoryGap="20%">
+                  <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" vertical={false} />
+                  <XAxis dataKey="mois" tick={{ fontSize:11, fill:"#475569" }} tickLine={false} axisLine={false} />
+                  <YAxis tick={{ fontSize:10, fill:"#475569" }} tickLine={false} axisLine={false}
+                    tickFormatter={v => `${v > 0 ? "+" : ""}${v}%`} />
+                  <Tooltip content={<CustomTooltipInflation />} />
+                  <ReferenceLine y={0} stroke="rgba(255,255,255,0.15)" strokeWidth={1} />
+                  <Legend wrapperStyle={{ fontSize:11, color:"#64748B" }} />
+                  {pairs.map(([yr1, yr2], pi) => (
+                    <Bar key={`pct_sor_${yr1}_${yr2}`}
+                      dataKey={`pct_sor_${yr1}_${yr2}`}
+                      name={`Dép. ${yr1}→${yr2}`}
+                      radius={[3,3,0,0]}
+                      fill={PAIR_COLORS_SOR[pi % PAIR_COLORS_SOR.length]}
+                      opacity={0.9}>
+                      {evolutionPct.map((entry, index) => {
+                        const v = entry[`pct_sor_${yr1}_${yr2}`];
+                        return <Cell key={index} fill={v == null ? "transparent" : v > 0 ? "#F87171" : "#34D399"} />;
+                      })}
+                    </Bar>
+                  ))}
+                </BarChart>
+              </ResponsiveContainer>
+            </Card>
+
+            {/* ── Graphique % variation entrées par mois ── */}
+            <Card style={{ marginBottom:14, padding:"16px 20px" }}>
+              <div style={{ fontSize:14, fontWeight:700, color:"#F1F5F9", marginBottom:4 }}>Variation des entrées mois par mois (N vs N-1)</div>
+              <div style={{ fontSize:12, color:"#64748B", marginBottom:14 }}>
+                En %, comparaison du même mois d'une année à l'autre. Vert = hausse des revenus, rouge = baisse.
+              </div>
+              <ResponsiveContainer width="100%" height={240}>
+                <BarChart data={evolutionPct} margin={{ top:8, right:24, bottom:4, left:0 }} barGap={4} barCategoryGap="20%">
+                  <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" vertical={false} />
+                  <XAxis dataKey="mois" tick={{ fontSize:11, fill:"#475569" }} tickLine={false} axisLine={false} />
+                  <YAxis tick={{ fontSize:10, fill:"#475569" }} tickLine={false} axisLine={false}
+                    tickFormatter={v => `${v > 0 ? "+" : ""}${v}%`} />
+                  <Tooltip content={<CustomTooltipInflation />} />
+                  <ReferenceLine y={0} stroke="rgba(255,255,255,0.15)" strokeWidth={1} />
+                  <Legend wrapperStyle={{ fontSize:11, color:"#64748B" }} />
+                  {pairs.map(([yr1, yr2], pi) => (
+                    <Bar key={`pct_ent_${yr1}_${yr2}`}
+                      dataKey={`pct_ent_${yr1}_${yr2}`}
+                      name={`Rev. ${yr1}→${yr2}`}
+                      radius={[3,3,0,0]}
+                      fill={PAIR_COLORS_ENT[pi % PAIR_COLORS_ENT.length]}
+                      opacity={0.9}>
+                      {evolutionPct.map((entry, index) => {
+                        const v = entry[`pct_ent_${yr1}_${yr2}`];
+                        return <Cell key={index} fill={v == null ? "transparent" : v >= 0 ? "#34D399" : "#F87171"} />;
+                      })}
+                    </Bar>
+                  ))}
+                </BarChart>
+              </ResponsiveContainer>
+            </Card>
+
+            {/* ── Graphique montants absolus superposés ── */}
+            <Card style={{ marginBottom:14, padding:"16px 20px" }}>
+              <div style={{ fontSize:14, fontWeight:700, color:"#F1F5F9", marginBottom:4 }}>Dépenses absolues — même mois, années superposées</div>
+              <div style={{ fontSize:12, color:"#64748B", marginBottom:14 }}>Montant en € par mois pour comparer directement le niveau de dépenses.</div>
+              <ResponsiveContainer width="100%" height={220}>
+                <BarChart data={dataByMonth} margin={{ top:8, right:24, bottom:4, left:0 }} barGap={2} barCategoryGap="20%">
+                  <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" vertical={false} />
+                  <XAxis dataKey="mois" tick={{ fontSize:11, fill:"#475569" }} tickLine={false} axisLine={false} />
+                  <YAxis orientation="right" tick={{ fontSize:10, fill:"#475569" }} tickLine={false} axisLine={false}
+                    tickFormatter={v => v>=1000?`${(v/1000).toFixed(1)}k`:v.toFixed(0)} width={48} />
+                  <Tooltip content={<CustomTooltipAbs />} />
+                  <Legend wrapperStyle={{ fontSize:11, color:"#64748B" }} />
+                  {allYears.map((yr, i) => (
+                    <Bar key={`sor_${yr}`} dataKey={`sor_${yr}`} name={`Dép. ${yr}`}
+                      fill={PAIR_COLORS_SOR[i % PAIR_COLORS_SOR.length]}
+                      radius={[3,3,0,0]} opacity={0.85} />
+                  ))}
+                </BarChart>
+              </ResponsiveContainer>
+            </Card>
+
+            {/* ── Tableau récapitulatif mois par mois ── */}
+            {pairs.map(([yr1, yr2]) => (
+              <Card key={`tbl-${yr1}-${yr2}`} style={{ padding:0, overflow:"hidden", marginBottom:14 }}>
+                <div style={{ padding:"12px 18px", borderBottom:"1px solid rgba(255,255,255,0.06)", fontSize:13, fontWeight:700, color:"#F1F5F9" }}>
+                  Tableau comparatif {yr1} → {yr2}
+                </div>
+                <div style={{ overflowX:"auto" }}>
+                  <table style={{ width:"100%", borderCollapse:"collapse", fontSize:12 }}>
+                    <thead>
+                      <tr style={{ background:"rgba(255,255,255,0.04)" }}>
+                        {["Mois","Entrées "+yr1,"Entrées "+yr2,"Δ Entrées","Dép. "+yr1,"Dép. "+yr2,"Δ Dépenses","Solde "+yr1,"Solde "+yr2].map(h => (
+                          <th key={h} style={{ padding:"10px 14px", textAlign:"right", color:"#64748B", fontWeight:600, fontSize:11, whiteSpace:"nowrap", borderBottom:"1px solid rgba(255,255,255,0.08)" }}
+                            {...(h==="Mois"?{style:{padding:"10px 14px",textAlign:"left",color:"#64748B",fontWeight:600,fontSize:11,whiteSpace:"nowrap",borderBottom:"1px solid rgba(255,255,255,0.08)"}}:{})}>
+                            {h}
+                          </th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {MOIS_LABELS.map((label, mi) => {
+                        const mo = mi + 1;
+                        const e1 = transactions.filter(t=>t.annee===yr1&&t.mois===mo&&t.es==="Entrée").reduce((s,t)=>s+t.montant,0);
+                        const e2 = transactions.filter(t=>t.annee===yr2&&t.mois===mo&&t.es==="Entrée").reduce((s,t)=>s+t.montant,0);
+                        const s1 = transactions.filter(t=>t.annee===yr1&&t.mois===mo&&t.es==="Sortie").reduce((s,t)=>s+t.montant,0);
+                        const s2 = transactions.filter(t=>t.annee===yr2&&t.mois===mo&&t.es==="Sortie").reduce((s,t)=>s+t.montant,0);
+                        const hasData = e1>0||e2>0||s1>0||s2>0;
+                        if (!hasData) return null;
+                        const deltaE = e2 - e1;
+                        const deltaS = s2 - s1;
+                        const pctS = s1 > 0 ? (deltaS/s1*100) : null;
+                        return (
+                          <tr key={mo} style={{ background: mi%2===0?"transparent":"rgba(255,255,255,0.02)", borderBottom:"1px solid rgba(255,255,255,0.04)" }}>
+                            <td style={{ padding:"9px 14px", color:"#F1F5F9", fontWeight:600 }}>{label}</td>
+                            <td style={{ padding:"9px 14px", textAlign:"right", color:"#34D399" }}>{e1>0?fmt(e1):"—"}</td>
+                            <td style={{ padding:"9px 14px", textAlign:"right", color:"#34D399" }}>{e2>0?fmt(e2):"—"}</td>
+                            <td style={{ padding:"9px 14px", textAlign:"right", fontWeight:700, color:deltaE>=0?"#34D399":"#F87171" }}>{e1>0||e2>0?(deltaE>=0?"+":"")+fmt(deltaE):"—"}</td>
+                            <td style={{ padding:"9px 14px", textAlign:"right", color:"#F87171" }}>{s1>0?fmt(s1):"—"}</td>
+                            <td style={{ padding:"9px 14px", textAlign:"right", color:"#F87171" }}>{s2>0?fmt(s2):"—"}</td>
+                            <td style={{ padding:"9px 14px", textAlign:"right" }}>
+                              {(s1>0||s2>0) ? (
+                                <span style={{ fontWeight:700, color:deltaS<=0?"#34D399":"#F87171" }}>
+                                  {deltaS>=0?"+":""}{fmt(deltaS)}
+                                  {pctS!=null && <span style={{ fontSize:10, marginLeft:4, opacity:0.8 }}>({pctS>=0?"+":""}{pctS.toFixed(1)}%)</span>}
+                                </span>
+                              ) : "—"}
+                            </td>
+                            <td style={{ padding:"9px 14px", textAlign:"right", color:(e1-s1)>=0?"#34D399":"#F87171", fontWeight:600 }}>{(e1>0||s1>0)?fmt(e1-s1):"—"}</td>
+                            <td style={{ padding:"9px 14px", textAlign:"right", color:(e2-s2)>=0?"#34D399":"#F87171", fontWeight:600 }}>{(e2>0||s2>0)?fmt(e2-s2):"—"}</td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </Card>
+            ))}
+          </div>
+        );
+      })()}
 
       {activeTab === "catstat" && (
         <div>
