@@ -4101,6 +4101,675 @@ export default function App() {
   return <AppContent user={user} />;
 }
 
+// ─── SIMULATEUR DE CRÉDIT ─────────────────────────────────────────────────────
+function SimulateurCredit({ cryptoTotal, stocksTotal, savingsTotal, bankTotal, realestateTotal, scpiTotal, grandTotal, uid }) {
+  const [transactions, setTransactions] = useState([]);
+  useEffect(() => {
+    if (uid) {
+      fbGet(uid, "budget_tx").then(d => { if (d) setTransactions(d); });
+    } else {
+      try { const r = JSON.parse(localStorage.getItem("patrimoine_budget_v1")||"[]"); if(r.length) setTransactions(r); } catch {}
+    }
+  }, [uid]);
+
+  const CONTEXTES = [
+    { key: "rp",      label: "🏠 Résidence principale" },
+    { key: "locatif", label: "🏢 Investissement locatif" },
+    { key: "rachat",  label: "🔄 Rachat de crédit" },
+    { key: "general", label: "📋 Usage général" },
+  ];
+
+  const inpS = { background:"#1E293B", border:"1px solid #334155", borderRadius:8, padding:"8px 12px", color:"#F1F5F9", fontSize:13, width:"100%", outline:"none" };
+  const lblS = { fontSize:11, color:"#64748B", marginBottom:5, display:"block" };
+  const rangeS = { width:"100%", accentColor:"#818CF8", cursor:"pointer" };
+
+  // ── État principal
+  const [contexte, setContexte] = useState("rp");
+  const [activeSection, setActiveSection] = useState("mensualite");
+
+  // ── Params crédit communs
+  const [montantBien, setMontantBien]   = useState(300000);
+  const [apport,      setApport]        = useState(30000);
+  const [duree,       setDuree]         = useState(20);
+  const [taux,        setTaux]          = useState(3.5);
+  const [assurance,   setAssurance]     = useState(0.35);
+  const [fraisNotaire, setFraisNotaire] = useState(7.5); // % du prix pour RP (neuf=3%)
+  const [differe,     setDiffere]       = useState(0); // mois de différé
+  const [tauxEndet,   setTauxEndet]     = useState(35); // % max endettement
+
+  // ── Tableau amortissement
+  const [amortView,   setAmortView]     = useState("annuel"); // "mensuel" | "annuel"
+  const [amortPage,   setAmortPage]     = useState(0);
+  const AMORT_PER_PAGE = 24; // mois par page
+
+  // ── Capacité d'emprunt
+  const [revenuMode,  setRevenuMode]    = useState("manuel"); // "manuel" | "budget"
+  const [revenuManuel, setRevenuManuel] = useState(3000);
+  const [chargesExistantes, setChargesExistantes] = useState(0);
+
+  // Sources patrimoine pour apport
+  const SOURCES = [
+    { key: "bank",       label: "🏦 Banque",        val: bankTotal },
+    { key: "savings",    label: "🟠 Épargne sal.",   val: savingsTotal },
+    { key: "crypto",     label: "₿ Crypto",          val: cryptoTotal },
+    { key: "stocks",     label: "📈 Bourse",         val: stocksTotal },
+    { key: "scpi",       label: "🏢 SCPI",           val: scpiTotal },
+    { key: "realestate", label: "🏠 Immobilier",     val: realestateTotal },
+  ];
+  const [selectedSources, setSelectedSources] = useState(["bank"]);
+  const toggleSource = (key) => setSelectedSources(prev =>
+    prev.includes(key) ? prev.filter(k=>k!==key) : [...prev, key]
+  );
+  const apportPatrimoine = SOURCES.filter(s => selectedSources.includes(s.key)).reduce((s,x) => s+x.val, 0);
+
+  // ── Revenus budget auto (moyenne 12 derniers mois)
+  const revenuBudgetAuto = (() => {
+    if (!transactions || !transactions.length) return 0;
+    const now = new Date();
+    const mo = now.getMonth()+1, yr = now.getFullYear();
+    const moisPassés = [];
+    for (let i=1; i<=12; i++) { let m=mo-i, y=yr; if(m<=0){m+=12;y-=1;} moisPassés.push({y,m}); }
+    const total = moisPassés.reduce((s,{y,m}) =>
+      s + transactions.filter(t=>t.annee===y&&t.mois===m&&t.es==="Entrée").reduce((a,t)=>a+t.montant,0), 0);
+    const nonZero = moisPassés.filter(({y,m}) => transactions.some(t=>t.annee===y&&t.mois===m&&t.es==="Entrée")).length;
+    return nonZero > 0 ? total/nonZero : 0;
+  })();
+
+  const revenuNet = revenuMode === "budget" ? revenuBudgetAuto : revenuManuel;
+
+  // ── Calculs de base
+  const fraisNotaireMontant = montantBien * fraisNotaire / 100;
+  const coutTotal_bien = montantBien + fraisNotaireMontant;
+  const montantEmprunte = Math.max(0, coutTotal_bien - apport);
+
+  // Mensualité (formule annuité constante) + assurance
+  const tauxMensuel = taux / 100 / 12;
+  const n = duree * 12;
+  const mensualiteHorsAssurance = tauxMensuel > 0
+    ? montantEmprunte * (tauxMensuel * Math.pow(1+tauxMensuel, n)) / (Math.pow(1+tauxMensuel, n) - 1)
+    : montantEmprunte / n;
+  const assuranceMensuelle = montantEmprunte * assurance / 100 / 12;
+  const mensualiteTotale = mensualiteHorsAssurance + assuranceMensuelle;
+  const coutInterets = mensualiteHorsAssurance * n - montantEmprunte;
+  const coutAssurance = assuranceMensuelle * n;
+  const coutTotalCredit = montantEmprunte + coutInterets + coutAssurance;
+  const taeg = (() => {
+    // Approximation TAEG : taux effectif global avec assurance
+    let lo=0, hi=1, m=0;
+    for (let i=0; i<60; i++) {
+      m = (lo+hi)/2;
+      const tm = m/12;
+      const est = tm > 0
+        ? montantEmprunte * (tm * Math.pow(1+tm,n)) / (Math.pow(1+tm,n)-1) + assuranceMensuelle
+        : montantEmprunte/n + assuranceMensuelle;
+      if (est > mensualiteTotale) hi=m; else lo=m;
+    }
+    return m * 12 * 100;
+  })();
+
+  // ── Tableau d'amortissement
+  const tableauMensuel = (() => {
+    const rows = [];
+    let capital = montantEmprunte;
+    for (let mo=1; mo<=n; mo++) {
+      const interets = capital * tauxMensuel;
+      const principal = mensualiteHorsAssurance - interets;
+      const assurMo = assuranceMensuelle;
+      capital = Math.max(0, capital - principal);
+      rows.push({ mo, annee: Math.ceil(mo/12), interets, principal, assurMo, mensualite: mensualiteHorsAssurance+assurMo, capitalRestant: capital });
+    }
+    return rows;
+  })();
+
+  const tableauAnnuel = (() => {
+    const map = {};
+    tableauMensuel.forEach(r => {
+      if (!map[r.annee]) map[r.annee] = { annee:r.annee, interets:0, principal:0, assurMo:0, capitalRestant:0, mensualite:0 };
+      map[r.annee].interets    += r.interets;
+      map[r.annee].principal   += r.principal;
+      map[r.annee].assurMo     += r.assurMo;
+      map[r.annee].mensualite  += r.mensualite;
+      map[r.annee].capitalRestant = r.capitalRestant;
+    });
+    return Object.values(map);
+  })();
+
+  // ── Capacité d'emprunt
+  const mensualiteMax = (revenuNet - chargesExistantes) * tauxEndet / 100;
+  const capaciteEmprunter = mensualiteMax > 0 && tauxMensuel > 0
+    ? mensualiteMax / (tauxMensuel * Math.pow(1+tauxMensuel,n) / (Math.pow(1+tauxMensuel,n)-1) + assurance/100/12)
+    : 0;
+  const prixMaxSansPatrimoine = capaciteEmprunter + apport;
+  const prixMaxAvecPatrimoine = capaciteEmprunter + apportPatrimoine;
+
+  // ── Données graphique répartition coût
+  const pieData = [
+    { name:"Capital", value: Math.round(montantEmprunte), color:"#818CF8" },
+    { name:"Intérêts", value: Math.round(coutInterets),   color:"#F87171" },
+    { name:"Assurance", value: Math.round(coutAssurance), color:"#FBBF24" },
+    { name:"Notaire",   value: Math.round(fraisNotaireMontant), color:"#60A5FA" },
+  ];
+
+  // ── Données graphique évolution capital restant dû
+  const evolData = tableauAnnuel.map(r => ({
+    annee: `An ${r.annee}`,
+    capital: Math.round(r.capitalRestant),
+    interets: Math.round(r.interets),
+    principal: Math.round(r.principal),
+  }));
+
+  const sectionTabs = [
+    { key:"mensualite", label:"💶 Mensualité" },
+    { key:"capacite",   label:"📊 Capacité" },
+    { key:"amortissement", label:"📋 Amortissement" },
+    { key:"apport",     label:"💼 Impact apport" },
+  ];
+
+  const CustomTooltipPie = ({ active, payload }) => {
+    if (!active || !payload?.length) return null;
+    const total = pieData.reduce((s,d)=>s+d.value,0);
+    return (
+      <div style={{ background:"#0F1929", border:"1px solid #1E3050", borderRadius:8, padding:"8px 14px", fontSize:12 }}>
+        <div style={{ color:payload[0].payload.color, fontWeight:700 }}>{payload[0].name}</div>
+        <div style={{ color:"#F1F5F9" }}>{fmt(payload[0].value)}</div>
+        <div style={{ color:"#64748B" }}>{total>0?(payload[0].value/total*100).toFixed(1):0}%</div>
+      </div>
+    );
+  };
+
+  return (
+    <div>
+      <SectionTitle sub="Simulation · tous paramètres ajustables">🏦 Simulateur de crédit</SectionTitle>
+
+      {/* ── Contexte ── */}
+      <Card style={{ marginBottom:14, padding:"14px 18px" }}>
+        <div style={{ display:"flex", gap:10, alignItems:"center", flexWrap:"wrap" }}>
+          <span style={{ fontSize:12, color:"#64748B", fontWeight:600, marginRight:4 }}>Contexte :</span>
+          {CONTEXTES.map(c => (
+            <button key={c.key} onClick={()=>setContexte(c.key)} style={{
+              background: contexte===c.key ? "rgba(129,140,248,0.2)" : "transparent",
+              border: `1px solid ${contexte===c.key ? "#818CF8" : "rgba(255,255,255,0.08)"}`,
+              borderRadius:20, color: contexte===c.key ? "#A5B4FC" : "#64748B",
+              padding:"5px 14px", fontSize:12, cursor:"pointer", fontWeight: contexte===c.key?700:400,
+              transition:"all 0.15s"
+            }}>{c.label}</button>
+          ))}
+        </div>
+      </Card>
+
+      {/* ── Params globaux ── */}
+      <Card style={{ marginBottom:14, padding:"16px 20px" }}>
+        <div style={{ fontSize:13, fontWeight:700, color:"#F1F5F9", marginBottom:14 }}>⚙️ Paramètres du prêt</div>
+        <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill, minmax(220px,1fr))", gap:16 }}>
+          {/* Prix du bien */}
+          <div>
+            <label style={lblS}>Prix du bien — <strong style={{ color:"#F1F5F9" }}>{fmt(montantBien)}</strong></label>
+            <input type="range" min={50000} max={1500000} step={5000} value={montantBien} onChange={e=>setMontantBien(+e.target.value)} style={rangeS} />
+            <input type="number" value={montantBien} onChange={e=>setMontantBien(+e.target.value)} style={{...inpS, marginTop:6}} />
+          </div>
+          {/* Apport */}
+          <div>
+            <label style={lblS}>Apport personnel — <strong style={{ color:"#34D399" }}>{fmt(apport)}</strong></label>
+            <input type="range" min={0} max={montantBien} step={1000} value={apport} onChange={e=>setApport(+e.target.value)} style={rangeS} />
+            <input type="number" value={apport} onChange={e=>setApport(+e.target.value)} style={{...inpS, marginTop:6}} />
+          </div>
+          {/* Durée */}
+          <div>
+            <label style={lblS}>Durée — <strong style={{ color:"#F1F5F9" }}>{duree} ans</strong></label>
+            <input type="range" min={5} max={30} step={1} value={duree} onChange={e=>setDuree(+e.target.value)} style={rangeS} />
+            <div style={{ display:"flex", gap:6, marginTop:6, flexWrap:"wrap" }}>
+              {[10,15,20,25,30].map(d => (
+                <button key={d} onClick={()=>setDuree(d)} style={{ background:duree===d?"rgba(129,140,248,0.2)":"rgba(255,255,255,0.04)", border:duree===d?"1px solid #818CF8":"1px solid rgba(255,255,255,0.08)", borderRadius:6, color:duree===d?"#A5B4FC":"#94A3B8", padding:"3px 10px", fontSize:11, cursor:"pointer" }}>{d}a</button>
+              ))}
+            </div>
+          </div>
+          {/* Taux */}
+          <div>
+            <label style={lblS}>Taux nominal — <strong style={{ color:"#F1F5F9" }}>{taux}%</strong></label>
+            <input type="range" min={0.5} max={8} step={0.05} value={taux} onChange={e=>setTaux(+e.target.value)} style={rangeS} />
+            <input type="number" step={0.05} value={taux} onChange={e=>setTaux(+e.target.value)} style={{...inpS, marginTop:6}} />
+          </div>
+          {/* Assurance */}
+          <div>
+            <label style={lblS}>Assurance (TAEA) — <strong style={{ color:"#F1F5F9" }}>{assurance}%</strong></label>
+            <input type="range" min={0} max={1} step={0.01} value={assurance} onChange={e=>setAssurance(+e.target.value)} style={rangeS} />
+            <input type="number" step={0.01} value={assurance} onChange={e=>setAssurance(+e.target.value)} style={{...inpS, marginTop:6}} />
+          </div>
+          {/* Frais de notaire */}
+          <div>
+            <label style={lblS}>Frais de notaire — <strong style={{ color:"#F1F5F9" }}>{fraisNotaire}%</strong> ({fmt(fraisNotaireMontant)})</label>
+            <input type="range" min={0} max={12} step={0.1} value={fraisNotaire} onChange={e=>setFraisNotaire(+e.target.value)} style={rangeS} />
+            <div style={{ display:"flex", gap:6, marginTop:6 }}>
+              {[{l:"Neuf 3%",v:3},{l:"Ancien 7.5%",v:7.5},{l:"Max 10%",v:10}].map(({l,v}) => (
+                <button key={v} onClick={()=>setFraisNotaire(v)} style={{ background:fraisNotaire===v?"rgba(96,165,250,0.2)":"rgba(255,255,255,0.04)", border:fraisNotaire===v?"1px solid #60A5FA":"1px solid rgba(255,255,255,0.08)", borderRadius:6, color:fraisNotaire===v?"#93C5FD":"#94A3B8", padding:"3px 8px", fontSize:10, cursor:"pointer" }}>{l}</button>
+              ))}
+            </div>
+          </div>
+          {/* Différé */}
+          <div>
+            <label style={lblS}>Différé — <strong style={{ color:"#F1F5F9" }}>{differe} mois</strong></label>
+            <input type="range" min={0} max={24} step={1} value={differe} onChange={e=>setDiffere(+e.target.value)} style={rangeS} />
+            <div style={{ fontSize:11, color:"#475569", marginTop:4 }}>
+              {differe > 0 ? `Remboursement commence en mois ${differe+1}` : "Pas de différé"}
+            </div>
+          </div>
+        </div>
+      </Card>
+
+      {/* ── KPIs résumé ── */}
+      <div style={{ display:"flex", gap:10, flexWrap:"wrap", marginBottom:14 }}>
+        <StatCard label="Mensualité totale" value={fmt(mensualiteTotale)} sub={`dont assurance ${fmt(assuranceMensuelle)}/mois`} color="#818CF8" icon="💶" />
+        <StatCard label="Montant emprunté" value={fmt(montantEmprunte)} sub={`Bien ${fmt(montantBien)} − Apport ${fmt(apport)}`} color="#60A5FA" icon="🏦" />
+        <StatCard label="Coût total du crédit" value={fmt(coutTotalCredit)} sub={`Intérêts ${fmt(coutInterets)}`} color="#F87171" icon="💸" />
+        <StatCard label="TAEG estimé" value={`${taeg.toFixed(2)}%`} sub={`Taux + assurance`} color="#FBBF24" icon="📊" />
+        <StatCard label="Frais de notaire" value={fmt(fraisNotaireMontant)} sub={`${fraisNotaire}% du prix d'achat`} color="#60A5FA" icon="📜" />
+        <StatCard label="Coût total opération" value={fmt(apport + coutTotalCredit + fraisNotaireMontant)} sub="Apport + crédit + notaire" color="#A78BFA" icon="🧾" />
+      </div>
+
+      {/* ── Sections ── */}
+      <div style={{ display:"flex", gap:6, marginBottom:16, flexWrap:"wrap" }}>
+        {sectionTabs.map(s => (
+          <Pill key={s.key} label={s.label} active={activeSection===s.key} onClick={()=>setActiveSection(s.key)} />
+        ))}
+      </div>
+
+      {/* ════════ MENSUALITÉ ════════ */}
+      {activeSection === "mensualite" && (
+        <div>
+          {/* Graphique répartition coût */}
+          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:14, marginBottom:14 }}>
+            <Card style={{ padding:"16px 20px" }}>
+              <div style={{ fontSize:13, fontWeight:700, color:"#F1F5F9", marginBottom:12 }}>Répartition du coût total</div>
+              <div style={{ display:"flex", alignItems:"center", gap:16 }}>
+                <ResponsiveContainer width={150} height={150}>
+                  <PieChart>
+                    <Pie data={pieData} cx="50%" cy="50%" innerRadius={36} outerRadius={58} paddingAngle={3} dataKey="value">
+                      {pieData.map((e,i) => <Cell key={i} fill={e.color} />)}
+                    </Pie>
+                    <Tooltip content={<CustomTooltipPie />} />
+                  </PieChart>
+                </ResponsiveContainer>
+                <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
+                  {pieData.map(d => (
+                    <div key={d.name} style={{ display:"flex", alignItems:"center", gap:8 }}>
+                      <div style={{ width:8, height:8, borderRadius:2, background:d.color, flexShrink:0 }} />
+                      <span style={{ fontSize:12, color:"#64748B", minWidth:64 }}>{d.name}</span>
+                      <span style={{ fontSize:12, fontWeight:700, color:d.color }}>{fmt(d.value)}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </Card>
+
+            <Card style={{ padding:"16px 20px" }}>
+              <div style={{ fontSize:13, fontWeight:700, color:"#F1F5F9", marginBottom:12 }}>Évolution du capital restant dû</div>
+              <ResponsiveContainer width="100%" height={150}>
+                <AreaChart data={evolData} margin={{ top:4, right:8, bottom:0, left:0 }}>
+                  <defs>
+                    <linearGradient id="capGrad" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor="#818CF8" stopOpacity={0.25}/>
+                      <stop offset="100%" stopColor="#818CF8" stopOpacity={0.02}/>
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
+                  <XAxis dataKey="annee" tick={{ fontSize:9, fill:"#475569" }} tickLine={false} axisLine={false} interval={Math.floor(duree/6)} />
+                  <YAxis tick={{ fontSize:9, fill:"#475569" }} tickLine={false} axisLine={false} tickFormatter={v=>`${(v/1000).toFixed(0)}k`} width={36} />
+                  <Tooltip contentStyle={{ background:"#1E293B", border:"1px solid #334155", borderRadius:8, fontSize:11 }} formatter={v=>[fmt(v),"Capital restant"]} />
+                  <Area type="monotone" dataKey="capital" stroke="#818CF8" strokeWidth={2} fill="url(#capGrad)" dot={false} />
+                </AreaChart>
+              </ResponsiveContainer>
+            </Card>
+          </div>
+
+          {/* Barres mensualité décomposée + taux endettement */}
+          <Card style={{ padding:"16px 20px", marginBottom:14 }}>
+            <div style={{ fontSize:13, fontWeight:700, color:"#F1F5F9", marginBottom:14 }}>Décomposition mensualité</div>
+            <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
+              {[
+                { label:"Capital remboursé (mois 1)", val:mensualiteHorsAssurance - montantEmprunte * tauxMensuel, color:"#818CF8" },
+                { label:"Intérêts (mois 1)",           val:montantEmprunte * tauxMensuel,                         color:"#F87171" },
+                { label:"Assurance",                   val:assuranceMensuelle,                                    color:"#FBBF24" },
+              ].map(r => {
+                const pct = mensualiteTotale > 0 ? r.val/mensualiteTotale*100 : 0;
+                return (
+                  <div key={r.label}>
+                    <div style={{ display:"flex", justifyContent:"space-between", marginBottom:4 }}>
+                      <span style={{ fontSize:12, color:"#94A3B8" }}>{r.label}</span>
+                      <span style={{ fontSize:12, fontWeight:700, color:r.color }}>{fmt(r.val)} <span style={{ color:"#475569", fontWeight:400 }}>({pct.toFixed(1)}%)</span></span>
+                    </div>
+                    <div style={{ height:6, background:"rgba(255,255,255,0.07)", borderRadius:3 }}>
+                      <div style={{ width:`${pct}%`, height:"100%", background:r.color, borderRadius:3, transition:"width 0.4s" }} />
+                    </div>
+                  </div>
+                );
+              })}
+              <div style={{ marginTop:8, paddingTop:10, borderTop:"1px solid rgba(255,255,255,0.07)", display:"flex", justifyContent:"space-between" }}>
+                <span style={{ fontSize:13, fontWeight:700, color:"#F1F5F9" }}>Total mensualité</span>
+                <span style={{ fontSize:16, fontWeight:800, color:"#818CF8" }}>{fmt(mensualiteTotale)}</span>
+              </div>
+            </div>
+          </Card>
+
+          {/* Comparateur durées */}
+          <Card style={{ padding:"16px 20px" }}>
+            <div style={{ fontSize:13, fontWeight:700, color:"#F1F5F9", marginBottom:12 }}>Comparatif selon la durée</div>
+            <div style={{ overflowX:"auto" }}>
+              <table style={{ width:"100%", borderCollapse:"collapse", fontSize:12 }}>
+                <thead>
+                  <tr style={{ background:"rgba(255,255,255,0.04)" }}>
+                    {["Durée","Mensualité","Coût intérêts","Coût assurance","Coût total crédit","TAEG"].map(h => (
+                      <th key={h} style={{ padding:"9px 14px", textAlign:"right", color:"#64748B", fontWeight:600, fontSize:11, borderBottom:"1px solid rgba(255,255,255,0.08)", whiteSpace:"nowrap",
+                        ...(h==="Durée"?{textAlign:"left"}:{}) }}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {[10,15,20,25,30].map(d => {
+                    const tm = taux/100/12, nd = d*12;
+                    const mens = tm > 0 ? montantEmprunte*(tm*Math.pow(1+tm,nd))/(Math.pow(1+tm,nd)-1) : montantEmprunte/nd;
+                    const ass = assuranceMensuelle;
+                    const interets = mens*nd - montantEmprunte;
+                    const assTotal = ass*nd;
+                    const total = montantEmprunte + interets + assTotal;
+                    const isActive = duree === d;
+                    return (
+                      <tr key={d} onClick={()=>setDuree(d)} style={{ cursor:"pointer", background:isActive?"rgba(129,140,248,0.1)":"transparent", transition:"background 0.15s" }}>
+                        <td style={{ padding:"9px 14px", color:isActive?"#A5B4FC":"#F1F5F9", fontWeight:isActive?700:400, borderBottom:"1px solid rgba(255,255,255,0.04)" }}>{d} ans {isActive?"✓":""}</td>
+                        <td style={{ padding:"9px 14px", textAlign:"right", color:"#818CF8", fontWeight:700, borderBottom:"1px solid rgba(255,255,255,0.04)" }}>{fmt(mens+ass)}</td>
+                        <td style={{ padding:"9px 14px", textAlign:"right", color:"#F87171", borderBottom:"1px solid rgba(255,255,255,0.04)" }}>{fmt(interets)}</td>
+                        <td style={{ padding:"9px 14px", textAlign:"right", color:"#FBBF24", borderBottom:"1px solid rgba(255,255,255,0.04)" }}>{fmt(assTotal)}</td>
+                        <td style={{ padding:"9px 14px", textAlign:"right", color:"#60A5FA", fontWeight:600, borderBottom:"1px solid rgba(255,255,255,0.04)" }}>{fmt(total)}</td>
+                        <td style={{ padding:"9px 14px", textAlign:"right", color:"#94A3B8", borderBottom:"1px solid rgba(255,255,255,0.04)" }}>{(taux + assurance).toFixed(2)}%</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </Card>
+        </div>
+      )}
+
+      {/* ════════ CAPACITÉ D'EMPRUNT ════════ */}
+      {activeSection === "capacite" && (
+        <div>
+          <Card style={{ marginBottom:14, padding:"16px 20px" }}>
+            <div style={{ fontSize:13, fontWeight:700, color:"#F1F5F9", marginBottom:14 }}>Revenus & charges</div>
+            <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill, minmax(240px,1fr))", gap:16, marginBottom:16 }}>
+              <div>
+                <label style={lblS}>Source des revenus</label>
+                <div style={{ display:"flex", gap:8 }}>
+                  {[["manuel","✏️ Manuel"],["budget","📊 Budget auto"]].map(([k,l]) => (
+                    <button key={k} onClick={()=>setRevenuMode(k)} style={{ flex:1, background:revenuMode===k?"rgba(129,140,248,0.2)":"rgba(255,255,255,0.04)", border:revenuMode===k?"1px solid #818CF8":"1px solid rgba(255,255,255,0.08)", borderRadius:8, color:revenuMode===k?"#A5B4FC":"#94A3B8", padding:"8px", fontSize:12, cursor:"pointer", fontWeight:revenuMode===k?700:400 }}>{l}</button>
+                  ))}
+                </div>
+                {revenuMode === "budget" && revenuBudgetAuto > 0 && (
+                  <div style={{ marginTop:8, fontSize:11, color:"#34D399" }}>
+                    Moyenne détectée : {fmt(revenuBudgetAuto)}/mois (12 derniers mois)
+                  </div>
+                )}
+                {revenuMode === "budget" && revenuBudgetAuto === 0 && (
+                  <div style={{ marginTop:8, fontSize:11, color:"#F87171" }}>Pas de données budget disponibles</div>
+                )}
+              </div>
+              {revenuMode === "manuel" && (
+                <div>
+                  <label style={lblS}>Revenus nets mensuels — <strong style={{ color:"#F1F5F9" }}>{fmt(revenuManuel)}</strong></label>
+                  <input type="range" min={500} max={20000} step={100} value={revenuManuel} onChange={e=>setRevenuManuel(+e.target.value)} style={rangeS} />
+                  <input type="number" value={revenuManuel} onChange={e=>setRevenuManuel(+e.target.value)} style={{...inpS, marginTop:6}} />
+                </div>
+              )}
+              <div>
+                <label style={lblS}>Charges mensuelles existantes — <strong style={{ color:"#F1F5F9" }}>{fmt(chargesExistantes)}</strong></label>
+                <input type="range" min={0} max={5000} step={50} value={chargesExistantes} onChange={e=>setChargesExistantes(+e.target.value)} style={rangeS} />
+                <input type="number" value={chargesExistantes} onChange={e=>setChargesExistantes(+e.target.value)} style={{...inpS, marginTop:6}} />
+              </div>
+              <div>
+                <label style={lblS}>Taux d'endettement max — <strong style={{ color:"#F1F5F9" }}>{tauxEndet}%</strong></label>
+                <input type="range" min={20} max={40} step={1} value={tauxEndet} onChange={e=>setTauxEndet(+e.target.value)} style={rangeS} />
+                <div style={{ display:"flex", gap:6, marginTop:6 }}>
+                  {[33, 35, 40].map(v => (
+                    <button key={v} onClick={()=>setTauxEndet(v)} style={{ background:tauxEndet===v?"rgba(129,140,248,0.2)":"rgba(255,255,255,0.04)", border:tauxEndet===v?"1px solid #818CF8":"1px solid rgba(255,255,255,0.08)", borderRadius:6, color:tauxEndet===v?"#A5B4FC":"#94A3B8", padding:"3px 10px", fontSize:11, cursor:"pointer" }}>{v}%</button>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </Card>
+
+          {/* Sources patrimoine */}
+          <Card style={{ marginBottom:14, padding:"16px 20px" }}>
+            <div style={{ fontSize:13, fontWeight:700, color:"#F1F5F9", marginBottom:4 }}>Sources d'apport depuis mon patrimoine</div>
+            <div style={{ fontSize:11, color:"#64748B", marginBottom:12 }}>Sélectionne les poches que tu peux mobiliser pour l'apport</div>
+            <div style={{ display:"flex", gap:8, flexWrap:"wrap", marginBottom:14 }}>
+              {SOURCES.map(s => (
+                <button key={s.key} onClick={()=>toggleSource(s.key)} style={{
+                  background: selectedSources.includes(s.key) ? "rgba(129,140,248,0.2)" : "rgba(255,255,255,0.04)",
+                  border: `1px solid ${selectedSources.includes(s.key) ? "#818CF8" : "rgba(255,255,255,0.08)"}`,
+                  borderRadius:20, color: selectedSources.includes(s.key) ? "#A5B4FC" : "#64748B",
+                  padding:"5px 14px", fontSize:12, cursor:"pointer", fontWeight: selectedSources.includes(s.key)?700:400,
+                  transition:"all 0.15s"
+                }}>
+                  {s.label} · {fmt(s.val)}
+                </button>
+              ))}
+            </div>
+            <div style={{ display:"flex", gap:10, padding:"12px 16px", background:"rgba(129,140,248,0.08)", borderRadius:10, border:"1px solid rgba(129,140,248,0.2)", alignItems:"center" }}>
+              <span style={{ fontSize:12, color:"#64748B" }}>Apport sélectionné :</span>
+              <span style={{ fontSize:18, fontWeight:800, color:"#818CF8" }}>{fmt(apportPatrimoine)}</span>
+              <span style={{ fontSize:11, color:"#64748B" }}>soit {grandTotal>0?(apportPatrimoine/grandTotal*100).toFixed(1):0}% du patrimoine total</span>
+            </div>
+          </Card>
+
+          {/* Résultats capacité */}
+          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:14, marginBottom:14 }}>
+            <Card style={{ padding:"16px 20px", border:"1px solid rgba(52,211,153,0.2)" }}>
+              <div style={{ fontSize:11, color:"#64748B", marginBottom:6 }}>CAPACITÉ D'EMPRUNT</div>
+              <div style={{ fontSize:28, fontWeight:800, color:"#34D399", marginBottom:4 }}>{fmt(capaciteEmprunter)}</div>
+              <div style={{ fontSize:12, color:"#64748B" }}>Mensualité max : {fmt(mensualiteMax)}/mois</div>
+              <div style={{ fontSize:12, color:"#64748B" }}>Taux endettement : {tauxEndet}% de {fmt(revenuNet)}</div>
+            </Card>
+            <Card style={{ padding:"16px 20px", border:"1px solid rgba(167,139,250,0.2)" }}>
+              <div style={{ fontSize:11, color:"#64748B", marginBottom:6 }}>PRIX MAX ACCESSIBLE</div>
+              <div>
+                <div style={{ fontSize:12, color:"#94A3B8", marginBottom:2 }}>Sans patrimoine (apport manuel {fmt(apport)})</div>
+                <div style={{ fontSize:20, fontWeight:800, color:"#818CF8", marginBottom:8 }}>{fmt(prixMaxSansPatrimoine)}</div>
+                <div style={{ fontSize:12, color:"#94A3B8", marginBottom:2 }}>Avec apport patrimoine ({fmt(apportPatrimoine)})</div>
+                <div style={{ fontSize:20, fontWeight:800, color:"#A78BFA" }}>{fmt(prixMaxAvecPatrimoine)}</div>
+              </div>
+            </Card>
+          </div>
+
+          {/* Gauge taux endettement */}
+          <Card style={{ padding:"16px 20px" }}>
+            <div style={{ fontSize:13, fontWeight:700, color:"#F1F5F9", marginBottom:12 }}>Taux d'endettement simulé</div>
+            {(() => {
+              const txActuel = revenuNet > 0 ? (mensualiteTotale + chargesExistantes) / revenuNet * 100 : 0;
+              const col = txActuel > 40 ? "#F87171" : txActuel > 35 ? "#FBBF24" : "#34D399";
+              return (
+                <div>
+                  <div style={{ display:"flex", justifyContent:"space-between", marginBottom:6 }}>
+                    <span style={{ fontSize:12, color:"#94A3B8" }}>Endettement avec ce crédit</span>
+                    <span style={{ fontSize:16, fontWeight:800, color:col }}>{txActuel.toFixed(1)}%</span>
+                  </div>
+                  <div style={{ height:14, background:"rgba(255,255,255,0.07)", borderRadius:7, overflow:"hidden", position:"relative" }}>
+                    <div style={{ position:"absolute", left:`${tauxEndet}%`, top:0, bottom:0, width:2, background:"rgba(255,255,255,0.3)", zIndex:1 }} title={`Limite ${tauxEndet}%`} />
+                    <div style={{ width:`${Math.min(100,txActuel)}%`, height:"100%", background:col, borderRadius:7, transition:"width 0.4s" }} />
+                  </div>
+                  <div style={{ display:"flex", justifyContent:"space-between", marginTop:4 }}>
+                    <span style={{ fontSize:10, color:"#475569" }}>0%</span>
+                    <span style={{ fontSize:10, color:"#FBBF24" }}>Limite {tauxEndet}%</span>
+                    <span style={{ fontSize:10, color:"#475569" }}>100%</span>
+                  </div>
+                  {txActuel > tauxEndet && (
+                    <div style={{ marginTop:10, padding:"8px 14px", background:"rgba(248,113,113,0.1)", border:"1px solid rgba(248,113,113,0.3)", borderRadius:8, fontSize:12, color:"#F87171" }}>
+                      ⚠️ Taux d'endettement dépassé. Augmente l'apport ou réduis le montant emprunté.
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
+          </Card>
+        </div>
+      )}
+
+      {/* ════════ TABLEAU D'AMORTISSEMENT ════════ */}
+      {activeSection === "amortissement" && (
+        <div>
+          <div style={{ display:"flex", gap:8, marginBottom:14, alignItems:"center" }}>
+            <button onClick={()=>{ setAmortView("annuel"); setAmortPage(0); }} style={{ background:amortView==="annuel"?"rgba(129,140,248,0.2)":"rgba(255,255,255,0.04)", border:amortView==="annuel"?"1px solid #818CF8":"1px solid rgba(255,255,255,0.08)", borderRadius:8, color:amortView==="annuel"?"#A5B4FC":"#94A3B8", padding:"6px 16px", fontSize:12, cursor:"pointer", fontWeight:amortView==="annuel"?700:400 }}>📅 Résumé annuel</button>
+            <button onClick={()=>{ setAmortView("mensuel"); setAmortPage(0); }} style={{ background:amortView==="mensuel"?"rgba(129,140,248,0.2)":"rgba(255,255,255,0.04)", border:amortView==="mensuel"?"1px solid #818CF8":"1px solid rgba(255,255,255,0.08)", borderRadius:8, color:amortView==="mensuel"?"#A5B4FC":"#94A3B8", padding:"6px 16px", fontSize:12, cursor:"pointer", fontWeight:amortView==="mensuel"?700:400 }}>🗓 Détail mensuel</button>
+            <span style={{ fontSize:11, color:"#475569", marginLeft:8 }}>{amortView==="annuel"?`${duree} lignes`:`${n} mois · page ${amortPage+1}/${Math.ceil(n/AMORT_PER_PAGE)}`}</span>
+          </div>
+
+          {amortView === "annuel" && (
+            <Card style={{ padding:0, overflow:"hidden" }}>
+              <div style={{ overflowX:"auto" }}>
+                <table style={{ width:"100%", borderCollapse:"collapse", fontSize:12 }}>
+                  <thead>
+                    <tr style={{ background:"rgba(255,255,255,0.04)" }}>
+                      {["Année","Mensualités payées","dont Capital","dont Intérêts","dont Assurance","Capital restant dû","% remboursé"].map(h => (
+                        <th key={h} style={{ padding:"10px 14px", textAlign:"right", color:"#64748B", fontWeight:600, fontSize:11, borderBottom:"1px solid rgba(255,255,255,0.08)", whiteSpace:"nowrap",
+                          ...(h==="Année"?{textAlign:"left"}:{}) }}>{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {tableauAnnuel.map((r, i) => {
+                      const pct = montantEmprunte > 0 ? (1 - r.capitalRestant/montantEmprunte)*100 : 100;
+                      return (
+                        <tr key={r.annee} style={{ background:i%2===0?"transparent":"rgba(255,255,255,0.02)", borderBottom:"1px solid rgba(255,255,255,0.04)" }}>
+                          <td style={{ padding:"9px 14px", color:"#F1F5F9", fontWeight:600 }}>Année {r.annee}</td>
+                          <td style={{ padding:"9px 14px", textAlign:"right", color:"#818CF8" }}>{fmt(r.mensualite)}</td>
+                          <td style={{ padding:"9px 14px", textAlign:"right", color:"#60A5FA" }}>{fmt(r.principal)}</td>
+                          <td style={{ padding:"9px 14px", textAlign:"right", color:"#F87171" }}>{fmt(r.interets)}</td>
+                          <td style={{ padding:"9px 14px", textAlign:"right", color:"#FBBF24" }}>{fmt(r.assurMo)}</td>
+                          <td style={{ padding:"9px 14px", textAlign:"right", color:"#94A3B8" }}>{fmt(r.capitalRestant)}</td>
+                          <td style={{ padding:"9px 14px", textAlign:"right" }}>
+                            <div style={{ display:"flex", alignItems:"center", gap:6, justifyContent:"flex-end" }}>
+                              <div style={{ width:48, height:5, background:"rgba(255,255,255,0.08)", borderRadius:3 }}>
+                                <div style={{ width:`${pct}%`, height:"100%", background:"#34D399", borderRadius:3 }} />
+                              </div>
+                              <span style={{ color:"#34D399", fontWeight:600 }}>{pct.toFixed(1)}%</span>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </Card>
+          )}
+
+          {amortView === "mensuel" && (
+            <Card style={{ padding:0, overflow:"hidden" }}>
+              <div style={{ overflowX:"auto" }}>
+                <table style={{ width:"100%", borderCollapse:"collapse", fontSize:12 }}>
+                  <thead>
+                    <tr style={{ background:"rgba(255,255,255,0.04)" }}>
+                      {["Mois","Mensualité","Capital","Intérêts","Assurance","Capital restant"].map(h => (
+                        <th key={h} style={{ padding:"9px 14px", textAlign:"right", color:"#64748B", fontWeight:600, fontSize:11, borderBottom:"1px solid rgba(255,255,255,0.08)",
+                          ...(h==="Mois"?{textAlign:"left"}:{}) }}>{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {tableauMensuel.slice(amortPage*AMORT_PER_PAGE, (amortPage+1)*AMORT_PER_PAGE).map((r, i) => (
+                      <tr key={r.mo} style={{ background:i%2===0?"transparent":"rgba(255,255,255,0.02)", borderBottom:"1px solid rgba(255,255,255,0.04)" }}>
+                        <td style={{ padding:"8px 14px", color:"#94A3B8", fontWeight:600 }}>Mois {r.mo} <span style={{ color:"#475569", fontSize:10 }}>(An {r.annee})</span></td>
+                        <td style={{ padding:"8px 14px", textAlign:"right", color:"#818CF8" }}>{fmt(r.mensualite)}</td>
+                        <td style={{ padding:"8px 14px", textAlign:"right", color:"#60A5FA" }}>{fmt(r.principal)}</td>
+                        <td style={{ padding:"8px 14px", textAlign:"right", color:"#F87171" }}>{fmt(r.interets)}</td>
+                        <td style={{ padding:"8px 14px", textAlign:"right", color:"#FBBF24" }}>{fmt(r.assurMo)}</td>
+                        <td style={{ padding:"8px 14px", textAlign:"right", color:"#94A3B8" }}>{fmt(r.capitalRestant)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <div style={{ display:"flex", gap:8, padding:"12px 16px", borderTop:"1px solid rgba(255,255,255,0.06)", alignItems:"center" }}>
+                <button onClick={()=>setAmortPage(p=>Math.max(0,p-1))} disabled={amortPage===0} style={{ background:"rgba(255,255,255,0.04)", border:"1px solid rgba(255,255,255,0.08)", borderRadius:6, color:amortPage===0?"#334155":"#94A3B8", padding:"5px 14px", fontSize:12, cursor:amortPage===0?"not-allowed":"pointer" }}>← Préc.</button>
+                <span style={{ fontSize:12, color:"#64748B" }}>Page {amortPage+1} / {Math.ceil(n/AMORT_PER_PAGE)}</span>
+                <button onClick={()=>setAmortPage(p=>Math.min(Math.ceil(n/AMORT_PER_PAGE)-1,p+1))} disabled={amortPage>=Math.ceil(n/AMORT_PER_PAGE)-1} style={{ background:"rgba(255,255,255,0.04)", border:"1px solid rgba(255,255,255,0.08)", borderRadius:6, color:amortPage>=Math.ceil(n/AMORT_PER_PAGE)-1?"#334155":"#94A3B8", padding:"5px 14px", fontSize:12, cursor:amortPage>=Math.ceil(n/AMORT_PER_PAGE)-1?"not-allowed":"pointer" }}>Suiv. →</button>
+              </div>
+            </Card>
+          )}
+        </div>
+      )}
+
+      {/* ════════ IMPACT APPORT ════════ */}
+      {activeSection === "apport" && (
+        <div>
+          <Card style={{ marginBottom:14, padding:"16px 20px" }}>
+            <div style={{ fontSize:13, fontWeight:700, color:"#F1F5F9", marginBottom:4 }}>Impact de l'apport sur le coût du crédit</div>
+            <div style={{ fontSize:12, color:"#64748B", marginBottom:16 }}>Comparatif pour différents niveaux d'apport, à durée et taux constants.</div>
+            <ResponsiveContainer width="100%" height={240}>
+              <LineChart margin={{ top:8, right:24, bottom:4, left:0 }}
+                data={[0, 5, 10, 15, 20, 25, 30, 40, 50].map(pct => {
+                  const ap = montantBien * pct / 100;
+                  const emp = Math.max(0, coutTotal_bien - ap);
+                  const tm = taux/100/12;
+                  const mens = tm>0 ? emp*(tm*Math.pow(1+tm,n))/(Math.pow(1+tm,n)-1) : emp/n;
+                  const assM = emp*assurance/100/12;
+                  const interets = Math.max(0, mens*n - emp);
+                  return { apportPct:`${pct}%`, mensualite: Math.round(mens+assM), coutTotal: Math.round(emp+interets+assM*n), interets: Math.round(interets) };
+                })}>
+                <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" vertical={false} />
+                <XAxis dataKey="apportPct" tick={{ fontSize:11, fill:"#475569" }} tickLine={false} axisLine={false} />
+                <YAxis yAxisId="left" tick={{ fontSize:10, fill:"#475569" }} tickLine={false} axisLine={false} tickFormatter={v=>`${(v/1000).toFixed(0)}k`} />
+                <YAxis yAxisId="right" orientation="right" tick={{ fontSize:10, fill:"#475569" }} tickLine={false} axisLine={false} tickFormatter={v=>`${(v/1000).toFixed(0)}k`} width={40} />
+                <Tooltip contentStyle={{ background:"#1E293B", border:"1px solid #334155", borderRadius:8, fontSize:12 }} formatter={(v,n)=>[fmt(v), n==="mensualite"?"Mensualité":n==="coutTotal"?"Coût total":"Intérêts"]} />
+                <Legend wrapperStyle={{ fontSize:11, color:"#94A3B8" }} />
+                <Line yAxisId="left"  type="monotone" dataKey="mensualite" stroke="#818CF8" strokeWidth={2} dot={{ r:3, fill:"#818CF8" }} name="mensualite" />
+                <Line yAxisId="right" type="monotone" dataKey="interets"   stroke="#F87171" strokeWidth={2} dot={{ r:3, fill:"#F87171" }} name="interets"   strokeDasharray="5 3" />
+              </LineChart>
+            </ResponsiveContainer>
+          </Card>
+
+          <Card style={{ padding:0, overflow:"hidden" }}>
+            <div style={{ padding:"12px 18px", borderBottom:"1px solid rgba(255,255,255,0.06)", fontSize:13, fontWeight:700, color:"#F1F5F9" }}>
+              Tableau comparatif apport
+            </div>
+            <div style={{ overflowX:"auto" }}>
+              <table style={{ width:"100%", borderCollapse:"collapse", fontSize:12 }}>
+                <thead>
+                  <tr style={{ background:"rgba(255,255,255,0.04)" }}>
+                    {["Apport","Montant","Emprunté","Mensualité","Intérêts","Coût total"].map(h => (
+                      <th key={h} style={{ padding:"9px 14px", textAlign:"right", color:"#64748B", fontWeight:600, fontSize:11, borderBottom:"1px solid rgba(255,255,255,0.08)",
+                        ...(h==="Apport"?{textAlign:"left"}:{}) }}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {[0, 5, 10, 15, 20, 25, 30, 40, 50].map((pct, i) => {
+                    const ap = montantBien * pct / 100;
+                    const emp = Math.max(0, coutTotal_bien - ap);
+                    const tm = taux/100/12;
+                    const mens = tm>0 ? emp*(tm*Math.pow(1+tm,n))/(Math.pow(1+tm,n)-1) : emp/n;
+                    const assM = emp*assurance/100/12;
+                    const interets = Math.max(0, mens*n - emp);
+                    const isActive = Math.abs(ap - apport) < 500;
+                    return (
+                      <tr key={pct} onClick={()=>setApport(Math.round(ap))} style={{ cursor:"pointer", background:isActive?"rgba(129,140,248,0.1)":i%2===0?"transparent":"rgba(255,255,255,0.02)", borderBottom:"1px solid rgba(255,255,255,0.04)" }}>
+                        <td style={{ padding:"9px 14px", color:isActive?"#A5B4FC":"#F1F5F9", fontWeight:isActive?700:400 }}>{pct}% {isActive?"✓":""}</td>
+                        <td style={{ padding:"9px 14px", textAlign:"right", color:"#60A5FA" }}>{fmt(ap)}</td>
+                        <td style={{ padding:"9px 14px", textAlign:"right", color:"#94A3B8" }}>{fmt(emp)}</td>
+                        <td style={{ padding:"9px 14px", textAlign:"right", color:"#818CF8", fontWeight:700 }}>{fmt(mens+assM)}</td>
+                        <td style={{ padding:"9px 14px", textAlign:"right", color:"#F87171" }}>{fmt(interets)}</td>
+                        <td style={{ padding:"9px 14px", textAlign:"right", color:"#FBBF24", fontWeight:600 }}>{fmt(emp+interets+assM*n)}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </Card>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function AppContent({ user }) {
   const [view, setView] = useState("overview");
   const [cryptoData, setCryptoData] = useState(INITIAL_CRYPTO);
@@ -4579,6 +5248,7 @@ function AppContent({ user }) {
     { key: "realestate",  icon: "🏠", label: "Immobilier" },
     { key: "bank",        icon: "🏦", label: "Banque" },
     { key: "budget",      icon: "💰", label: "Budget" },
+    { key: "simulateur",  icon: "🏦", label: "Simulateur crédit" },
   ];
 
   return (
@@ -4655,6 +5325,7 @@ function AppContent({ user }) {
         {view === "realestate" && <RealEstateView realestate={realestate} setRealestate={setRealestate} history={history} />}
         {view === "bank"       && <BankView bank={bank} setBank={setBank} />}
         {view === "budget"     && <BudgetView uid={user?.uid} onOpenQuickAdd={() => setShowQuickAdd(true)} quickAddTx={quickAddTx} setQuickAddTx={setQuickAddTx} onCatsChange={setQuickAddCats} />}
+        {view === "simulateur" && <SimulateurCredit cryptoTotal={cryptoTotal} stocksTotal={stocksTotal} savingsTotal={savingsTotal} bankTotal={bankTotal} realestateTotal={realestateTotal} scpiTotal={scpiTotal} grandTotal={grandTotal} uid={user?.uid} />}
       </div>
 
       {/* Bouton ajout intégré dans la nav — supprimé du bas de page */}
