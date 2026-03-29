@@ -4440,26 +4440,16 @@ function SimulateurCredit({ cryptoTotal, stocksTotal, savingsTotal, bankTotal, r
   const coutAssurance = assuranceMensuelle * n;
   const coutTotalCredit = montantEmprunte + coutInterets + coutAssurance;
   const taeg = (() => {
-    // TAEG exact : taux annuel effectif global par méthode Newton-Raphson (TRI)
-    // Flux : +montantEmprunte en t=0, -mensualiteTotale chaque mois
     if (montantEmprunte <= 0 || mensualiteTotale <= 0) return 0;
-    let r = taux / 100 / 12 + assurance / 100 / 12; // taux mensuel initial
-    for (let iter = 0; iter < 200; iter++) {
-      if (r <= 0) { r = 0.0001; }
-      const pow = Math.pow(1 + r, n);
-      // f(r) = montantEmprunte - mensualiteTotale * (1 - (1+r)^-n) / r
-      const f  = montantEmprunte - mensualiteTotale * (pow - 1) / (r * pow);
-      // f'(r)
-      const fp = mensualiteTotale * (
-        (n * Math.pow(1 + r, n - 1) * r * pow - (pow - 1) * (r * n * Math.pow(1 + r, n - 1) + pow)) /
-        Math.pow(r * pow, 2)
-      );
-      const delta = fp !== 0 ? f / fp : 0;
-      r -= delta;
-      if (Math.abs(delta) < 1e-10) break;
+    // Bisection sur le taux mensuel — borne basse toujours > 0, jamais de TAEG négatif
+    let lo = 0.000001, hi = (taux + assurance + 5) / 100 / 12;
+    for (let i = 0; i < 100; i++) {
+      const mid = (lo + hi) / 2;
+      const va = mensualiteTotale * (1 - Math.pow(1 + mid, -n)) / mid;
+      if (va > montantEmprunte) lo = mid; else hi = mid;
     }
-    // Convertir taux mensuel → taux annuel effectif : (1+r)^12 - 1
-    return (Math.pow(1 + r, 12) - 1) * 100;
+    // Taux mensuel → taux annuel effectif : (1+r)^12 - 1
+    return (Math.pow(1 + (lo + hi) / 2, 12) - 1) * 100;
   })();
 
   // ── Tableau d'amortissement

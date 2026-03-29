@@ -4116,8 +4116,20 @@ async function exportSimulationPDF(params, computed, tableauAnnuel, tableauMensu
   const { jsPDF } = window.jspdf;
   const doc = new jsPDF({ orientation:"portrait", unit:"mm", format:"a4" });
 
+  // Helvetica built-in ne supporte pas les accents — on les remplace
+  const a = (str) => (str||"")
+    .replace(/[àâä]/g,"a").replace(/[ÀÂÄÁ]/g,"A")
+    .replace(/[éèêë]/g,"e").replace(/[ÉÈÊË]/g,"E")
+    .replace(/[îï]/g,"i").replace(/[ÎÏ]/g,"I")
+    .replace(/[ôö]/g,"o").replace(/[ÔÖÓ]/g,"O")
+    .replace(/[ùûü]/g,"u").replace(/[ÙÛÜ]/g,"U")
+    .replace(/[ç]/g,"c").replace(/[Ç]/g,"C")
+    .replace(/[œ]/g,"oe").replace(/[æ]/g,"ae")
+    .replace(/[–—]/g,"-").replace(/[«»]/g,'"')
+    .replace(/['']/g,"'").replace(/[""]/g,'"');
+
   const W = 210, ML = 14, MR = 196;
-  const fmtE = (n) => new Intl.NumberFormat("fr-FR", { style:"currency", currency:"EUR", maximumFractionDigits:0 }).format(n||0);
+  const fmtE = (n) => new Intl.NumberFormat("fr-FR", { style:"currency", currency:"EUR", maximumFractionDigits:0 }).format(n||0).replace(/\s/g," ");
   const fmtP = (n) => `${(n||0).toFixed(2)} %`;
 
   // ── Palette couleurs
@@ -4130,21 +4142,21 @@ async function exportSimulationPDF(params, computed, tableauAnnuel, tableauMensu
   doc.roundedRect(ML-2, 8, W-ML*2+4, 28, 3, 3, "F");
   doc.setTextColor(...C.indigo);
   doc.setFontSize(18); doc.setFont("helvetica","bold");
-  doc.text("Simulation de Crédit Immobilier", ML+2, 19);
+  doc.text(a("Simulation de Credit Immobilier"), ML+2, 19);
   doc.setFontSize(9); doc.setFont("helvetica","normal"); doc.setTextColor(...C.muted);
-  doc.text(`${params.nomSimulation}  ·  Contexte : ${params.contexteLabel}  ·  Généré le ${new Date().toLocaleDateString("fr-FR")}`, ML+2, 26);
+  doc.text(a(`${params.nomSimulation}  ·  Contexte : ${params.contexteLabel}  ·  Genere le ${new Date().toLocaleDateString("fr-FR")}`), ML+2, 26);
   doc.setTextColor(...C.text);
-  doc.setFontSize(8); doc.text(`Durée ${params.duree} ans · Taux ${fmtP(params.taux)} · Assurance ${fmtP(params.assurance)} · Frais notaire ${fmtP(params.fraisNotaire)}`, ML+2, 33);
+  doc.setFontSize(8); doc.text(a(`Duree ${params.duree} ans · Taux ${fmtP(params.taux)} · Assurance ${fmtP(params.assurance)} · Frais notaire ${fmtP(params.fraisNotaire)}`), ML+2, 33);
 
   // ── Section KPIs principaux
   let y = 44;
   const kpiCols = [
-    { label:"Mensualité totale",    val:fmtE(computed.mensualiteTotale),  col:C.indigo },
-    { label:"Montant emprunté",     val:fmtE(computed.montantEmprunte),   col:C.blue },
-    { label:"Coût total crédit",    val:fmtE(computed.coutTotalCredit),   col:C.red },
-    { label:"TAEG estimé",          val:fmtP(computed.taeg),              col:C.amber },
-    { label:"Frais de notaire",     val:fmtE(computed.fraisNotaireMontant), col:C.blue },
-    { label:"Coût total opération", val:fmtE(computed.coutTotalOperation),col:[167,139,250] },
+    { label:a("Mensualite totale"),    val:fmtE(computed.mensualiteTotale),  col:C.indigo },
+    { label:a("Montant emprunte"),     val:fmtE(computed.montantEmprunte),   col:C.blue },
+    { label:a("Cout total credit"),    val:fmtE(computed.coutTotalCredit),   col:C.red },
+    { label:a("TAEG estime"),          val:fmtP(computed.taeg),              col:C.amber },
+    { label:a("Frais de notaire"),     val:fmtE(computed.fraisNotaireMontant), col:C.blue },
+    { label:a("Cout total operation"), val:fmtE(computed.coutTotalOperation),col:[167,139,250] },
   ];
   const kW = (W - ML*2 - 5*3) / 6;
   kpiCols.forEach((k, i) => {
@@ -4160,11 +4172,11 @@ async function exportSimulationPDF(params, computed, tableauAnnuel, tableauMensu
   // ── Section décomposition mensualité
   y += 24;
   doc.setFontSize(10); doc.setFont("helvetica","bold"); doc.setTextColor(...C.text);
-  doc.text("Décomposition de la mensualité (1er mois)", ML, y); y += 5;
+  doc.text(a("Decomposition de la mensualite (1er mois)"), ML, y); y += 5;
   const decomp = [
-    { label:`Capital remboursé`,    val:computed.capitalMois1, pct:computed.capitalMois1/computed.mensualiteTotale*100, col:C.indigo },
-    { label:`Intérêts`,             val:computed.interetsMois1, pct:computed.interetsMois1/computed.mensualiteTotale*100, col:C.red },
-    { label:`Assurance`,            val:computed.assuranceMensuelle, pct:computed.assuranceMensuelle/computed.mensualiteTotale*100, col:C.amber },
+    { label:a("Capital rembourse"),    val:computed.capitalMois1, pct:computed.capitalMois1/computed.mensualiteTotale*100, col:C.indigo },
+    { label:a("Interets"),             val:computed.interetsMois1, pct:computed.interetsMois1/computed.mensualiteTotale*100, col:C.red },
+    { label:a("Assurance"),            val:computed.assuranceMensuelle, pct:computed.assuranceMensuelle/computed.mensualiteTotale*100, col:C.amber },
   ];
   decomp.forEach(d => {
     doc.setFontSize(8); doc.setFont("helvetica","normal"); doc.setTextColor(...C.muted);
@@ -4178,22 +4190,22 @@ async function exportSimulationPDF(params, computed, tableauAnnuel, tableauMensu
   doc.setDrawColor(...C.indigo); doc.setLineWidth(0.3);
   doc.line(ML, y, MR, y); y += 5;
   doc.setFontSize(9); doc.setFont("helvetica","bold"); doc.setTextColor(...C.indigo);
-  doc.text(`Total mensualité : ${fmtE(computed.mensualiteTotale)}`, ML, y); y += 8;
+  doc.text(a(`Total mensualite : ${fmtE(computed.mensualiteTotale)}`), ML, y); y += 8;
 
   // ── Répartition coût total (texte)
   doc.setFontSize(10); doc.setFont("helvetica","bold"); doc.setTextColor(...C.text);
-  doc.text("Répartition du coût total", ML, y); y += 5;
+  doc.text(a("Repartition du cout total"), ML, y); y += 5;
   const repartition = [
-    { label:"Capital (montant emprunté)", val:computed.montantEmprunte, col:C.indigo },
-    { label:"Intérêts totaux",            val:computed.coutInterets,    col:C.red },
-    { label:"Assurance totale",           val:computed.coutAssurance,   col:C.amber },
-    { label:"Frais de notaire",           val:computed.fraisNotaireMontant, col:C.blue },
+    { label:a("Capital (montant emprunte)"), val:computed.montantEmprunte, col:C.indigo },
+    { label:a("Interets totaux"),            val:computed.coutInterets,    col:C.red },
+    { label:a("Assurance totale"),           val:computed.coutAssurance,   col:C.amber },
+    { label:a("Frais de notaire"),           val:computed.fraisNotaireMontant, col:C.blue },
   ];
   const totalPie = repartition.reduce((s,r)=>s+r.val,0);
   repartition.forEach(r => {
     const pct = totalPie>0 ? r.val/totalPie*100 : 0;
     doc.setFontSize(8); doc.setFont("helvetica","normal"); doc.setTextColor(...C.muted);
-    doc.text(`${r.label}`, ML, y+4);
+    doc.text(r.label, ML, y+4);
     doc.setTextColor(...r.col); doc.setFont("helvetica","bold");
     doc.text(`${fmtE(r.val)}  (${pct.toFixed(1)}%)`, ML+70, y+4);
     doc.setFillColor(40,50,70); doc.roundedRect(ML+120, y+1, 72, 4, 1, 1, "F");
@@ -4204,8 +4216,8 @@ async function exportSimulationPDF(params, computed, tableauAnnuel, tableauMensu
 
   // ── Comparatif durées
   doc.setFontSize(10); doc.setFont("helvetica","bold"); doc.setTextColor(...C.text);
-  doc.text("Comparatif selon la durée", ML, y); y += 5;
-  const cmpHeaders = ["Durée","Mensualité","Intérêts","Assurance","Coût total"];
+  doc.text(a("Comparatif selon la duree"), ML, y); y += 5;
+  const cmpHeaders = [a("Duree"), a("Mensualite"), a("Interets"), a("Assurance"), a("Cout total")];
   const cmpColW = [22, 36, 36, 36, 46];
   let cx = ML;
   doc.setFillColor(...C.card);
@@ -4226,7 +4238,7 @@ async function exportSimulationPDF(params, computed, tableauAnnuel, tableauMensu
     if (ri%2===0) { doc.setFillColor(22,27,39); doc.rect(ML, y, MR-ML, 6, "F"); }
     if (isActive) { doc.setFillColor(30,35,60); doc.rect(ML, y, MR-ML, 6, "F"); }
     cx = ML;
-    const row = [`${d} ans${isActive?" ✓":""}`, fmtE(mens+assM), fmtE(interets), fmtE(assTotal), fmtE(computed.montantEmprunte+interets+assTotal)];
+    const row = [`${d} ans${isActive?" *":""}`, fmtE(mens+assM), fmtE(interets), fmtE(assTotal), fmtE(computed.montantEmprunte+interets+assTotal)];
     row.forEach((v,i) => {
       doc.setFontSize(7.5); doc.setFont("helvetica", i===0&&isActive?"bold":"normal");
       doc.setTextColor(i===0&&isActive?C.indigo[0]:C.text[0], i===0&&isActive?C.indigo[1]:C.text[1], i===0&&isActive?C.indigo[2]:C.text[2]);
@@ -4242,11 +4254,11 @@ async function exportSimulationPDF(params, computed, tableauAnnuel, tableauMensu
   doc.setFillColor(...C.bg); doc.rect(0, 0, W, 297, "F");
   y = 14;
   doc.setFontSize(13); doc.setFont("helvetica","bold"); doc.setTextColor(...C.indigo);
-  doc.text("Tableau d'amortissement annuel", ML, y); y += 4;
+  doc.text(a("Tableau d'amortissement annuel"), ML, y); y += 4;
   doc.setFontSize(8); doc.setFont("helvetica","normal"); doc.setTextColor(...C.muted);
-  doc.text(`Simulation : ${params.nomSimulation}  ·  ${params.duree} ans  ·  ${fmtE(computed.montantEmprunte)} empruntés`, ML, y); y += 7;
+  doc.text(a(`Simulation : ${params.nomSimulation}  ·  ${params.duree} ans  ·  ${fmtE(computed.montantEmprunte)} empruntes`), ML, y); y += 7;
 
-  const amHeaders = ["Année","Mensualités","Capital","Intérêts","Assurance","Capital restant","% remboursé"];
+  const amHeaders = [a("Annee"), a("Mensualites"), a("Capital"), a("Interets"), a("Assurance"), a("Capital restant"), a("% rembourse")];
   const amColW   = [18,30,28,28,26,32,26];
   cx = ML;
   doc.setFillColor(...C.card); doc.rect(ML, y, MR-ML, 7, "F");
@@ -4260,7 +4272,7 @@ async function exportSimulationPDF(params, computed, tableauAnnuel, tableauMensu
     const pct = computed.montantEmprunte > 0 ? (1 - r.capitalRestant/computed.montantEmprunte)*100 : 100;
     if (ri%2===0) { doc.setFillColor(22,27,39); doc.rect(ML, y, MR-ML, 6, "F"); }
     cx = ML;
-    const row = [`Année ${r.annee}`, fmtE(r.mensualite), fmtE(r.principal), fmtE(r.interets), fmtE(r.assurMo), fmtE(r.capitalRestant), `${pct.toFixed(1)}%`];
+    const row = [a(`Annee ${r.annee}`), fmtE(r.mensualite), fmtE(r.principal), fmtE(r.interets), fmtE(r.assurMo), fmtE(r.capitalRestant), `${pct.toFixed(1)}%`];
     const cols = [C.text, C.indigo, C.blue, C.red, C.amber, C.muted, C.green];
     row.forEach((v,i) => {
       doc.setFontSize(7.5); doc.setFont("helvetica","normal");
@@ -4270,16 +4282,16 @@ async function exportSimulationPDF(params, computed, tableauAnnuel, tableauMensu
     y += 6;
   });
 
-  // ── PAGE 3 : Tableau d'amortissement mensuel (extrait 24 premiers mois)
+  // ── PAGE 3 : Tableau mensuel (24 premiers mois)
   doc.addPage();
   doc.setFillColor(...C.bg); doc.rect(0, 0, W, 297, "F");
   y = 14;
   doc.setFontSize(13); doc.setFont("helvetica","bold"); doc.setTextColor(...C.indigo);
-  doc.text("Tableau d'amortissement mensuel (24 premiers mois)", ML, y); y += 4;
+  doc.text(a("Tableau d'amortissement mensuel (24 premiers mois)"), ML, y); y += 4;
   doc.setFontSize(8); doc.setFont("helvetica","normal"); doc.setTextColor(...C.muted);
-  doc.text(`Simulation : ${params.nomSimulation}`, ML, y); y += 7;
+  doc.text(a(`Simulation : ${params.nomSimulation}`), ML, y); y += 7;
 
-  const mHeaders = ["Mois","Année","Mensualité","Capital","Intérêts","Assurance","Capital restant"];
+  const mHeaders = ["Mois", a("Annee"), a("Mensualite"), "Capital", a("Interets"), "Assurance", a("Capital restant")];
   const mColW    = [14,14,30,28,28,26,34];
   cx = ML;
   doc.setFillColor(...C.card); doc.rect(ML, y, MR-ML, 7, "F");
@@ -4303,7 +4315,7 @@ async function exportSimulationPDF(params, computed, tableauAnnuel, tableauMensu
   if (tableauMensuel.length > 24) {
     y += 4;
     doc.setFontSize(8); doc.setTextColor(...C.muted);
-    doc.text(`... et ${tableauMensuel.length - 24} mois supplémentaires (voir tableau annuel pour la suite)`, ML, y);
+    doc.text(a(`... et ${tableauMensuel.length - 24} mois supplementaires (voir tableau annuel)`), ML, y);
   }
 
   // ── Footer toutes les pages
@@ -4311,11 +4323,11 @@ async function exportSimulationPDF(params, computed, tableauAnnuel, tableauMensu
   for (let p=1; p<=totalPages; p++) {
     doc.setPage(p);
     doc.setFontSize(7); doc.setTextColor(...C.muted);
-    doc.text(`Mon Patrimoine · Simulateur de crédit · Page ${p}/${totalPages}`, ML, 292);
-    doc.text(`Simulation : ${params.nomSimulation}`, MR, 292, { align:"right" });
+    doc.text(a(`Mon Patrimoine · Simulateur de credit · Page ${p}/${totalPages}`), ML, 292);
+    doc.text(a(`Simulation : ${params.nomSimulation}`), MR, 292, { align:"right" });
   }
 
-  doc.save(`simulation-credit-${params.nomSimulation.replace(/\s+/g,"-").toLowerCase()}.pdf`);
+  doc.save(`simulation-credit-${a(params.nomSimulation).replace(/\s+/g,"-").toLowerCase()}.pdf`);
 }
 
 function SimulateurCredit({ cryptoTotal, stocksTotal, savingsTotal, bankTotal, realestateTotal, scpiTotal, grandTotal, uid }) {
@@ -4428,17 +4440,26 @@ function SimulateurCredit({ cryptoTotal, stocksTotal, savingsTotal, bankTotal, r
   const coutAssurance = assuranceMensuelle * n;
   const coutTotalCredit = montantEmprunte + coutInterets + coutAssurance;
   const taeg = (() => {
-    // Approximation TAEG : taux effectif global avec assurance
-    let lo=0, hi=1, m=0;
-    for (let i=0; i<60; i++) {
-      m = (lo+hi)/2;
-      const tm = m/12;
-      const est = tm > 0
-        ? montantEmprunte * (tm * Math.pow(1+tm,n)) / (Math.pow(1+tm,n)-1) + assuranceMensuelle
-        : montantEmprunte/n + assuranceMensuelle;
-      if (est > mensualiteTotale) hi=m; else lo=m;
+    // TAEG exact : taux annuel effectif global par méthode Newton-Raphson (TRI)
+    // Flux : +montantEmprunte en t=0, -mensualiteTotale chaque mois
+    if (montantEmprunte <= 0 || mensualiteTotale <= 0) return 0;
+    let r = taux / 100 / 12 + assurance / 100 / 12; // taux mensuel initial
+    for (let iter = 0; iter < 200; iter++) {
+      if (r <= 0) { r = 0.0001; }
+      const pow = Math.pow(1 + r, n);
+      // f(r) = montantEmprunte - mensualiteTotale * (1 - (1+r)^-n) / r
+      const f  = montantEmprunte - mensualiteTotale * (pow - 1) / (r * pow);
+      // f'(r)
+      const fp = mensualiteTotale * (
+        (n * Math.pow(1 + r, n - 1) * r * pow - (pow - 1) * (r * n * Math.pow(1 + r, n - 1) + pow)) /
+        Math.pow(r * pow, 2)
+      );
+      const delta = fp !== 0 ? f / fp : 0;
+      r -= delta;
+      if (Math.abs(delta) < 1e-10) break;
     }
-    return m * 12 * 100;
+    // Convertir taux mensuel → taux annuel effectif : (1+r)^12 - 1
+    return (Math.pow(1 + r, 12) - 1) * 100;
   })();
 
   // ── Tableau d'amortissement
