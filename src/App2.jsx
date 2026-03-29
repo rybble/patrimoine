@@ -4101,223 +4101,7 @@ export default function App() {
   return <AppContent user={user} />;
 }
 
-// ─── PDF EXPORT ───────────────────────────────────────────────────────────────
-async function exportSimulationPDF(params, computed, tableauAnnuel, tableauMensuel) {
-  // Charger jsPDF dynamiquement
-  if (!window.jspdf) {
-    await new Promise((res, rej) => {
-      const s = document.createElement("script");
-      s.src = "https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js";
-      s.onload = res; s.onerror = rej;
-      document.head.appendChild(s);
-    });
-  }
-  if (!window.jspdf?.jsPDF) return;
-  const { jsPDF } = window.jspdf;
-  const doc = new jsPDF({ orientation:"portrait", unit:"mm", format:"a4" });
-
-  const W = 210, ML = 14, MR = 196;
-  const fmtE = (n) => new Intl.NumberFormat("fr-FR", { style:"currency", currency:"EUR", maximumFractionDigits:0 }).format(n||0);
-  const fmtP = (n) => `${(n||0).toFixed(2)} %`;
-
-  // ── Palette couleurs
-  const C = { indigo:[99,102,241], green:[52,211,153], red:[248,113,113], amber:[251,191,36], blue:[96,165,250], bg:[15,23,42], card:[22,27,39], text:[241,245,249], muted:[100,116,139] };
-
-  // ── Header page 1
-  doc.setFillColor(...C.bg);
-  doc.rect(0, 0, W, 297, "F");
-  doc.setFillColor(...C.card);
-  doc.roundedRect(ML-2, 8, W-ML*2+4, 28, 3, 3, "F");
-  doc.setTextColor(...C.indigo);
-  doc.setFontSize(18); doc.setFont("helvetica","bold");
-  doc.text("Simulation de Crédit Immobilier", ML+2, 19);
-  doc.setFontSize(9); doc.setFont("helvetica","normal"); doc.setTextColor(...C.muted);
-  doc.text(`${params.nomSimulation}  ·  Contexte : ${params.contexteLabel}  ·  Généré le ${new Date().toLocaleDateString("fr-FR")}`, ML+2, 26);
-  doc.setTextColor(...C.text);
-  doc.setFontSize(8); doc.text(`Durée ${params.duree} ans · Taux ${fmtP(params.taux)} · Assurance ${fmtP(params.assurance)} · Frais notaire ${fmtP(params.fraisNotaire)}`, ML+2, 33);
-
-  // ── Section KPIs principaux
-  let y = 44;
-  const kpiCols = [
-    { label:"Mensualité totale",    val:fmtE(computed.mensualiteTotale),  col:C.indigo },
-    { label:"Montant emprunté",     val:fmtE(computed.montantEmprunte),   col:C.blue },
-    { label:"Coût total crédit",    val:fmtE(computed.coutTotalCredit),   col:C.red },
-    { label:"TAEG estimé",          val:fmtP(computed.taeg),              col:C.amber },
-    { label:"Frais de notaire",     val:fmtE(computed.fraisNotaireMontant), col:C.blue },
-    { label:"Coût total opération", val:fmtE(computed.coutTotalOperation),col:[167,139,250] },
-  ];
-  const kW = (W - ML*2 - 5*3) / 6;
-  kpiCols.forEach((k, i) => {
-    const x = ML + i*(kW+3);
-    doc.setFillColor(...C.card); doc.roundedRect(x, y, kW, 18, 2, 2, "F");
-    doc.setDrawColor(...k.col); doc.setLineWidth(0.5); doc.line(x, y+18, x+kW, y+18);
-    doc.setFontSize(6.5); doc.setTextColor(...C.muted); doc.setFont("helvetica","normal");
-    doc.text(k.label, x+2, y+6);
-    doc.setFontSize(9); doc.setTextColor(...k.col); doc.setFont("helvetica","bold");
-    doc.text(k.val, x+2, y+14, { maxWidth: kW-2 });
-  });
-
-  // ── Section décomposition mensualité
-  y += 24;
-  doc.setFontSize(10); doc.setFont("helvetica","bold"); doc.setTextColor(...C.text);
-  doc.text("Décomposition de la mensualité (1er mois)", ML, y); y += 5;
-  const decomp = [
-    { label:`Capital remboursé`,    val:computed.capitalMois1, pct:computed.capitalMois1/computed.mensualiteTotale*100, col:C.indigo },
-    { label:`Intérêts`,             val:computed.interetsMois1, pct:computed.interetsMois1/computed.mensualiteTotale*100, col:C.red },
-    { label:`Assurance`,            val:computed.assuranceMensuelle, pct:computed.assuranceMensuelle/computed.mensualiteTotale*100, col:C.amber },
-  ];
-  decomp.forEach(d => {
-    doc.setFontSize(8); doc.setFont("helvetica","normal"); doc.setTextColor(...C.muted);
-    doc.text(d.label, ML, y+4);
-    doc.setTextColor(...d.col); doc.setFont("helvetica","bold");
-    doc.text(`${fmtE(d.val)}  (${d.pct.toFixed(1)}%)`, ML+50, y+4);
-    doc.setFillColor(40,50,70); doc.roundedRect(ML+100, y+1, 80, 4, 1, 1, "F");
-    doc.setFillColor(...d.col); doc.roundedRect(ML+100, y+1, 80*d.pct/100, 4, 1, 1, "F");
-    y += 8;
-  });
-  doc.setDrawColor(...C.indigo); doc.setLineWidth(0.3);
-  doc.line(ML, y, MR, y); y += 5;
-  doc.setFontSize(9); doc.setFont("helvetica","bold"); doc.setTextColor(...C.indigo);
-  doc.text(`Total mensualité : ${fmtE(computed.mensualiteTotale)}`, ML, y); y += 8;
-
-  // ── Répartition coût total (texte)
-  doc.setFontSize(10); doc.setFont("helvetica","bold"); doc.setTextColor(...C.text);
-  doc.text("Répartition du coût total", ML, y); y += 5;
-  const repartition = [
-    { label:"Capital (montant emprunté)", val:computed.montantEmprunte, col:C.indigo },
-    { label:"Intérêts totaux",            val:computed.coutInterets,    col:C.red },
-    { label:"Assurance totale",           val:computed.coutAssurance,   col:C.amber },
-    { label:"Frais de notaire",           val:computed.fraisNotaireMontant, col:C.blue },
-  ];
-  const totalPie = repartition.reduce((s,r)=>s+r.val,0);
-  repartition.forEach(r => {
-    const pct = totalPie>0 ? r.val/totalPie*100 : 0;
-    doc.setFontSize(8); doc.setFont("helvetica","normal"); doc.setTextColor(...C.muted);
-    doc.text(`${r.label}`, ML, y+4);
-    doc.setTextColor(...r.col); doc.setFont("helvetica","bold");
-    doc.text(`${fmtE(r.val)}  (${pct.toFixed(1)}%)`, ML+70, y+4);
-    doc.setFillColor(40,50,70); doc.roundedRect(ML+120, y+1, 72, 4, 1, 1, "F");
-    doc.setFillColor(...r.col); doc.roundedRect(ML+120, y+1, 72*pct/100, 4, 1, 1, "F");
-    y += 8;
-  });
-  y += 4;
-
-  // ── Comparatif durées
-  doc.setFontSize(10); doc.setFont("helvetica","bold"); doc.setTextColor(...C.text);
-  doc.text("Comparatif selon la durée", ML, y); y += 5;
-  const cmpHeaders = ["Durée","Mensualité","Intérêts","Assurance","Coût total"];
-  const cmpColW = [22, 36, 36, 36, 46];
-  let cx = ML;
-  doc.setFillColor(...C.card);
-  doc.rect(ML, y, MR-ML, 7, "F");
-  cmpHeaders.forEach((h,i) => {
-    doc.setFontSize(7); doc.setFont("helvetica","bold"); doc.setTextColor(...C.muted);
-    doc.text(h, cx+1, y+5);
-    cx += cmpColW[i];
-  });
-  y += 7;
-  [10,15,20,25,30].forEach((d, ri) => {
-    const tm = params.taux/100/12, nd=d*12;
-    const mens = tm>0 ? computed.montantEmprunte*(tm*Math.pow(1+tm,nd))/(Math.pow(1+tm,nd)-1) : computed.montantEmprunte/nd;
-    const assM = computed.montantEmprunte*params.assurance/100/12;
-    const interets = Math.max(0, mens*nd - computed.montantEmprunte);
-    const assTotal = assM*nd;
-    const isActive = params.duree === d;
-    if (ri%2===0) { doc.setFillColor(22,27,39); doc.rect(ML, y, MR-ML, 6, "F"); }
-    if (isActive) { doc.setFillColor(30,35,60); doc.rect(ML, y, MR-ML, 6, "F"); }
-    cx = ML;
-    const row = [`${d} ans${isActive?" ✓":""}`, fmtE(mens+assM), fmtE(interets), fmtE(assTotal), fmtE(computed.montantEmprunte+interets+assTotal)];
-    row.forEach((v,i) => {
-      doc.setFontSize(7.5); doc.setFont("helvetica", i===0&&isActive?"bold":"normal");
-      doc.setTextColor(i===0&&isActive?C.indigo[0]:C.text[0], i===0&&isActive?C.indigo[1]:C.text[1], i===0&&isActive?C.indigo[2]:C.text[2]);
-      doc.text(v, cx+1, y+4.5);
-      cx += cmpColW[i];
-    });
-    y += 6;
-  });
-  y += 6;
-
-  // ── PAGE 2 : Tableau d'amortissement annuel
-  doc.addPage();
-  doc.setFillColor(...C.bg); doc.rect(0, 0, W, 297, "F");
-  y = 14;
-  doc.setFontSize(13); doc.setFont("helvetica","bold"); doc.setTextColor(...C.indigo);
-  doc.text("Tableau d'amortissement annuel", ML, y); y += 4;
-  doc.setFontSize(8); doc.setFont("helvetica","normal"); doc.setTextColor(...C.muted);
-  doc.text(`Simulation : ${params.nomSimulation}  ·  ${params.duree} ans  ·  ${fmtE(computed.montantEmprunte)} empruntés`, ML, y); y += 7;
-
-  const amHeaders = ["Année","Mensualités","Capital","Intérêts","Assurance","Capital restant","% remboursé"];
-  const amColW   = [18,30,28,28,26,32,26];
-  cx = ML;
-  doc.setFillColor(...C.card); doc.rect(ML, y, MR-ML, 7, "F");
-  amHeaders.forEach((h,i) => {
-    doc.setFontSize(7); doc.setFont("helvetica","bold"); doc.setTextColor(...C.muted);
-    doc.text(h, cx+1, y+5); cx += amColW[i];
-  });
-  y += 7;
-  tableauAnnuel.forEach((r, ri) => {
-    if (y > 280) { doc.addPage(); doc.setFillColor(...C.bg); doc.rect(0, 0, W, 297, "F"); y = 14; }
-    const pct = computed.montantEmprunte > 0 ? (1 - r.capitalRestant/computed.montantEmprunte)*100 : 100;
-    if (ri%2===0) { doc.setFillColor(22,27,39); doc.rect(ML, y, MR-ML, 6, "F"); }
-    cx = ML;
-    const row = [`Année ${r.annee}`, fmtE(r.mensualite), fmtE(r.principal), fmtE(r.interets), fmtE(r.assurMo), fmtE(r.capitalRestant), `${pct.toFixed(1)}%`];
-    const cols = [C.text, C.indigo, C.blue, C.red, C.amber, C.muted, C.green];
-    row.forEach((v,i) => {
-      doc.setFontSize(7.5); doc.setFont("helvetica","normal");
-      doc.setTextColor(...cols[i]);
-      doc.text(v, cx+1, y+4.5); cx += amColW[i];
-    });
-    y += 6;
-  });
-
-  // ── PAGE 3 : Tableau d'amortissement mensuel (extrait 24 premiers mois)
-  doc.addPage();
-  doc.setFillColor(...C.bg); doc.rect(0, 0, W, 297, "F");
-  y = 14;
-  doc.setFontSize(13); doc.setFont("helvetica","bold"); doc.setTextColor(...C.indigo);
-  doc.text("Tableau d'amortissement mensuel (24 premiers mois)", ML, y); y += 4;
-  doc.setFontSize(8); doc.setFont("helvetica","normal"); doc.setTextColor(...C.muted);
-  doc.text(`Simulation : ${params.nomSimulation}`, ML, y); y += 7;
-
-  const mHeaders = ["Mois","Année","Mensualité","Capital","Intérêts","Assurance","Capital restant"];
-  const mColW    = [14,14,30,28,28,26,34];
-  cx = ML;
-  doc.setFillColor(...C.card); doc.rect(ML, y, MR-ML, 7, "F");
-  mHeaders.forEach((h,i) => {
-    doc.setFontSize(7); doc.setFont("helvetica","bold"); doc.setTextColor(...C.muted);
-    doc.text(h, cx+1, y+5); cx += mColW[i];
-  });
-  y += 7;
-  tableauMensuel.slice(0, 24).forEach((r, ri) => {
-    if (ri%2===0) { doc.setFillColor(22,27,39); doc.rect(ML, y, MR-ML, 6, "F"); }
-    cx = ML;
-    const row = [`${r.mo}`, `${r.annee}`, fmtE(r.mensualite), fmtE(r.principal), fmtE(r.interets), fmtE(r.assurMo), fmtE(r.capitalRestant)];
-    const cols = [C.muted, C.muted, C.indigo, C.blue, C.red, C.amber, C.muted];
-    row.forEach((v,i) => {
-      doc.setFontSize(7.5); doc.setFont("helvetica","normal");
-      doc.setTextColor(...cols[i]);
-      doc.text(v, cx+1, y+4.5); cx += mColW[i];
-    });
-    y += 6;
-  });
-  if (tableauMensuel.length > 24) {
-    y += 4;
-    doc.setFontSize(8); doc.setTextColor(...C.muted);
-    doc.text(`... et ${tableauMensuel.length - 24} mois supplémentaires (voir tableau annuel pour la suite)`, ML, y);
-  }
-
-  // ── Footer toutes les pages
-  const totalPages = doc.getNumberOfPages();
-  for (let p=1; p<=totalPages; p++) {
-    doc.setPage(p);
-    doc.setFontSize(7); doc.setTextColor(...C.muted);
-    doc.text(`Mon Patrimoine · Simulateur de crédit · Page ${p}/${totalPages}`, ML, 292);
-    doc.text(`Simulation : ${params.nomSimulation}`, MR, 292, { align:"right" });
-  }
-
-  doc.save(`simulation-credit-${params.nomSimulation.replace(/\s+/g,"-").toLowerCase()}.pdf`);
-}
-
+// ─── SIMULATEUR DE CRÉDIT ─────────────────────────────────────────────────────
 function SimulateurCredit({ cryptoTotal, stocksTotal, savingsTotal, bankTotal, realestateTotal, scpiTotal, grandTotal, uid }) {
   const [transactions, setTransactions] = useState([]);
   useEffect(() => {
@@ -4327,24 +4111,6 @@ function SimulateurCredit({ cryptoTotal, stocksTotal, savingsTotal, bankTotal, r
       try { const r = JSON.parse(localStorage.getItem("patrimoine_budget_v1")||"[]"); if(r.length) setTransactions(r); } catch {}
     }
   }, [uid]);
-
-  // ── Simulations sauvegardées
-  const [simulations, setSimulations] = useState([]);
-  const [pdfLoading, setPdfLoading] = useState(false);
-  const [saveModal, setSaveModal] = useState(false);
-  const [nomSim, setNomSim] = useState("");
-  const [saveStatus, setSaveStatus] = useState("");
-
-  // Charger simulations depuis Firebase
-  useEffect(() => {
-    if (!uid) return;
-    fbGet(uid, "credit_simulations").then(d => { if (Array.isArray(d)) setSimulations(d); });
-  }, [uid]);
-
-  const saveSimulations = async (list) => {
-    setSimulations(list);
-    if (uid) await fbSet(uid, "credit_simulations", list);
-  };
 
   const CONTEXTES = [
     { key: "rp",      label: "🏠 Résidence principale" },
@@ -4493,85 +4259,11 @@ function SimulateurCredit({ cryptoTotal, stocksTotal, savingsTotal, bankTotal, r
   }));
 
   const sectionTabs = [
-    { key:"mensualite",    label:"💶 Mensualité" },
-    { key:"capacite",      label:"📊 Capacité" },
+    { key:"mensualite", label:"💶 Mensualité" },
+    { key:"capacite",   label:"📊 Capacité" },
     { key:"amortissement", label:"📋 Amortissement" },
-    { key:"apport",        label:"💼 Impact apport" },
-    { key:"sauvegardes",   label:`💾 Mes simulations${simulations.length>0?" ("+simulations.length+")":""}` },
+    { key:"apport",     label:"💼 Impact apport" },
   ];
-
-  // ── Snapshot des paramètres courants
-  const snapshotParams = () => ({
-    contexte, contexteLabel: CONTEXTES.find(c=>c.key===contexte)?.label || contexte,
-    montantBien, apport, duree, taux, assurance, fraisNotaire, differe, tauxEndet,
-    revenuMode, revenuManuel, chargesExistantes, selectedSources,
-  });
-
-  const snapshotComputed = () => ({
-    mensualiteTotale, montantEmprunte, coutTotalCredit, taeg,
-    fraisNotaireMontant, coutTotalOperation: apport + coutTotalCredit + fraisNotaireMontant,
-    coutInterets, coutAssurance, assuranceMensuelle,
-    capitalMois1: mensualiteHorsAssurance - montantEmprunte * tauxMensuel,
-    interetsMois1: montantEmprunte * tauxMensuel,
-  });
-
-  const handleSave = async () => {
-    if (!nomSim.trim()) { setSaveStatus("❌ Donne un nom à la simulation"); return; }
-    const sim = {
-      id: `sim-${Date.now()}`,
-      nom: nomSim.trim(),
-      date: new Date().toLocaleDateString("fr-FR"),
-      params: snapshotParams(),
-      computed: snapshotComputed(),
-    };
-    const updated = [...simulations, sim];
-    await saveSimulations(updated);
-    setSaveModal(false); setNomSim(""); setSaveStatus("✅ Simulation sauvegardée !");
-    setTimeout(() => setSaveStatus(""), 3000);
-    setActiveSection("sauvegardes");
-  };
-
-  const handleLoad = (sim) => {
-    const p = sim.params;
-    setContexte(p.contexte);
-    setMontantBien(p.montantBien); setApport(p.apport); setDuree(p.duree);
-    setTaux(p.taux); setAssurance(p.assurance); setFraisNotaire(p.fraisNotaire);
-    setDiffere(p.differe || 0); setTauxEndet(p.tauxEndet || 35);
-    setRevenuMode(p.revenuMode || "manuel"); setRevenuManuel(p.revenuManuel || 3000);
-    setChargesExistantes(p.chargesExistantes || 0);
-    setSelectedSources(p.selectedSources || ["bank"]);
-    setActiveSection("mensualite");
-  };
-
-  const handleDelete = async (id) => {
-    if (!confirm("Supprimer cette simulation ?")) return;
-    const updated = simulations.filter(s => s.id !== id);
-    await saveSimulations(updated);
-  };
-
-  const handleExportPDF = async (sim) => {
-    setPdfLoading(true);
-    try {
-      await exportSimulationPDF(
-        { ...sim.params, nomSimulation: sim.nom },
-        sim.computed,
-        tableauAnnuel,
-        tableauMensuel
-      );
-    } finally { setPdfLoading(false); }
-  };
-
-  const handleExportCurrentPDF = async () => {
-    setPdfLoading(true);
-    try {
-      await exportSimulationPDF(
-        { ...snapshotParams(), nomSimulation: "Simulation en cours" },
-        snapshotComputed(),
-        tableauAnnuel,
-        tableauMensuel
-      );
-    } finally { setPdfLoading(false); }
-  };
 
   const CustomTooltipPie = ({ active, payload }) => {
     if (!active || !payload?.length) return null;
@@ -4674,57 +4366,12 @@ function SimulateurCredit({ cryptoTotal, stocksTotal, savingsTotal, bankTotal, r
         <StatCard label="Coût total opération" value={fmt(apport + coutTotalCredit + fraisNotaireMontant)} sub="Apport + crédit + notaire" color="#A78BFA" icon="🧾" />
       </div>
 
-      {/* ── Nav sections + boutons actions ── */}
-      <div style={{ display:"flex", gap:6, marginBottom:16, flexWrap:"wrap", alignItems:"center" }}>
+      {/* ── Sections ── */}
+      <div style={{ display:"flex", gap:6, marginBottom:16, flexWrap:"wrap" }}>
         {sectionTabs.map(s => (
           <Pill key={s.key} label={s.label} active={activeSection===s.key} onClick={()=>setActiveSection(s.key)} />
         ))}
-        <div style={{ marginLeft:"auto", display:"flex", gap:8 }}>
-          <button onClick={()=>setSaveModal(true)} style={{ background:"rgba(52,211,153,0.1)", border:"1px solid rgba(52,211,153,0.3)", borderRadius:8, color:"#34D399", padding:"6px 14px", fontSize:12, cursor:"pointer", fontWeight:700, display:"flex", alignItems:"center", gap:6 }}>
-            💾 Sauvegarder
-          </button>
-          <button onClick={handleExportCurrentPDF} disabled={pdfLoading} style={{ background:"rgba(129,140,248,0.1)", border:"1px solid rgba(129,140,248,0.3)", borderRadius:8, color:"#818CF8", padding:"6px 14px", fontSize:12, cursor:"pointer", fontWeight:700, display:"flex", alignItems:"center", gap:6, opacity:pdfLoading?0.6:1 }}>
-            {pdfLoading ? "⏳ Génération…" : "📄 Exporter PDF"}
-          </button>
-        </div>
       </div>
-
-      {/* ── Modal sauvegarde ── */}
-      {saveModal && (
-        <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.7)", zIndex:1000, display:"flex", alignItems:"center", justifyContent:"center" }}>
-          <div style={{ background:"#161B27", border:"1px solid #334155", borderRadius:16, padding:"28px 32px", minWidth:380, maxWidth:460, boxShadow:"0 24px 60px rgba(0,0,0,0.6)" }}>
-            <div style={{ fontSize:16, fontWeight:800, color:"#F1F5F9", marginBottom:6 }}>💾 Sauvegarder la simulation</div>
-            <div style={{ fontSize:12, color:"#64748B", marginBottom:18 }}>Donne un nom pour retrouver cette simulation plus tard.</div>
-            <div style={{ marginBottom:14 }}>
-              <label style={{ fontSize:11, color:"#64748B", display:"block", marginBottom:6 }}>Nom de la simulation</label>
-              <input
-                autoFocus
-                value={nomSim}
-                onChange={e=>setNomSim(e.target.value)}
-                onKeyDown={e=>e.key==="Enter"&&handleSave()}
-                placeholder="Ex : RP 300k – 20 ans – 3.5%"
-                style={{ background:"#1E293B", border:"1px solid #334155", borderRadius:8, padding:"10px 14px", color:"#F1F5F9", fontSize:13, width:"100%", outline:"none", boxSizing:"border-box" }}
-              />
-            </div>
-            {/* Résumé rapide */}
-            <div style={{ background:"rgba(129,140,248,0.08)", border:"1px solid rgba(129,140,248,0.15)", borderRadius:10, padding:"10px 14px", marginBottom:16, fontSize:12, color:"#94A3B8" }}>
-              <div style={{ display:"flex", justifyContent:"space-between" }}>
-                <span>Mensualité</span><strong style={{ color:"#818CF8" }}>{fmt(mensualiteTotale)}</strong>
-              </div>
-              <div style={{ display:"flex", justifyContent:"space-between" }}>
-                <span>Montant emprunté</span><strong style={{ color:"#60A5FA" }}>{fmt(montantEmprunte)}</strong>
-              </div>
-              <div style={{ display:"flex", justifyContent:"space-between" }}>
-                <span>Durée / Taux</span><strong style={{ color:"#F1F5F9" }}>{duree} ans · {taux}%</strong>
-              </div>
-            </div>
-            <div style={{ display:"flex", gap:10 }}>
-              <button onClick={()=>{ setSaveModal(false); setNomSim(""); }} style={{ flex:1, background:"rgba(255,255,255,0.05)", border:"1px solid rgba(255,255,255,0.1)", borderRadius:8, color:"#94A3B8", padding:"10px", fontSize:13, cursor:"pointer" }}>Annuler</button>
-              <button onClick={handleSave} style={{ flex:2, background:"linear-gradient(135deg,#34D399,#059669)", border:"none", borderRadius:8, color:"#fff", padding:"10px", fontSize:13, fontWeight:700, cursor:"pointer" }}>✓ Sauvegarder</button>
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* ════════ MENSUALITÉ ════════ */}
       {activeSection === "mensualite" && (
@@ -5117,68 +4764,6 @@ function SimulateurCredit({ cryptoTotal, stocksTotal, savingsTotal, bankTotal, r
               </table>
             </div>
           </Card>
-        </div>
-      )}
-      {/* ════════ MES SIMULATIONS ════════ */}
-      {activeSection === "sauvegardes" && (
-        <div>
-          {saveStatus && (
-            <div style={{ marginBottom:12, padding:"8px 14px", borderRadius:8, background:saveStatus.startsWith("✅")?"rgba(52,211,153,0.1)":"rgba(248,113,113,0.1)", border:`1px solid ${saveStatus.startsWith("✅")?"rgba(52,211,153,0.3)":"rgba(248,113,113,0.3)"}`, color:saveStatus.startsWith("✅")?"#34D399":"#F87171", fontSize:13 }}>
-              {saveStatus}
-            </div>
-          )}
-
-          {simulations.length === 0 ? (
-            <Card style={{ padding:"40px 24px", textAlign:"center" }}>
-              <div style={{ fontSize:32, marginBottom:10 }}>💾</div>
-              <div style={{ fontSize:15, color:"#64748B", marginBottom:6 }}>Aucune simulation sauvegardée</div>
-              <div style={{ fontSize:12, color:"#475569" }}>Configure une simulation puis clique sur "Sauvegarder" pour la retrouver ici.</div>
-            </Card>
-          ) : (
-            <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
-              {[...simulations].reverse().map(sim => (
-                <Card key={sim.id} style={{ padding:"16px 20px", border:"1px solid rgba(129,140,248,0.1)", transition:"border 0.2s" }}>
-                  <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", gap:16 }}>
-                    <div style={{ flex:1 }}>
-                      <div style={{ display:"flex", alignItems:"center", gap:10, marginBottom:6 }}>
-                        <span style={{ fontSize:16, fontWeight:800, color:"#F1F5F9" }}>{sim.nom}</span>
-                        <span style={{ fontSize:10, color:"#475569", background:"rgba(255,255,255,0.05)", border:"1px solid rgba(255,255,255,0.08)", borderRadius:5, padding:"2px 8px" }}>{sim.date}</span>
-                        <span style={{ fontSize:10, color:"#64748B", background:"rgba(99,102,241,0.1)", border:"1px solid rgba(99,102,241,0.2)", borderRadius:5, padding:"2px 8px" }}>{sim.params.contexteLabel}</span>
-                      </div>
-                      {/* KPIs snapshot */}
-                      <div style={{ display:"flex", gap:16, flexWrap:"wrap" }}>
-                        {[
-                          { label:"Mensualité",    val:fmt(sim.computed.mensualiteTotale),  color:"#818CF8" },
-                          { label:"Emprunté",      val:fmt(sim.computed.montantEmprunte),   color:"#60A5FA" },
-                          { label:"Durée",         val:`${sim.params.duree} ans`,           color:"#F1F5F9" },
-                          { label:"Taux",          val:`${sim.params.taux}%`,               color:"#FBBF24" },
-                          { label:"Coût total",    val:fmt(sim.computed.coutTotalCredit),   color:"#F87171" },
-                          { label:"TAEG",          val:`${(sim.computed.taeg||0).toFixed(2)}%`, color:"#A78BFA" },
-                        ].map(k => (
-                          <div key={k.label}>
-                            <div style={{ fontSize:10, color:"#64748B" }}>{k.label}</div>
-                            <div style={{ fontSize:13, fontWeight:700, color:k.color }}>{k.val}</div>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                    {/* Actions */}
-                    <div style={{ display:"flex", flexDirection:"column", gap:8, flexShrink:0 }}>
-                      <button onClick={()=>handleLoad(sim)} style={{ background:"rgba(129,140,248,0.15)", border:"1px solid rgba(129,140,248,0.3)", borderRadius:8, color:"#A5B4FC", padding:"7px 14px", fontSize:12, cursor:"pointer", fontWeight:700, whiteSpace:"nowrap" }}>
-                        ↩ Charger
-                      </button>
-                      <button onClick={()=>handleExportPDF(sim)} disabled={pdfLoading} style={{ background:"rgba(52,211,153,0.1)", border:"1px solid rgba(52,211,153,0.25)", borderRadius:8, color:"#34D399", padding:"7px 14px", fontSize:12, cursor:"pointer", fontWeight:700, whiteSpace:"nowrap", opacity:pdfLoading?0.6:1 }}>
-                        📄 PDF
-                      </button>
-                      <button onClick={()=>handleDelete(sim.id)} style={{ background:"rgba(248,113,113,0.08)", border:"1px solid rgba(248,113,113,0.2)", borderRadius:8, color:"#F87171", padding:"7px 14px", fontSize:12, cursor:"pointer", fontWeight:700 }}>
-                        🗑 Sup.
-                      </button>
-                    </div>
-                  </div>
-                </Card>
-              ))}
-            </div>
-          )}
         </div>
       )}
     </div>
