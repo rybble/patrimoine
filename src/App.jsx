@@ -2004,42 +2004,82 @@ function SavingsView({ savings, setSavings, oraPrice }) {
     return () => document.removeEventListener('paste', handler);
   }, [showPasteZone]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Extrait les VL depuis le texte OCR brut
+  // Convertit un nombre au format français ("25,227" → 25.227)
+  const parseFrNum = (s) => parseFloat((s || '').replace(/\s/g, '').replace(',', '.'));
+
+  // Extrait VL + nombre de parts depuis le texte OCR brut
   const parseOcrText = (text) => {
     const results = [];
     const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
     let currentFund = null;
+    let currentEntry = null;
     for (const line of lines) {
-      // Détection du nom du fonds (mots-clés connus)
       const upper = line.toUpperCase();
-      if (upper.includes('ACTIONS EURO') && !upper.includes('MH')) currentFund = 'ACTIONS EURO MONDE';
-      else if (upper.includes('OBLIGATIONS') || upper.includes('OBLIG')) currentFund = 'OBLIGATIONS EURO MONDE';
-      else if (upper.includes('MH ') || upper.includes('MH\t') || upper.startsWith('MH')) currentFund = 'MH EPARGNE';
-      // Détection de la VL — "Valeur de part au DD/MM/YYYY : XXX,XX"
-      const m = line.match(/valeur de part au [\d/]+ ?:? ?([\d\s]+[,.][\d]+)/i);
-      if (m && currentFund) {
-        const vl = parseFloat(m[1].replace(/\s/g, '').replace(',', '.'));
+      // Détection du nom du fonds
+      if      (upper.includes('ACTIONS EURO') && !upper.includes('MH')) { currentFund = 'ACTIONS EURO MONDE'; currentEntry = null; }
+      else if (upper.includes('OBLIGATIONS') || upper.includes('OBLIG')) { currentFund = 'OBLIGATIONS EURO MONDE'; currentEntry = null; }
+      else if (upper.includes('MH ') || upper.includes('MH\t') || upper.startsWith('MH')) { currentFund = 'MH EPARGNE'; currentEntry = null; }
+
+      if (!currentFund) continue;
+
+      // VL — "Valeur de part au DD/MM/YYYY : XXX,XX"
+      const mVl = line.match(/valeur de part au [\d/]+ ?:? ?([\d\s]+[,.][\d]+)/i);
+      if (mVl) {
+        const vl = parseFrNum(mVl[1]);
         if (!isNaN(vl) && vl > 0) {
-          results.push({ fundKey: currentFund, vl });
+          currentEntry = { fundKey: currentFund, vl, qty: null };
+        }
+      }
+
+      // Nombre de parts — "Nombre de parts : XX,XXXX"
+      const mQty = line.match(/nombre de parts\s*:?\s*([\d\s,\.]+)/i);
+      if (mQty && currentEntry) {
+        const qty = parseFrNum(mQty[1]);
+        if (!isNaN(qty) && qty > 0) {
+          currentEntry.qty = qty;
+          results.push(currentEntry);
+          currentEntry = null;
           currentFund = null;
         }
       }
     }
+    // Ajouter les entrées sans nombre de parts (VL seule)
+    if (currentEntry) results.push(currentEntry);
     return results;
   };
 
-  // Associe les résultats OCR aux fonds de l'app
+  // Associe les résultats OCR aux fonds de l'app + calcul répartition proportionnelle
   const matchOcrToFunds = (parsed) => {
     return parsed.map(p => {
       let ids = [];
-      if (p.fundKey === 'ACTIONS EURO MONDE')     ids = ['actions-pilote', 'actions-libre'];
+      if (p.fundKey === 'ACTIONS EURO MONDE')          ids = ['actions-pilote', 'actions-libre'];
       else if (p.fundKey === 'OBLIGATIONS EURO MONDE') ids = ['oblig-pilote', 'oblig-libre'];
-      else if (p.fundKey === 'MH EPARGNE')         ids = ['mh-epargne'];
+      else if (p.fundKey === 'MH EPARGNE')              ids = ['mh-epargne'];
+
       const funds = savings.percol.filter(f => ids.includes(f.id));
-      const currentVl = funds[0]?.manualVl ?? null;
+      const currentVl  = funds[0]?.manualVl ?? null;
+      const currentQtyTotal = funds.reduce((s, f) => s + f.qty, 0);
+
+      // Distribution proportionnelle du total de parts entre les sous-fonds
+      let qtyDistrib = null;
+      if (p.qty != null && funds.length > 0) {
+        if (funds.length === 1) {
+          qtyDistrib = { [funds[0].id]: p.qty };
+        } else {
+          // Proportions basées sur le split actuel pilotée/libre
+          qtyDistrib = {};
+          funds.forEach(f => {
+            const prop = currentQtyTotal > 0 ? f.qty / currentQtyTotal : 1 / funds.length;
+            qtyDistrib[f.id] = parseFloat((p.qty * prop).toFixed(4));
+          });
+        }
+      }
+
       const isMH = p.fundKey === 'MH EPARGNE';
-      return { ...p, ids, funds, currentVl, apply: true,
-        warning: isMH ? '⚠ Vérifier : votre app stocke "Part A" (différent de "Part H" affiché ici)' : null };
+      return {
+        ...p, ids, funds, currentVl, currentQtyTotal, qtyDistrib, apply: true,
+        warning: isMH ? '⚠ Vérifier : votre app stocke "Part A" (différent de "Part H" affiché ici)' : null,
+      };
     });
   };
 
@@ -2076,13 +2116,19 @@ function SavingsView({ savings, setSavings, oraPrice }) {
     }
   };
 
-  // Applique les VL validées
+  // Applique VL + nombre de parts validés
   const applyOcrMatches = (matches) => {
     setSavings(prev => ({
       ...prev,
       percol: prev.percol.map(f => {
         const hit = matches.find(m => m.apply && m.ids.includes(f.id));
-        return hit ? { ...f, manualVl: hit.vl } : f;
+        if (!hit) return f;
+        const newQty = hit.qtyDistrib?.[f.id];
+        return {
+          ...f,
+          manualVl: hit.vl,
+          ...(newQty != null ? { qty: newQty } : {}),
+        };
       }),
     }));
     setOcrMatches(null);
@@ -2270,28 +2316,47 @@ function SavingsView({ savings, setSavings, oraPrice }) {
                       <span style={{ fontSize: 11, color: "#94A3B8" }}>Appliquer</span>
                     </label>
                   </div>
-                  <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                  {/* VL */}
+                  <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 10 }}>
                     <div style={{ flex: 1 }}>
                       <div style={{ fontSize: 10, color: "#64748B", marginBottom: 2 }}>VL extraite</div>
                       <input type="number" value={m.vl}
                         onChange={e => setOcrMatches(prev => prev.map((x, j) => j === i ? { ...x, vl: parseFloat(e.target.value) || x.vl } : x))}
                         style={{ width: 100, background: "#1E293B", border: "1px solid #4F46E5", borderRadius: 6, padding: "5px 10px", color: "#A78BFA", fontSize: 14, fontWeight: 700 }} />
                     </div>
-                    {m.currentVl && (
+                    {m.currentVl && <>
                       <div>
-                        <div style={{ fontSize: 10, color: "#64748B", marginBottom: 2 }}>Valeur actuelle</div>
+                        <div style={{ fontSize: 10, color: "#64748B", marginBottom: 2 }}>Actuelle</div>
                         <div style={{ fontSize: 13, color: "#475569" }}>{m.currentVl}</div>
                       </div>
-                    )}
-                    {m.currentVl && (
                       <div>
                         <div style={{ fontSize: 10, color: "#64748B", marginBottom: 2 }}>Évolution</div>
                         <div style={{ fontSize: 13, fontWeight: 700, color: m.vl >= m.currentVl ? "#34D399" : "#F87171" }}>
                           {m.vl >= m.currentVl ? "+" : ""}{((m.vl - m.currentVl) / m.currentVl * 100).toFixed(2)}%
                         </div>
                       </div>
-                    )}
+                    </>}
                   </div>
+                  {/* Nombre de parts */}
+                  {m.qty != null && (
+                    <div style={{ background: "rgba(255,255,255,0.03)", borderRadius: 6, padding: "8px 10px" }}>
+                      <div style={{ fontSize: 10, color: "#64748B", marginBottom: 6 }}>Nombre de parts</div>
+                      <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+                        {m.funds.map(f => (
+                          <div key={f.id} style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                            <span style={{ fontSize: 11, color: "#475569" }}>{f.sub || f.name} :</span>
+                            <span style={{ fontSize: 11, color: "#64748B", textDecoration: "line-through" }}>{f.qty.toFixed(4)}</span>
+                            <span style={{ fontSize: 12, fontWeight: 700, color: "#FBBF24" }}>→ {(m.qtyDistrib?.[f.id] ?? f.qty).toFixed(4)}</span>
+                          </div>
+                        ))}
+                        {m.funds.length > 1 && (
+                          <span style={{ fontSize: 10, color: "#475569" }}>
+                            (total {m.qty} parts — réparti proportionnellement)
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  )}
                   {m.warning && <div style={{ fontSize: 11, color: "#FBBF24", marginTop: 8, background: "rgba(251,191,36,0.08)", borderRadius: 5, padding: "4px 8px" }}>{m.warning}</div>}
                 </div>
               ))}
