@@ -1975,6 +1975,99 @@ function SavingsView({ savings, setSavings, oraPrice }) {
   const [editingId, setEditingId] = useState(null);
   const [editForm, setEditForm] = useState({});
 
+  // ── OCR import ──────────────────────────────────────────────────────────────
+  const [ocrLoading, setOcrLoading]   = useState(false);
+  const [ocrMatches, setOcrMatches]   = useState(null); // résultats à confirmer
+  const [ocrError,   setOcrError]     = useState("");
+  const [ocrProgress, setOcrProgress] = useState(0);
+  const fileInputRef = useRef(null);
+
+  // Extrait les VL depuis le texte OCR brut
+  const parseOcrText = (text) => {
+    const results = [];
+    const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
+    let currentFund = null;
+    for (const line of lines) {
+      // Détection du nom du fonds (mots-clés connus)
+      const upper = line.toUpperCase();
+      if (upper.includes('ACTIONS EURO') && !upper.includes('MH')) currentFund = 'ACTIONS EURO MONDE';
+      else if (upper.includes('OBLIGATIONS') || upper.includes('OBLIG')) currentFund = 'OBLIGATIONS EURO MONDE';
+      else if (upper.includes('MH ') || upper.includes('MH\t') || upper.startsWith('MH')) currentFund = 'MH EPARGNE';
+      // Détection de la VL — "Valeur de part au DD/MM/YYYY : XXX,XX"
+      const m = line.match(/valeur de part au [\d/]+ ?:? ?([\d\s]+[,.][\d]+)/i);
+      if (m && currentFund) {
+        const vl = parseFloat(m[1].replace(/\s/g, '').replace(',', '.'));
+        if (!isNaN(vl) && vl > 0) {
+          results.push({ fundKey: currentFund, vl });
+          currentFund = null;
+        }
+      }
+    }
+    return results;
+  };
+
+  // Associe les résultats OCR aux fonds de l'app
+  const matchOcrToFunds = (parsed) => {
+    return parsed.map(p => {
+      let ids = [];
+      if (p.fundKey === 'ACTIONS EURO MONDE')     ids = ['actions-pilote', 'actions-libre'];
+      else if (p.fundKey === 'OBLIGATIONS EURO MONDE') ids = ['oblig-pilote', 'oblig-libre'];
+      else if (p.fundKey === 'MH EPARGNE')         ids = ['mh-epargne'];
+      const funds = savings.percol.filter(f => ids.includes(f.id));
+      const currentVl = funds[0]?.manualVl ?? null;
+      const isMH = p.fundKey === 'MH EPARGNE';
+      return { ...p, ids, funds, currentVl, apply: true,
+        warning: isMH ? '⚠ Vérifier : votre app stocke "Part A" (différent de "Part H" affiché ici)' : null };
+    });
+  };
+
+  // Lance l'OCR Tesseract.js sur le fichier image
+  const runOcr = async (file) => {
+    setOcrLoading(true);
+    setOcrError("");
+    setOcrMatches(null);
+    setOcrProgress(0);
+    try {
+      if (!window.Tesseract) {
+        await new Promise((res, rej) => {
+          const s = document.createElement('script');
+          s.src = 'https://cdn.jsdelivr.net/npm/tesseract.js@4.1.4/dist/tesseract.min.js';
+          s.onload = res;
+          s.onerror = () => rej(new Error('Impossible de charger Tesseract.js'));
+          document.head.appendChild(s);
+        });
+      }
+      const worker = await window.Tesseract.createWorker('fra', 1, {
+        logger: m => { if (m.status === 'recognizing text') setOcrProgress(Math.round(m.progress * 100)); }
+      });
+      const { data: { text } } = await worker.recognize(file);
+      await worker.terminate();
+      const parsed = parseOcrText(text);
+      if (parsed.length === 0) {
+        setOcrError("Aucune valeur de part détectée. Assurez-vous que l'image contient les lignes « Valeur de part au… »");
+        return;
+      }
+      setOcrMatches(matchOcrToFunds(parsed));
+    } catch(e) {
+      setOcrError('Erreur OCR : ' + e.message);
+    } finally {
+      setOcrLoading(false);
+      setOcrProgress(0);
+    }
+  };
+
+  // Applique les VL validées
+  const applyOcrMatches = (matches) => {
+    setSavings(prev => ({
+      ...prev,
+      percol: prev.percol.map(f => {
+        const hit = matches.find(m => m.apply && m.ids.includes(f.id));
+        return hit ? { ...f, manualVl: hit.vl } : f;
+      }),
+    }));
+    setOcrMatches(null);
+  };
+
   const getVl = (f) => (f.type === "ora_linked" && oraPrice > 0) ? oraPrice : f.manualVl;
   const pegTotal = savings.peg.reduce((s, f) => s + getVl(f) * f.qty, 0);
   const percolTotal = savings.percol.reduce((s, f) => s + getVl(f) * f.qty, 0);
@@ -2073,13 +2166,93 @@ function SavingsView({ savings, setSavings, oraPrice }) {
         <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>{savings.peg.map(f => renderFund(f, "peg"))}</div>
       </div>
 
+      {/* ── PER COL ─────────────────────────────────────── */}
       <div>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
           <div style={{ fontSize: 13, fontWeight: 700, color: "#A78BFA", textTransform: "uppercase", letterSpacing: 1 }}>PER COL — Épargne Retraite</div>
-          <div style={{ fontSize: 17, fontWeight: 700, color: "#A78BFA" }}>{fmt(percolTotal)}</div>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <div style={{ fontSize: 17, fontWeight: 700, color: "#A78BFA" }}>{fmt(percolTotal)}</div>
+            {/* Bouton import capture d'écran */}
+            <button onClick={() => fileInputRef.current?.click()}
+              disabled={ocrLoading}
+              style={{ background: "rgba(167,139,250,0.15)", border: "1px solid rgba(167,139,250,0.4)", borderRadius: 8, color: "#A78BFA", padding: "5px 12px", fontSize: 12, cursor: ocrLoading ? "wait" : "pointer", fontWeight: 600, display: "flex", alignItems: "center", gap: 5 }}>
+              {ocrLoading ? `⏳ OCR… ${ocrProgress}%` : "📷 Import capture Amundi"}
+            </button>
+            <input ref={fileInputRef} type="file" accept="image/*" style={{ display: "none" }}
+              onChange={e => { if (e.target.files[0]) { runOcr(e.target.files[0]); e.target.value = ""; } }} />
+          </div>
         </div>
+        {ocrError && (
+          <div style={{ background: "rgba(248,113,113,0.1)", border: "1px solid rgba(248,113,113,0.3)", borderRadius: 8, padding: "10px 14px", fontSize: 12, color: "#F87171", marginBottom: 10 }}>
+            {ocrError}
+          </div>
+        )}
         <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>{savings.percol.map(f => renderFund(f, "percol"))}</div>
       </div>
+
+      {/* ── Modal confirmation OCR ──────────────────────── */}
+      {ocrMatches && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
+          <div style={{ background: "#161B27", border: "1px solid rgba(167,139,250,0.4)", borderRadius: 16, padding: "24px 28px", maxWidth: 520, width: "100%", boxShadow: "0 8px 40px rgba(0,0,0,0.6)" }}>
+            <div style={{ fontSize: 16, fontWeight: 700, color: "#F1F5F9", marginBottom: 6 }}>📷 Valeurs détectées par OCR</div>
+            <div style={{ fontSize: 12, color: "#64748B", marginBottom: 20 }}>Vérifiez les valeurs extraites avant d'appliquer la mise à jour.</div>
+
+            <div style={{ display: "flex", flexDirection: "column", gap: 12, marginBottom: 24 }}>
+              {ocrMatches.map((m, i) => (
+                <div key={i} style={{ background: "rgba(255,255,255,0.03)", border: `1px solid ${m.ids.length > 0 ? "rgba(167,139,250,0.25)" : "rgba(248,113,113,0.25)"}`, borderRadius: 10, padding: "12px 16px" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+                    <div>
+                      <div style={{ fontSize: 13, fontWeight: 700, color: "#F1F5F9" }}>{m.fundKey}</div>
+                      {m.funds.length > 0 && <div style={{ fontSize: 11, color: "#64748B" }}>→ {m.funds.map(f => f.name).join(' · ')}</div>}
+                      {m.ids.length === 0 && <div style={{ fontSize: 11, color: "#F87171" }}>⚠ Aucun fonds correspondant trouvé</div>}
+                    </div>
+                    <label style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer" }}>
+                      <input type="checkbox" checked={m.apply} disabled={m.ids.length === 0}
+                        onChange={e => setOcrMatches(prev => prev.map((x, j) => j === i ? { ...x, apply: e.target.checked } : x))} />
+                      <span style={{ fontSize: 11, color: "#94A3B8" }}>Appliquer</span>
+                    </label>
+                  </div>
+                  <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontSize: 10, color: "#64748B", marginBottom: 2 }}>VL extraite</div>
+                      <input type="number" value={m.vl}
+                        onChange={e => setOcrMatches(prev => prev.map((x, j) => j === i ? { ...x, vl: parseFloat(e.target.value) || x.vl } : x))}
+                        style={{ width: 100, background: "#1E293B", border: "1px solid #4F46E5", borderRadius: 6, padding: "5px 10px", color: "#A78BFA", fontSize: 14, fontWeight: 700 }} />
+                    </div>
+                    {m.currentVl && (
+                      <div>
+                        <div style={{ fontSize: 10, color: "#64748B", marginBottom: 2 }}>Valeur actuelle</div>
+                        <div style={{ fontSize: 13, color: "#475569" }}>{m.currentVl}</div>
+                      </div>
+                    )}
+                    {m.currentVl && (
+                      <div>
+                        <div style={{ fontSize: 10, color: "#64748B", marginBottom: 2 }}>Évolution</div>
+                        <div style={{ fontSize: 13, fontWeight: 700, color: m.vl >= m.currentVl ? "#34D399" : "#F87171" }}>
+                          {m.vl >= m.currentVl ? "+" : ""}{((m.vl - m.currentVl) / m.currentVl * 100).toFixed(2)}%
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                  {m.warning && <div style={{ fontSize: 11, color: "#FBBF24", marginTop: 8, background: "rgba(251,191,36,0.08)", borderRadius: 5, padding: "4px 8px" }}>{m.warning}</div>}
+                </div>
+              ))}
+            </div>
+
+            <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
+              <button onClick={() => setOcrMatches(null)}
+                style={{ background: "transparent", border: "1px solid #334155", borderRadius: 8, color: "#64748B", padding: "8px 18px", fontSize: 13, cursor: "pointer" }}>
+                Annuler
+              </button>
+              <button onClick={() => applyOcrMatches(ocrMatches)}
+                disabled={!ocrMatches.some(m => m.apply && m.ids.length > 0)}
+                style={{ background: ocrMatches.some(m => m.apply && m.ids.length > 0) ? "linear-gradient(135deg,#7C3AED,#6366F1)" : "rgba(99,102,241,0.2)", border: "none", borderRadius: 8, color: "#fff", padding: "8px 20px", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>
+                ✓ Appliquer {ocrMatches.filter(m => m.apply && m.ids.length > 0).length} mise(s) à jour
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
