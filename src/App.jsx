@@ -1977,10 +1977,32 @@ function SavingsView({ savings, setSavings, oraPrice }) {
 
   // ── OCR import ──────────────────────────────────────────────────────────────
   const [ocrLoading, setOcrLoading]   = useState(false);
-  const [ocrMatches, setOcrMatches]   = useState(null); // résultats à confirmer
+  const [ocrMatches, setOcrMatches]   = useState(null);
   const [ocrError,   setOcrError]     = useState("");
   const [ocrProgress, setOcrProgress] = useState(0);
-  const fileInputRef = useRef(null);
+  const [showPasteZone, setShowPasteZone] = useState(false);
+  const fileInputRef  = useRef(null);
+  const pasteZoneRef  = useRef(null);
+
+  // Écoute Ctrl+V quand la zone de collage est active
+  useEffect(() => {
+    if (!showPasteZone) return;
+    const handler = (e) => {
+      const items = e.clipboardData?.items || [];
+      for (const item of items) {
+        if (item.type.startsWith('image/')) {
+          e.preventDefault();
+          const blob = item.getAsFile();
+          if (blob) { setShowPasteZone(false); runOcr(blob); }
+          return;
+        }
+      }
+    };
+    document.addEventListener('paste', handler);
+    // Focus automatique pour que Ctrl+V soit capturé sans clic préalable
+    pasteZoneRef.current?.focus();
+    return () => document.removeEventListener('paste', handler);
+  }, [showPasteZone]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Extrait les VL depuis le texte OCR brut
   const parseOcrText = (text) => {
@@ -2172,14 +2194,15 @@ function SavingsView({ savings, setSavings, oraPrice }) {
           <div style={{ fontSize: 13, fontWeight: 700, color: "#A78BFA", textTransform: "uppercase", letterSpacing: 1 }}>PER COL — Épargne Retraite</div>
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
             <div style={{ fontSize: 17, fontWeight: 700, color: "#A78BFA" }}>{fmt(percolTotal)}</div>
-            {/* Bouton import capture d'écran */}
-            <button onClick={() => fileInputRef.current?.click()}
+            {/* Bouton OCR */}
+            <button onClick={() => ocrLoading ? null : setShowPasteZone(true)}
               disabled={ocrLoading}
               style={{ background: "rgba(167,139,250,0.15)", border: "1px solid rgba(167,139,250,0.4)", borderRadius: 8, color: "#A78BFA", padding: "5px 12px", fontSize: 12, cursor: ocrLoading ? "wait" : "pointer", fontWeight: 600, display: "flex", alignItems: "center", gap: 5 }}>
-              {ocrLoading ? `⏳ OCR… ${ocrProgress}%` : "📷 Import capture Amundi"}
+              {ocrLoading ? `⏳ OCR… ${ocrProgress}%` : "📷 Mettre à jour les VL"}
             </button>
+            {/* Input fichier en fallback */}
             <input ref={fileInputRef} type="file" accept="image/*" style={{ display: "none" }}
-              onChange={e => { if (e.target.files[0]) { runOcr(e.target.files[0]); e.target.value = ""; } }} />
+              onChange={e => { if (e.target.files[0]) { setShowPasteZone(false); runOcr(e.target.files[0]); e.target.value = ""; } }} />
           </div>
         </div>
         {ocrError && (
@@ -2189,6 +2212,43 @@ function SavingsView({ savings, setSavings, oraPrice }) {
         )}
         <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>{savings.percol.map(f => renderFund(f, "percol"))}</div>
       </div>
+
+      {/* ── Zone de collage ─────────────────────────────── */}
+      {showPasteZone && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.75)", zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}
+          onClick={() => setShowPasteZone(false)}>
+          <div
+            ref={pasteZoneRef}
+            tabIndex={0}
+            onClick={e => e.stopPropagation()}
+            onKeyDown={e => { if (e.key === 'Escape') setShowPasteZone(false); }}
+            style={{ background: "#161B27", border: "2px dashed rgba(167,139,250,0.5)", borderRadius: 20, padding: "48px 40px", maxWidth: 480, width: "100%", textAlign: "center", outline: "none", boxShadow: "0 8px 40px rgba(0,0,0,0.6)" }}>
+            <div style={{ fontSize: 48, marginBottom: 16 }}>📋</div>
+            <div style={{ fontSize: 18, fontWeight: 700, color: "#F1F5F9", marginBottom: 8 }}>
+              Coller la capture d'écran
+            </div>
+            <div style={{ fontSize: 14, color: "#64748B", marginBottom: 24, lineHeight: 1.6 }}>
+              Fais <kbd style={{ background: "#1E293B", border: "1px solid #334155", borderRadius: 5, padding: "2px 7px", fontSize: 13, color: "#A78BFA", fontFamily: "monospace" }}>Ctrl</kbd>
+              {" + "}
+              <kbd style={{ background: "#1E293B", border: "1px solid #334155", borderRadius: 5, padding: "2px 7px", fontSize: 13, color: "#A78BFA", fontFamily: "monospace" }}>V</kbd>
+              {" après avoir copié la page Amundi"}
+            </div>
+            <div style={{ fontSize: 12, color: "#334155", marginBottom: 20 }}>
+              ou
+            </div>
+            <button onClick={() => fileInputRef.current?.click()}
+              style={{ background: "rgba(167,139,250,0.1)", border: "1px solid rgba(167,139,250,0.3)", borderRadius: 8, color: "#A78BFA", padding: "8px 18px", fontSize: 13, cursor: "pointer", marginBottom: 16 }}>
+              📁 Choisir un fichier image
+            </button>
+            <div>
+              <button onClick={() => setShowPasteZone(false)}
+                style={{ background: "transparent", border: "none", color: "#475569", fontSize: 12, cursor: "pointer", textDecoration: "underline" }}>
+                Annuler
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ── Modal confirmation OCR ──────────────────────── */}
       {ocrMatches && (
