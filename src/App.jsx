@@ -2053,17 +2053,15 @@ function SavingsView({ savings, setSavings, oraPrice }) {
       if (!window.Tesseract) {
         await new Promise((res, rej) => {
           const s = document.createElement('script');
-          s.src = 'https://cdn.jsdelivr.net/npm/tesseract.js@4.1.4/dist/tesseract.min.js';
+          s.src = 'https://unpkg.com/tesseract.js@2.1.0/dist/tesseract.min.js';
           s.onload = res;
           s.onerror = () => rej(new Error('Impossible de charger Tesseract.js'));
           document.head.appendChild(s);
         });
       }
-      const worker = await window.Tesseract.createWorker('fra', 1, {
+      const { data: { text } } = await window.Tesseract.recognize(file, 'fra', {
         logger: m => { if (m.status === 'recognizing text') setOcrProgress(Math.round(m.progress * 100)); }
       });
-      const { data: { text } } = await worker.recognize(file);
-      await worker.terminate();
       const parsed = parseOcrText(text);
       if (parsed.length === 0) {
         setOcrError("Aucune valeur de part détectée. Assurez-vous que l'image contient les lignes « Valeur de part au… »");
@@ -2071,7 +2069,7 @@ function SavingsView({ savings, setSavings, oraPrice }) {
       }
       setOcrMatches(matchOcrToFunds(parsed));
     } catch(e) {
-      setOcrError('Erreur OCR : ' + e.message);
+      setOcrError('Erreur OCR : ' + (e?.message || String(e) || 'erreur inconnue'));
     } finally {
       setOcrLoading(false);
       setOcrProgress(0);
