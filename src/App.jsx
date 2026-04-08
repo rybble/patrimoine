@@ -481,6 +481,163 @@ function Tag({ children, color }) {
   );
 }
 
+// ─── SCORE SANTE FINANCIERE ───────────────────────────────────────────────────
+function ScoreSanteFinanciere({ uid, refreshKey, cryptoTotal, stocksTotal, bankTotal, savingsTotal, scpiTotal, realestateTotal, grandTotal }) {
+  const [transactions, setTransactions] = useState([]);
+  const [objectifs, setObjectifs]       = useState([]);
+  const [fetching, setFetching]         = useState(false);
+
+  // Re-fetch à chaque fois que l'utilisateur revient sur la vue globale (refreshKey change)
+  useEffect(() => {
+    if (!uid) return;
+    setFetching(true);
+    Promise.all([fbGet(uid, "budget_tx"), fbGet(uid, "objectifs")]).then(([txs, objs]) => {
+      if (Array.isArray(txs))  setTransactions(txs);
+      if (Array.isArray(objs)) setObjectifs(objs);
+      setFetching(false);
+    });
+  }, [uid, refreshKey]);
+
+  const now = new Date();
+  const curYear = now.getFullYear(), curMonth = now.getMonth() + 1;
+
+  // ── Sous-score 1 : Taux d'épargne du mois (0–25) ──────────────────────────
+  const monthTx  = transactions.filter(t => t.annee === curYear && t.mois === curMonth);
+  const revenus  = monthTx.filter(t => t.es === "Entrée").reduce((s, t) => s + t.montant, 0);
+  const depenses = monthTx.filter(t => t.es === "Sortie").reduce((s, t) => s + t.montant, 0);
+  let scoreTauxEpargne = 10; // neutre si aucune donnée
+  let tauxEpargneAff = null;
+  if (revenus > 0) {
+    const taux = Math.max(0, (revenus - depenses) / revenus);
+    tauxEpargneAff = Math.round(taux * 100);
+    // 0%→0, 10%→6, 20%→12, 30%→20, 40%+→25
+    scoreTauxEpargne = Math.min(25, Math.round(taux * 80));
+  }
+
+  // ── Sous-score 2 : Diversification (0–25) ─────────────────────────────────
+  const activeClasses = [cryptoTotal, stocksTotal, savingsTotal, scpiTotal, realestateTotal, bankTotal].filter(v => v > 0).length;
+  const scoreDiversification = Math.round((activeClasses / 6) * 25);
+
+  // ── Sous-score 3 : Liquidité (0–25) ───────────────────────────────────────
+  const liquidAssets = cryptoTotal + stocksTotal + bankTotal;
+  const avgMonthlyExp = (() => {
+    const byMonth = {};
+    transactions.filter(t => t.es === "Sortie").forEach(t => {
+      const key = `${t.annee}-${t.mois}`;
+      byMonth[key] = (byMonth[key] || 0) + t.montant;
+    });
+    const vals = Object.values(byMonth);
+    return vals.length > 0 ? vals.reduce((s, v) => s + v, 0) / vals.length : 1500;
+  })();
+  const monthsReserve = avgMonthlyExp > 0 ? liquidAssets / avgMonthlyExp : 0;
+  // 0m→0, 3m→10, 6m→18, 12m+→25
+  const scoreLiquidite = Math.min(25, Math.round((monthsReserve / 12) * 25));
+
+  // ── Sous-score 4 : Objectifs (0–25) ───────────────────────────────────────
+  let scoreObjectifs = 10; // neutre
+  if (objectifs.length > 0) {
+    const avg = objectifs.reduce((s, o) => s + Math.min(100, o.cible > 0 ? (o.actuel / o.cible) * 100 : 0), 0) / objectifs.length;
+    scoreObjectifs = Math.round(avg / 4);
+  }
+
+  const totalScore = scoreTauxEpargne + scoreDiversification + scoreLiquidite + scoreObjectifs;
+  const scoreColor = totalScore >= 75 ? "#34D399" : totalScore >= 60 ? "#FBBF24" : totalScore >= 40 ? "#FB923C" : "#F87171";
+  const scoreLabel = totalScore >= 75 ? "Excellent" : totalScore >= 60 ? "Bon" : totalScore >= 40 ? "À améliorer" : "Fragile";
+  const scoreComment = totalScore >= 75
+    ? "Ton patrimoine est bien géré. Continue ainsi !"
+    : totalScore >= 60
+    ? "Bonne situation, quelques axes d'amélioration possibles."
+    : totalScore >= 40
+    ? "Des efforts à faire sur l'épargne ou la diversification."
+    : "Situation à renforcer — commence par constituer une réserve d'urgence.";
+
+  const circumference = 2 * Math.PI * 34;
+  const dash = circumference * Math.min(totalScore, 100) / 100;
+
+  const subScores = [
+    {
+      label: "Taux d'épargne",
+      score: scoreTauxEpargne,
+      detail: tauxEpargneAff != null ? `${tauxEpargneAff}% ce mois` : "Ajouter des transactions",
+      color: "#818CF8", icon: "💰",
+    },
+    {
+      label: "Diversification",
+      score: scoreDiversification,
+      detail: `${activeClasses}/6 classes d'actifs`,
+      color: "#34D399", icon: "🌐",
+    },
+    {
+      label: "Liquidité",
+      score: scoreLiquidite,
+      detail: `${monthsReserve.toFixed(1)} mois de réserve`,
+      color: "#60A5FA", icon: "💧",
+    },
+    {
+      label: "Objectifs",
+      score: scoreObjectifs,
+      detail: objectifs.length > 0 ? `${objectifs.length} objectif(s) suivi(s)` : "Aucun objectif défini",
+      color: "#FBBF24", icon: "🎯",
+    },
+  ];
+
+  return (
+    <Card style={{ marginBottom: 16, padding: "18px 20px" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 14, fontWeight: 700, color: "#F1F5F9", marginBottom: 16 }}>
+        🏅 Score de santé financière
+        {fetching && <span style={{ fontSize: 10, color: "#475569", fontWeight: 400 }}>↻ actualisation…</span>}
+      </div>
+
+      <div style={{ display: "flex", alignItems: "center", gap: 20, marginBottom: 20, flexWrap: "wrap" }}>
+        {/* Jauge circulaire */}
+        <div style={{ position: "relative", flexShrink: 0, width: 88, height: 88 }}>
+          <svg width="88" height="88" style={{ transform: "rotate(-90deg)" }}>
+            <circle cx="44" cy="44" r="34" fill="none" stroke="rgba(255,255,255,0.07)" strokeWidth="9" />
+            <circle cx="44" cy="44" r="34" fill="none" stroke={scoreColor} strokeWidth="9"
+              strokeDasharray={`${dash} ${circumference}`} strokeLinecap="round"
+              style={{ transition: "stroke-dasharray 1s ease" }} />
+          </svg>
+          <div style={{ position: "absolute", top: 0, left: 0, width: "100%", height: "100%",
+            display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center" }}>
+            <div style={{ fontSize: 24, fontWeight: 800, color: scoreColor, lineHeight: 1 }}>{totalScore}</div>
+            <div style={{ fontSize: 10, color: "#475569", marginTop: 1 }}>/100</div>
+          </div>
+        </div>
+
+        <div style={{ flex: 1 }}>
+          <div style={{ fontSize: 18, fontWeight: 700, color: scoreColor }}>{scoreLabel}</div>
+          <div style={{ fontSize: 12, color: "#64748B", marginTop: 4, lineHeight: 1.5 }}>{scoreComment}</div>
+        </div>
+      </div>
+
+      {/* Sous-scores */}
+      <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+        {subScores.map(s => (
+          <div key={s.label}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 5 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                <span style={{ fontSize: 14 }}>{s.icon}</span>
+                <span style={{ fontSize: 12, color: "#94A3B8", fontWeight: 600 }}>{s.label}</span>
+              </div>
+              <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+                <span style={{ fontSize: 11, color: "#475569" }}>{s.detail}</span>
+                <span style={{ fontSize: 12, fontWeight: 700, color: s.color, minWidth: 36, textAlign: "right" }}>{s.score}/25</span>
+              </div>
+            </div>
+            <div style={{ height: 6, background: "rgba(255,255,255,0.06)", borderRadius: 3, overflow: "hidden" }}>
+              <div style={{
+                width: `${(s.score / 25) * 100}%`, height: "100%", borderRadius: 3,
+                background: `linear-gradient(90deg, ${s.color}99, ${s.color})`,
+                transition: "width 0.8s ease",
+              }} />
+            </div>
+          </div>
+        ))}
+      </div>
+    </Card>
+  );
+}
+
 // ─── OVERVIEW ─────────────────────────────────────────────────────────────────
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -782,7 +939,7 @@ function AlertesBudget({ uid, transactions, curYear, curMonth }) {
   );
 }
 
-function Overview({ cryptoData, cryptoPrices, stocks, bank, savings, oraPrice, realestateTotal, scpiTotal, onNavigate, history, marketHistoryTotal, marketHistoryIntraday, uid }) {
+function Overview({ cryptoData, cryptoPrices, stocks, bank, savings, oraPrice, realestateTotal, scpiTotal, onNavigate, history, marketHistoryTotal, marketHistoryIntraday, uid, refreshKey }) {
   const getVl = (f) => (f.type === "ora_linked" && oraPrice > 0) ? oraPrice : f.manualVl;
   const cryptoTotal = cryptoData.reduce((s, c) => s + (cryptoPrices[c.code]?.eur || 0) * c.qty, 0);
   const stocksTotal = stocks.reduce((s, st) => s + st.price * st.qty, 0);
@@ -853,6 +1010,19 @@ function Overview({ cryptoData, cryptoPrices, stocks, bank, savings, oraPrice, r
           </Card>
         ))}
       </div>
+
+      {/* ── Score de santé financière ─────────────────────── */}
+      <ScoreSanteFinanciere
+        uid={uid}
+        refreshKey={refreshKey}
+        cryptoTotal={cryptoTotal}
+        stocksTotal={stocksTotal}
+        bankTotal={bankTotal}
+        savingsTotal={savingsTotal}
+        scpiTotal={scpiTotal}
+        realestateTotal={realestateTotal}
+        grandTotal={grandTotal}
+      />
 
       {/* ── Objectifs financiers ──────────────────────────── */}
       <ObjectifsFinanciers uid={uid} />
@@ -1045,6 +1215,20 @@ function CryptoView({ cryptoData, setCryptoData, cryptoPrices, loading, history,
   const [selectedCoin, setSelectedCoin] = useState(null);
   const [addQty, setAddQty] = useState("");
 
+  // P&L — prix de revient
+  const [editingPR, setEditingPR] = useState(null); // code du token en cours d'édition
+  const [editPRValue, setEditPRValue] = useState("");
+  const savePR = (code) => {
+    const val = parseFloat(editPRValue.replace(",", "."));
+    if (!isNaN(val) && val > 0) {
+      setCryptoData(prev => prev.map(c => c.code === code ? { ...c, prixRevient: val } : c));
+    }
+    setEditingPR(null);
+  };
+  const removePR = (code) => {
+    setCryptoData(prev => prev.map(c => c.code === code ? { ...c, prixRevient: null } : c));
+  };
+
   const totalEur = cryptoData.reduce((s, c) => s + (cryptoPrices[c.code]?.eur || 0) * c.qty, 0);
   const total = totalEur;
 
@@ -1121,12 +1305,23 @@ function CryptoView({ cryptoData, setCryptoData, cryptoPrices, loading, history,
       </SectionTitle>
 
       {/* Stats crypto */}
-      <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 14 }}>
-        <StatCard label="Valeur totale" value={fmt(totalEur)} sub={`${cryptoData.length} actifs`} color="#818CF8" icon="₿" />
-        <StatCard label="Top position" value={(() => { const top = [...cryptoData].sort((a,b) => (cryptoPrices[b.code]?.eur||0)*b.qty - (cryptoPrices[a.code]?.eur||0)*a.qty)[0]; return top ? top.symbol : "—"; })()} sub={(() => { const top = [...cryptoData].sort((a,b) => (cryptoPrices[b.code]?.eur||0)*b.qty - (cryptoPrices[a.code]?.eur||0)*a.qty)[0]; return top ? fmt((cryptoPrices[top.code]?.eur||0)*top.qty) : ""; })()} color="#A78BFA" icon="🏆" />
-        <StatCard label="Stablecoins" value={fmt((cryptoPrices["USDC"]?.eur || 1) * (cryptoData.find(c => c.code === "USDC")?.qty || 0))} sub="USDC · liquidités sûres" color="#2775CA" icon="🔒" />
-        <StatCard label="Nb positions" value={cryptoData.length} sub="Tokens différents" color="#6366F1" icon="🎯" />
-      </div>
+      {(() => {
+        const withPR = cryptoData.filter(c => c.prixRevient > 0 && (cryptoPrices[c.code]?.eur || 0) > 0);
+        const totalPnl = withPR.reduce((s, c) => s + (cryptoPrices[c.code].eur - c.prixRevient) * c.qty, 0);
+        const totalInvesti = withPR.reduce((s, c) => s + c.prixRevient * c.qty, 0);
+        const pnlPct = totalInvesti > 0 ? (totalPnl / totalInvesti) * 100 : 0;
+        return (
+          <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 14 }}>
+            <StatCard label="Valeur totale" value={fmt(totalEur)} sub={`${cryptoData.length} actifs`} color="#818CF8" icon="₿" />
+            <StatCard label="Top position" value={(() => { const top = [...cryptoData].sort((a,b) => (cryptoPrices[b.code]?.eur||0)*b.qty - (cryptoPrices[a.code]?.eur||0)*a.qty)[0]; return top ? top.symbol : "—"; })()} sub={(() => { const top = [...cryptoData].sort((a,b) => (cryptoPrices[b.code]?.eur||0)*b.qty - (cryptoPrices[a.code]?.eur||0)*a.qty)[0]; return top ? fmt((cryptoPrices[top.code]?.eur||0)*top.qty) : ""; })()} color="#A78BFA" icon="🏆" />
+            {withPR.length > 0
+              ? <StatCard label="P&L latente" value={(totalPnl >= 0 ? "+" : "") + fmt(totalPnl)} sub={`${totalPnl >= 0 ? "+" : ""}${pnlPct.toFixed(2)}% · ${withPR.length} positions`} color={totalPnl >= 0 ? "#34D399" : "#F87171"} icon={totalPnl >= 0 ? "📈" : "📉"} />
+              : <StatCard label="Stablecoins" value={fmt((cryptoPrices["USDC"]?.eur || 1) * (cryptoData.find(c => c.code === "USDC")?.qty || 0))} sub="USDC · liquidités sûres" color="#2775CA" icon="🔒" />
+            }
+            <StatCard label="Nb positions" value={cryptoData.length} sub="Tokens différents" color="#6366F1" icon="🎯" />
+          </div>
+        );
+      })()}
 
       {/* Treemap répartition */}
       <Card style={{ marginBottom: 14, padding: "14px 18px" }}>
@@ -1272,6 +1467,58 @@ function CryptoView({ cryptoData, setCryptoData, cryptoPrices, loading, history,
                   onMouseLeave={e => e.currentTarget.style.color = "#334155"}
                 >✕</button>
               </div>
+
+              {/* ── P&L / Prix de revient ── */}
+              {editingPR === c.code ? (
+                <div style={{ marginTop: 8, display: "flex", alignItems: "center", gap: 6, paddingLeft: 48 }}>
+                  <span style={{ fontSize: 11, color: "#64748B" }}>Prix de revient (€/unité) :</span>
+                  <input
+                    autoFocus
+                    value={editPRValue}
+                    onChange={e => setEditPRValue(e.target.value)}
+                    onKeyDown={e => { if (e.key === "Enter") savePR(c.code); if (e.key === "Escape") setEditingPR(null); }}
+                    placeholder="ex: 2800"
+                    style={{ width: 110, background: "#1E293B", border: "1px solid #4F46E5", borderRadius: 6, padding: "3px 8px", color: "#F1F5F9", fontSize: 12 }}
+                  />
+                  <button onClick={() => savePR(c.code)} style={{ background: "#4F46E5", border: "none", borderRadius: 5, color: "#fff", padding: "3px 9px", cursor: "pointer", fontSize: 11, fontWeight: 700 }}>✓</button>
+                  <button onClick={() => setEditingPR(null)} style={{ background: "transparent", border: "none", color: "#64748B", cursor: "pointer", fontSize: 11 }}>✕</button>
+                </div>
+              ) : c.prixRevient > 0 && price > 0 ? (() => {
+                const pnlUnit = price - c.prixRevient;
+                const pnlTotal = pnlUnit * c.qty;
+                const pnlPct = (pnlUnit / c.prixRevient) * 100;
+                const isGain = pnlTotal >= 0;
+                const col = isGain ? "#34D399" : "#F87171";
+                return (
+                  <div style={{ marginTop: 8, paddingLeft: 48, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                    <span style={{ fontSize: 11, color: "#475569" }}>P&L :</span>
+                    <span style={{ fontSize: 12, fontWeight: 700, color: col }}>
+                      {isGain ? "+" : ""}{fmt(pnlTotal)}
+                    </span>
+                    <span style={{ fontSize: 11, color: col }}>
+                      ({isGain ? "+" : ""}{pnlPct.toFixed(2)}%)
+                    </span>
+                    <span style={{ fontSize: 10, color: "#334155" }}>
+                      PRU : {fmt(c.prixRevient)}/u
+                    </span>
+                    <button onClick={() => { setEditingPR(c.code); setEditPRValue(String(c.prixRevient)); }}
+                      style={{ background: "transparent", border: "none", color: "#475569", fontSize: 10, cursor: "pointer", padding: 0, textDecoration: "underline" }}>
+                      modifier
+                    </button>
+                    <button onClick={() => removePR(c.code)}
+                      style={{ background: "transparent", border: "none", color: "#334155", fontSize: 10, cursor: "pointer", padding: 0 }}>
+                      ✕
+                    </button>
+                  </div>
+                );
+              })() : (
+                <div style={{ marginTop: 6, paddingLeft: 48 }}>
+                  <button onClick={() => { setEditingPR(c.code); setEditPRValue(""); }}
+                    style={{ background: "transparent", border: "none", color: "#334155", fontSize: 11, cursor: "pointer", padding: 0, textDecoration: "underline dotted" }}>
+                    + ajouter prix de revient
+                  </button>
+                </div>
+              )}
             </Card>
           );
         })}
@@ -1543,14 +1790,24 @@ function StocksView({ stocks, setStocks, history, marketHistory, stocksHistory24
             <div style={{ fontSize: 11, color: "#64748B", marginBottom: 4 }}>{st.isin}</div>
             {isEditing ? (
               <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                {[["Qté", "qty", 80], ["Prix €", "price", 90]].map(([label, key, w]) => (
+                {[["Qté", "qty", 80], ["Prix €", "price", 90], ["PRU €", "prixRevient", 90]].map(([label, key, w]) => (
                   <div key={key}>
                     <div style={{ fontSize: 10, color: "#64748B" }}>{label}</div>
-                    <input value={form[key]} onChange={e => setForm(f => ({ ...f, [key]: e.target.value }))}
+                    <input value={form[key] ?? ""} onChange={e => setForm(f => ({ ...f, [key]: e.target.value }))}
+                      placeholder={key === "prixRevient" ? "optionnel" : ""}
                       style={{ width: w, background: "#1E293B", border: "1px solid #4F46E5", borderRadius: "6px", padding: "4px 8px", color: "#F1F5F9", fontSize: 12 }} />
                   </div>
                 ))}
-                <button onClick={() => { setStocks(p => p.map(s => (s.symbol === st.symbol && (s.account||"") === (st.account||"")) ? { ...s, qty: parseFloat(form.qty)||s.qty, price: parseFloat(form.price)||s.price } : s)); setEditing(null); }}
+                <button onClick={() => {
+                  const prVal = parseFloat(form.prixRevient);
+                  setStocks(p => p.map(s => (s.symbol === st.symbol && (s.account||"") === (st.account||"")) ? {
+                    ...s,
+                    qty: parseFloat(form.qty) || s.qty,
+                    price: parseFloat(form.price) || s.price,
+                    prixRevient: !isNaN(prVal) && prVal > 0 ? prVal : s.prixRevient ?? null,
+                  } : s));
+                  setEditing(null);
+                }}
                   style={{ alignSelf: "flex-end", background: "#4F46E5", border: "none", borderRadius: "6px", color: "#fff", padding: "4px 12px", cursor: "pointer", fontSize: 12, fontWeight: 600 }}>✓ Sauver</button>
                 <button onClick={() => setEditing(null)}
                   style={{ alignSelf: "flex-end", background: "transparent", border: "1px solid #334155", borderRadius: "6px", color: "#64748B", padding: "4px 10px", cursor: "pointer", fontSize: 12 }}>Annuler</button>
@@ -1558,10 +1815,26 @@ function StocksView({ stocks, setStocks, history, marketHistory, stocksHistory24
             ) : (
               <div style={{ fontSize: 12, color: "#64748B" }}>
                 {st.qty} titres · {fmt(st.price)} / titre
-                <button onClick={() => { setEditing(st.symbol + (st.account||"")); setForm({ qty: String(st.qty), price: String(st.price) }); }}
+                <button onClick={() => { setEditing(st.symbol + (st.account||"")); setForm({ qty: String(st.qty), price: String(st.price), prixRevient: st.prixRevient != null ? String(st.prixRevient) : "" }); }}
                   style={{ marginLeft: 10, background: "transparent", border: "none", color: "#6366F1", fontSize: 11, cursor: "pointer", textDecoration: "underline" }}>modifier</button>
               </div>
             )}
+            {/* P&L bourse */}
+            {!isEditing && st.prixRevient > 0 && st.price > 0 && (() => {
+              const pnlUnit = st.price - st.prixRevient;
+              const pnlTotal = pnlUnit * st.qty;
+              const pnlPct = (pnlUnit / st.prixRevient) * 100;
+              const isGain = pnlTotal >= 0;
+              const col = isGain ? "#34D399" : "#F87171";
+              return (
+                <div style={{ marginTop: 6, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                  <span style={{ fontSize: 11, color: "#475569" }}>P&L :</span>
+                  <span style={{ fontSize: 12, fontWeight: 700, color: col }}>{isGain ? "+" : ""}{fmt(pnlTotal)}</span>
+                  <span style={{ fontSize: 11, color: col }}>({isGain ? "+" : ""}{pnlPct.toFixed(2)}%)</span>
+                  <span style={{ fontSize: 10, color: "#334155" }}>PRU : {fmt(st.prixRevient)}/titre</span>
+                </div>
+              );
+            })()}
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
             <div style={{ fontSize: 17, fontWeight: 700, color: "#34D399", minWidth: 90, textAlign: "right" }}>{fmt(value)}</div>
@@ -1592,12 +1865,23 @@ function StocksView({ stocks, setStocks, history, marketHistory, stocksHistory24
     <div>
       <SectionTitle sub={`Trade Republic · Total ${fmt(total + PEA_VALUE)}`}>Bourse</SectionTitle>
 
-      <div style={{ display:"flex", gap:10, flexWrap:"wrap", marginBottom:14 }}>
-        <StatCard label="Total bourse" value={fmt(total + PEA_VALUE)} sub={`${stocks.length} positions`} color="#34D399" icon="📈" />
-        <StatCard label="Compte-Titres" value={fmt(totalCT)} sub={`${stocksCT.length} lignes`} color="#60A5FA" icon="📋" />
-        <StatCard label="PEA" value={fmt(PEA_VALUE)} sub={stocksPEA.length > 0 ? `${stocksPEA.length} lignes` : "Trade Republic"} color="#A78BFA" icon="🇫🇷" />
-        <StatCard label="Non cotés" value={fmt(totalNonCote)} sub="APOLLO · EQTF" color="#FBBF24" icon="🔒" />
-      </div>
+      {(() => {
+        const withPR = stocks.filter(s => s.prixRevient > 0 && s.price > 0);
+        const totalPnl = withPR.reduce((s, st) => s + (st.price - st.prixRevient) * st.qty, 0);
+        const totalInvesti = withPR.reduce((s, st) => s + st.prixRevient * st.qty, 0);
+        const pnlPct = totalInvesti > 0 ? (totalPnl / totalInvesti) * 100 : 0;
+        return (
+          <div style={{ display:"flex", gap:10, flexWrap:"wrap", marginBottom:14 }}>
+            <StatCard label="Total bourse" value={fmt(total + PEA_VALUE)} sub={`${stocks.length} positions`} color="#34D399" icon="📈" />
+            <StatCard label="Compte-Titres" value={fmt(totalCT)} sub={`${stocksCT.length} lignes`} color="#60A5FA" icon="📋" />
+            {withPR.length > 0
+              ? <StatCard label="P&L latente" value={(totalPnl >= 0 ? "+" : "") + fmt(totalPnl)} sub={`${totalPnl >= 0 ? "+" : ""}${pnlPct.toFixed(2)}% · ${withPR.length} positions`} color={totalPnl >= 0 ? "#34D399" : "#F87171"} icon={totalPnl >= 0 ? "📈" : "📉"} />
+              : <StatCard label="PEA" value={fmt(PEA_VALUE)} sub={stocksPEA.length > 0 ? `${stocksPEA.length} lignes` : "Trade Republic"} color="#A78BFA" icon="🇫🇷" />
+            }
+            <StatCard label="Non cotés" value={fmt(totalNonCote)} sub="APOLLO · EQTF" color="#FBBF24" icon="🔒" />
+          </div>
+        );
+      })()}
 
       <Card style={{ marginBottom: 18, padding: "14px 18px" }}>
         <div style={{ fontSize: 12, color: "#64748B", marginBottom: 4 }}>Évolution Bourse (€) — positions cotées + PEA + non cotés</div>
@@ -5198,6 +5482,12 @@ function SimulateurCredit({ cryptoTotal, stocksTotal, savingsTotal, bankTotal, r
 
 function AppContent({ user }) {
   const [view, setView] = useState("overview");
+  const [overviewRefreshKey, setOverviewRefreshKey] = useState(0);
+  // Chaque fois que l'utilisateur revient sur la vue globale, on incrémente la clé
+  // pour forcer ScoreSanteFinanciere à re-fetcher ses données Firebase
+  useEffect(() => {
+    if (view === "overview") setOverviewRefreshKey(k => k + 1);
+  }, [view]);
   const [cryptoData, setCryptoData] = useState(INITIAL_CRYPTO);
   const [cryptoPrices, setCryptoPrices] = useState({});
   const [stocks, setStocks] = useState(INITIAL_STOCKS);
@@ -5743,7 +6033,7 @@ function AppContent({ user }) {
         )}
 
         {/* Views */}
-        {view === "overview"   && <Overview cryptoData={cryptoData} cryptoPrices={cryptoPrices} stocks={stocks} bank={bank} savings={savings} oraPrice={oraPrice} realestateTotal={realestateTotal} scpiTotal={scpiTotal} onNavigate={setView} history={history} marketHistoryTotal={marketHistory.total} marketHistoryIntraday={marketHistory} uid={user?.uid} />}
+        {view === "overview"   && <Overview cryptoData={cryptoData} cryptoPrices={cryptoPrices} stocks={stocks} bank={bank} savings={savings} oraPrice={oraPrice} realestateTotal={realestateTotal} scpiTotal={scpiTotal} onNavigate={setView} history={history} marketHistoryTotal={marketHistory.total} marketHistoryIntraday={marketHistory} uid={user?.uid} refreshKey={overviewRefreshKey} />}
         {view === "crypto"     && <CryptoView cryptoData={cryptoData} setCryptoData={setCryptoData} cryptoPrices={cryptoPrices} loading={loading} history={history} cryptoHistory={marketHistory.crypto} cryptoHistory24h={marketHistory.crypto24h} cryptoHistory7d={marketHistory.crypto7d} />}
         {view === "stocks"     && <StocksView stocks={stocks} setStocks={setStocks} history={history} marketHistory={marketHistory.stocks} stocksHistory24h={marketHistory.stocks24h} stocksHistory7d={marketHistory.stocks7d} peaValue={(() => { const pea = stocks.filter(s=>s.account==="pea").reduce((s,st)=>s+st.price*st.qty,0); return pea || 549.89; })()} nonCoteValue={stocks.filter(s=>["APOLLO","EQTF"].includes(s.symbol)).reduce((s,st)=>s+st.price*st.qty,0)} />}
         {view === "savings"    && <SavingsView savings={savings} setSavings={setSavings} oraPrice={oraPrice} />}
