@@ -2937,14 +2937,23 @@ function SankeyBudget({ transactions, curYear, selectedMonth, fmt, getColor }) {
   const H = minH;
   const availH = H - PAD_Y * 2;
 
+  // ── Proportionnalité : chaque côté est mis à l'échelle selon le max des deux totaux ──
+  const maxTotal = Math.max(totalEntrees, totalRight) || 1;
+  const leftScale  = totalEntrees / maxTotal;   // ex. 46/1452 ≈ 0.032
+  const rightScale = totalRight   / maxTotal;   // ex. 1452/1452 = 1.0
+
   // ── Nœud central "Budget" ─────────────────────────────────────────────────
   const CX = W / 2 - NODE_W / 2;
   const centerH = availH;
   const centerY = PAD_Y;
 
+  // Hauteurs effectives de chaque colonne (proportionnelles aux totaux)
+  const leftColH  = availH * leftScale;
+  const rightColH = availH * rightScale;
+
   // ── Positions nœuds gauche (sources) ─────────────────────────────────────
   const totalGapsL = (sourceNodes.length - 1) * GAP;
-  const availForL  = availH - totalGapsL;
+  const availForL  = Math.max(0, leftColH - totalGapsL);
   let yOffL = PAD_Y;
   const leftNodes = sourceNodes.map(n => {
     const h = Math.max(8, (n.val / totalEntrees) * availForL);
@@ -2955,7 +2964,7 @@ function SankeyBudget({ transactions, curYear, selectedMonth, fmt, getColor }) {
 
   // ── Positions nœuds droite (destinations) ────────────────────────────────
   const totalGapsR = (destNodes.length - 1) * GAP;
-  const availForR  = availH - totalGapsR;
+  const availForR  = Math.max(0, rightColH - totalGapsR);
   let yOffR = PAD_Y;
   const rightNodes = destNodes.map(n => {
     const h = Math.max(8, (n.val / totalRight) * availForR);
@@ -2968,7 +2977,7 @@ function SankeyBudget({ transactions, curYear, selectedMonth, fmt, getColor }) {
   const xLeft = PAD_X - NODE_W;
   let leftCenterOff = 0;
   const pathsLeft = leftNodes.map(node => {
-    const flowH = (node.val / totalEntrees) * centerH;
+    const flowH = (node.val / totalEntrees) * centerH * leftScale;
     const y0L = node.y, y1L = node.y + node.h;
     const y0C = centerY + leftCenterOff, y1C = y0C + flowH;
     const mx = (xLeft + NODE_W + CX) / 2;
@@ -2982,7 +2991,7 @@ function SankeyBudget({ transactions, curYear, selectedMonth, fmt, getColor }) {
   const xRight = W - PAD_X;
   let rightCenterOff = 0;
   const pathsRight = rightNodes.map(node => {
-    const flowH = (node.val / totalRight) * centerH;
+    const flowH = (node.val / totalRight) * centerH * rightScale;
     const y0R = node.y, y1R = node.y + node.h;
     const y0C = centerY + rightCenterOff, y1C = y0C + flowH;
     const mx = (CX + NODE_W + xRight) / 2;
