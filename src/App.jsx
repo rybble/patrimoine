@@ -33,6 +33,153 @@ function makeDebounced(fn, delay = 1500) {
   return (...args) => { clearTimeout(timer); timer = setTimeout(() => fn(...args), delay); };
 }
 
+function downloadFile(content, filename, mimeType) {
+  const blob = new Blob([content], { type: mimeType });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = filename; a.click();
+  URL.revokeObjectURL(url);
+}
+
+// ─── EXPORT MODAL ─────────────────────────────────────────────────────────────
+const EXPORT_ITEMS = [
+  { key: "budget_tx",          label: "Transactions budget",   icon: "💰", group: "Budget" },
+  { key: "budget_cats",        label: "Catégories budget",     icon: "🏷", group: "Budget" },
+  { key: "crypto",             label: "Crypto",                icon: "₿",  group: "Patrimoine" },
+  { key: "stocks",             label: "Bourse",                icon: "📈", group: "Patrimoine" },
+  { key: "savings",            label: "Épargne",               icon: "🟠", group: "Patrimoine" },
+  { key: "scpi",               label: "SCPI",                  icon: "🏢", group: "Patrimoine" },
+  { key: "realestate",         label: "Immobilier",            icon: "🏠", group: "Patrimoine" },
+  { key: "bank",               label: "Banque",                icon: "🏦", group: "Patrimoine" },
+  { key: "objectifs",          label: "Objectifs",             icon: "🎯", group: "Autre" },
+  { key: "alertes_budget",     label: "Alertes budget",        icon: "🔔", group: "Autre" },
+  { key: "credit_simulations", label: "Simulations crédit",    icon: "📊", group: "Autre" },
+  { key: "history",            label: "Historique patrimoine", icon: "📅", group: "Autre" },
+];
+
+function ExportModal({ uid, onClose }) {
+  const initSelected = Object.fromEntries(EXPORT_ITEMS.map(i => [i.key, i.key !== "history"]));
+  const [selected, setSelected] = useState(initSelected);
+  const [format,   setFormat]   = useState("json");
+  const [loading,  setLoading]  = useState(false);
+  const [status,   setStatus]   = useState("");
+
+  const groups = [...new Set(EXPORT_ITEMS.map(i => i.group))];
+  const count  = Object.values(selected).filter(Boolean).length;
+  const allOn  = EXPORT_ITEMS.every(i => selected[i.key]);
+  const toggle = (k) => setSelected(s => ({ ...s, [k]: !s[k] }));
+  const toggleAll = () => setSelected(Object.fromEntries(EXPORT_ITEMS.map(i => [i.key, !allOn])));
+  const toggleGroup = (g) => {
+    const keys = EXPORT_ITEMS.filter(i => i.group === g).map(i => i.key);
+    const allGroupOn = keys.every(k => selected[k]);
+    setSelected(s => ({ ...s, ...Object.fromEntries(keys.map(k => [k, !allGroupOn])) }));
+  };
+
+  const doExport = async () => {
+    if (count === 0) { setStatus("Sélectionne au moins une catégorie."); return; }
+    setLoading(true); setStatus("Chargement des données…");
+    try {
+      const keys = Object.keys(selected).filter(k => selected[k]);
+      const results = await Promise.all(keys.map(k => fbGet(uid, k).then(v => [k, v])));
+      const fetched = Object.fromEntries(results);
+
+      if (format === "csv") {
+        const txs = fetched["budget_tx"];
+        if (txs?.length) {
+          const lines = ["Année;Mois;Entrée/Sortie;Type;Sous-type;Montant;Notes"];
+          txs.forEach(t => lines.push([t.annee, t.mois, t.es, t.type, "", t.montant, (t.note||"").replace(/;/g,",")].join(";")));
+          downloadFile("﻿" + lines.join("\n"), `budget-${new Date().toISOString().slice(0,10)}.csv`, "text/csv;charset=utf-8");
+        }
+        const rest = Object.fromEntries(Object.entries(fetched).filter(([k]) => k !== "budget_tx"));
+        if (Object.keys(rest).length) {
+          const payload = { exportDate: new Date().toISOString(), version: "1.0", data: rest };
+          downloadFile(JSON.stringify(payload, null, 2), `patrimoine-${new Date().toISOString().slice(0,10)}.json`, "application/json");
+        }
+      } else {
+        const payload = { exportDate: new Date().toISOString(), version: "1.0", data: fetched };
+        downloadFile(JSON.stringify(payload, null, 2), `patrimoine-export-${new Date().toISOString().slice(0,10)}.json`, "application/json");
+      }
+      setStatus("✅ Fichier(s) téléchargé(s) !");
+      setTimeout(() => setStatus(""), 3000);
+    } catch(e) {
+      setStatus("❌ Erreur : " + e.message);
+    } finally { setLoading(false); }
+  };
+
+  const S = {
+    overlay:  { position:"fixed", inset:0, background:"rgba(0,0,0,0.7)", zIndex:1000, display:"flex", alignItems:"center", justifyContent:"center", padding:20 },
+    modal:    { background:"#0F1929", border:"1px solid rgba(255,255,255,0.08)", borderRadius:16, width:"100%", maxWidth:520, maxHeight:"90vh", overflowY:"auto", padding:28, boxShadow:"0 24px 64px rgba(0,0,0,0.6)" },
+    head:     { display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:22 },
+    title:    { fontSize:18, fontWeight:800, color:"#F1F5F9" },
+    close:    { background:"none", border:"none", color:"#64748B", fontSize:20, cursor:"pointer", lineHeight:1 },
+    groupHd:  { fontSize:11, fontWeight:700, color:"#475569", textTransform:"uppercase", letterSpacing:1, marginBottom:8, marginTop:18 },
+    row:      { display:"flex", alignItems:"center", gap:10, padding:"8px 10px", borderRadius:8, cursor:"pointer", transition:"background .15s" },
+    check:    { width:16, height:16, accentColor:"#6366F1", cursor:"pointer", flexShrink:0 },
+    lbl:      { fontSize:13, color:"#CBD5E1", userSelect:"none" },
+    divider:  { height:1, background:"rgba(255,255,255,0.06)", margin:"18px 0" },
+    fmtRow:   { display:"flex", gap:10, marginBottom:20 },
+    fmtBtn:   (active) => ({ flex:1, padding:"10px 14px", borderRadius:10, cursor:"pointer", fontWeight:600, fontSize:13, border:"none", textAlign:"center",
+                  background: active ? "linear-gradient(135deg,#6366F1,#4F46E5)" : "rgba(255,255,255,0.04)",
+                  color: active ? "#fff" : "#64748B", outline: active ? "none" : "1px solid rgba(255,255,255,0.08)" }),
+    btn:      { width:"100%", background:"linear-gradient(135deg,#6366F1,#4F46E5)", border:"none", borderRadius:12, color:"#fff", padding:"13px", cursor:"pointer", fontWeight:700, fontSize:15, opacity: loading||count===0 ? 0.5 : 1 },
+    status:   { marginTop:12, textAlign:"center", fontSize:13, color:"#94A3B8" },
+  };
+
+  return (
+    <div style={S.overlay} onClick={e => { if(e.target===e.currentTarget) onClose(); }}>
+      <div style={S.modal}>
+        <div style={S.head}>
+          <span style={S.title}>📤 Exporter mes données</span>
+          <button style={S.close} onClick={onClose}>✕</button>
+        </div>
+
+        {/* Sélection */}
+        <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:4 }}>
+          <input type="checkbox" checked={allOn} onChange={toggleAll} style={S.check} />
+          <span style={{ fontSize:12, color:"#64748B", userSelect:"none", cursor:"pointer" }} onClick={toggleAll}>
+            Tout sélectionner ({count}/{EXPORT_ITEMS.length})
+          </span>
+        </div>
+
+        {groups.map(g => (
+          <div key={g}>
+            <div style={S.groupHd}>
+              <span style={{ cursor:"pointer" }} onClick={() => toggleGroup(g)}>{g}</span>
+            </div>
+            {EXPORT_ITEMS.filter(i => i.group === g).map(item => (
+              <label key={item.key} style={{ ...S.row, background: selected[item.key] ? "rgba(99,102,241,0.08)" : "transparent" }}>
+                <input type="checkbox" checked={!!selected[item.key]} onChange={() => toggle(item.key)} style={S.check} />
+                <span style={{ fontSize:15 }}>{item.icon}</span>
+                <span style={S.lbl}>{item.label}</span>
+                {selected[item.key] && <span style={{ marginLeft:"auto", fontSize:10, color:"#6366F1", fontWeight:700 }}>✓</span>}
+              </label>
+            ))}
+          </div>
+        ))}
+
+        <div style={S.divider} />
+
+        {/* Format */}
+        <div style={{ fontSize:12, fontWeight:700, color:"#94A3B8", marginBottom:10 }}>FORMAT</div>
+        <div style={S.fmtRow}>
+          <button style={S.fmtBtn(format==="json")} onClick={() => setFormat("json")}>
+            <div>📦 JSON</div>
+            <div style={{ fontSize:10, marginTop:3, opacity:.7 }}>Backup complet</div>
+          </button>
+          <button style={S.fmtBtn(format==="csv")} onClick={() => setFormat("csv")}>
+            <div>📊 CSV + JSON</div>
+            <div style={{ fontSize:10, marginTop:3, opacity:.7 }}>Budget en CSV · reste en JSON</div>
+          </button>
+        </div>
+
+        <button style={S.btn} onClick={doExport} disabled={loading || count===0}>
+          {loading ? "⏳ Export en cours…" : `Télécharger (${count} catégorie${count>1?"s":""})`}
+        </button>
+        {status && <div style={S.status}>{status}</div>}
+      </div>
+    </div>
+  );
+}
 
 // ─── CONSTANTS ────────────────────────────────────────────────────────────────
 const CG_KEY = "CG-awA3tjVWYZgAyyAngdNth8Ek";
@@ -2881,6 +3028,106 @@ function parseBudgetCSV(text) {
   return parsed;
 }
 
+// ─── AUTO-CATÉGORISATION relevé bancaire ─────────────────────────────────────
+function autoCategory(label, es) {
+  const l = (label || "").toUpperCase();
+  if (es === "Entrée") {
+    if (l.match(/SALAIRE|PAIE |VIR SAL|TRAITEMENT/)) return "Salaire";
+    if (l.match(/LOYER.*(PERCEP|RECEP|VIRT)|VIRT.*LOYER/)) return "Loyer Studio";
+    if (l.match(/PRIME|BONUS|INTERESSEMENT|PARTICIPATION/)) return "Prime";
+    return "Divers";
+  }
+  if (l.match(/CARREFOUR|LECLERC|LIDL|ALDI|MONOPRIX|FRANPRIX|CASINO |INTERMARCH|PICARD |NETTO |AUCHAN|U EXPRESS|BIOCOOP|NATURALIA|SPAR |CORA |EPICERIE|SUPERMARCHE|SIMPLY MARKET/)) return "Nourriture";
+  if (l.match(/RATP|NAVIGO|SNCF|TRANSILIEN|OUIBUS|FLIXBUS|BLABLACAR|TAXI |UBER |AIR FRANCE|EASYJET|RYANAIR|VOLOTEA|EUROSTAR|THALYS|TRANSDEV|KEOLIS/)) return "Déplacement";
+  if (l.match(/EDF|ENGIE|TOTAL ENERGIES|ELECTRICITE|ILEK|EKWATEUR|LUMINEA|VATTENFALL/)) return "Electricité";
+  if (l.match(/FREE |ORANGE |SFR |BOUYGUES|SOSH |NRJ MOBILE|NUMERICABLE|BBOX|INTERNET /)) return "Internet";
+  if (l.match(/AMAZON|FNAC |DARTY|BOULANGER|CDISCOUNT|VINTED|LEBONCOIN|EBAY|ALIEXPRESS/)) return "petits achat";
+  if (l.match(/AXA |MAIF|MACIF|MAAF|MATMUT|ALLIANZ|GROUPAMA|ASSURANCE|MUTUELLE|MMA /)) return "Assurances";
+  if (l.match(/SYNDIC|COPROPRIETE|FONCIA|NEXITY|CITYA|LOISELET|ORALIA/)) return "Syndic";
+  if (l.match(/COIFFEUR|COIFF |DESSANGE|HAIR |SALON/)) return "Coiffeur";
+  if (l.match(/FRAIS |COTISATION|COMMISSION|AGIOS|INTERETS|AGIO/)) return "Frais Bancaires";
+  if (l.match(/RESTAURANT|MCDO|MCDONALD|BURGER|PIZZA|SUSHI|BRASSERIE|BISTRO|CAFE |BAR |BOWLING|CINEMA|UGC |GAUMONT|PATHE|CINE /)) return "Sorties";
+  if (l.match(/HOTEL|BOOKING|AIRBNB|VOYAGES|VACANCE|CLUB MED|SUNWEB|THOMAS COOK/)) return "vacances";
+  if (l.match(/LOYER|CHARGES PROP|QUITTANCE/)) return "Loyer";
+  if (l.match(/BOURSE|INVEST|PEA |ASSUR.VIE|LIVRET|EPARGNE|BOURSORAMA|FORTUNEO/)) return "investissement";
+  return "Divers";
+}
+
+// ─── PARSEUR OFX / QFX ───────────────────────────────────────────────────────
+function parseBankOFX(text) {
+  const txs = [];
+  const blocks = text.split(/<STMTTRN>/i).slice(1);
+  for (const block of blocks) {
+    const get = (tag) => { const m = block.match(new RegExp(`<${tag}>([^<\r\n]+)`, "i")); return m ? m[1].trim() : ""; };
+    const dtPosted = get("DTPOSTED");
+    const amtStr   = get("TRNAMT").replace(",", ".");
+    const name     = get("NAME") || get("MEMO") || "";
+    const amount   = parseFloat(amtStr);
+    if (!dtPosted || isNaN(amount)) continue;
+    const clean = dtPosted.replace(/\[.*\]/, "").trim();
+    const year = parseInt(clean.substring(0, 4)), month = parseInt(clean.substring(4, 6));
+    if (isNaN(year) || isNaN(month) || year < 2000) continue;
+    const es = amount >= 0 ? "Entrée" : "Sortie";
+    const montant = Math.round(Math.abs(amount) * 100) / 100;
+    if (montant === 0) continue;
+    txs.push({ id: `bank-${Date.now()}-${txs.length}`, annee: year, mois: month, es, type: autoCategory(name, es), montant, note: name });
+  }
+  return txs;
+}
+
+// ─── PARSEUR CSV RELEVÉ BANCAIRE (multi-banques) ─────────────────────────────
+function parseBankCSVStatement(text) {
+  const rawLines = text.split(/\r?\n/);
+  // Trouver la ligne d'en-tête (contient "date" ou "libellé" ou "description")
+  let headerIdx = -1;
+  for (let i = 0; i < Math.min(10, rawLines.length); i++) {
+    if (rawLines[i].match(/date|libellé|description|opération|label/i)) { headerIdx = i; break; }
+  }
+  if (headerIdx === -1) return [];
+  const lines = rawLines.slice(headerIdx).filter(l => l.trim());
+  if (lines.length < 2) return [];
+  const sep  = lines[0].includes(";") ? ";" : ",";
+  const hdrs = lines[0].split(sep).map(h => h.trim().replace(/^"|"$/g, "").toLowerCase());
+
+  const idx = (patterns) => hdrs.findIndex(h => patterns.some(p => h.includes(p)));
+  const dateIdx   = idx(["date"]);
+  const labelIdx  = idx(["libellé", "label", "intitulé", "opération", "description"]);
+  const amtIdx    = idx(["montant", "amount", "valeur"]);
+  const debitIdx  = idx(["débit", "debit"]);
+  const creditIdx = idx(["crédit", "credit"]);
+  const hasDebitCredit = debitIdx !== -1 && creditIdx !== -1;
+
+  const parseAmt = (s) => parseFloat((s || "").replace(/[€\s  ]/g, "").replace(",", ".")) || 0;
+  const parseDate = (s) => {
+    const d = (s || "").trim();
+    let m;
+    if ((m = d.match(/^(\d{2})[\/\-](\d{2})[\/\-](\d{4})$/))) return { year: parseInt(m[3]), month: parseInt(m[2]) };
+    if ((m = d.match(/^(\d{4})[\/\-](\d{2})[\/\-](\d{2})/)))   return { year: parseInt(m[1]), month: parseInt(m[2]) };
+    return null;
+  };
+
+  const txs = [];
+  for (let i = 1; i < lines.length; i++) {
+    const cols = lines[i].split(sep).map(c => c.trim().replace(/^"|"$/g, ""));
+    if (cols.every(c => !c) || cols.length < 2) continue;
+    const dateInfo = parseDate(cols[dateIdx] || "");
+    if (!dateInfo || dateInfo.year < 2000 || dateInfo.year > 2100) continue;
+    const label = (labelIdx !== -1 ? cols[labelIdx] : cols[1]) || "";
+    let amount;
+    if (hasDebitCredit) {
+      const debit  = parseAmt(cols[debitIdx]);
+      const credit = parseAmt(cols[creditIdx]);
+      if (credit > 0) amount = credit; else if (debit > 0) amount = -debit; else continue;
+    } else {
+      amount = parseAmt(cols[amtIdx !== -1 ? amtIdx : 2]);
+    }
+    if (!amount || isNaN(amount)) continue;
+    const es = amount >= 0 ? "Entrée" : "Sortie";
+    const montant = Math.round(Math.abs(amount) * 100) / 100;
+    txs.push({ id: `bank-${Date.now()}-${txs.length}`, annee: dateInfo.year, mois: dateInfo.month, es, type: autoCategory(label, es), montant, note: label });
+  }
+  return txs;
+}
 
 // ══════════════════════════════════════════════════════════════════════════════
 // SANKEY BUDGET V2 — Multi-sources → Nœud Budget → Catégories de dépenses
@@ -3135,6 +3382,7 @@ function BudgetView({ uid, quickAddTx, setQuickAddTx, onCatsChange }) {
   const gsActiveUrl = gsMode === "default" ? GS_DEFAULT_URL : gsUrl;
   const [gsLoading,     setGsLoading]     = useState(false);
   const [activeTab,     setActiveTab]     = useState("overview");
+  const [bankPreview,   setBankPreview]   = useState(null);
 
   // Add form
   const [form, setForm] = useState({ es:"Sortie", type:"", montant:"", note:"", annee: new Date().getFullYear(), mois: new Date().getMonth()+1 });
@@ -3166,6 +3414,7 @@ function BudgetView({ uid, quickAddTx, setQuickAddTx, onCatsChange }) {
     clearTimeout(budgetTimers.current.tx);
     budgetTimers.current.tx = setTimeout(async () => {
       console.log("[FB] saving budget_tx");
+      try { localStorage.setItem(BUDGET_KEY, JSON.stringify(v)); } catch {}
       await fbSet(uid, "budget_tx", v);
     }, 1500);
   }, [uid]);
@@ -3182,17 +3431,17 @@ function BudgetView({ uid, quickAddTx, setQuickAddTx, onCatsChange }) {
   useEffect(() => {
     if (!uid) return;
     Promise.all([fbGet(uid, "budget_tx"), fbGet(uid, "budget_cats")]).then(([fbTx, fbCats]) => {
+      const fixCatName = n => n === "Petits achats" ? "petits achat" : n;
       if (fbTx) {
-        const loaded = fbTx.map((t, i) => ({ id: t.id || `legacy-${i}`, ...t }));
-        // Fusionner avec quickAddTx en attente (via ref pour éviter closure stale)
+        const loaded = fbTx.map((t, i) => ({ id: t.id || `legacy-${i}`, ...t, type: fixCatName(t.type) }));
         setTransactions(loaded);
-        // Les quickAddTx seront ré-absorbés par le useEffect dédié juste après
       } else {
-        try { const raw = JSON.parse(localStorage.getItem(BUDGET_KEY) || "[]"); if(raw.length) setTransactions(raw.map((t,i)=>({id:t.id||`lg-${i}`,...t}))); } catch {}
+        try { const raw = JSON.parse(localStorage.getItem(BUDGET_KEY) || "[]"); if(raw.length) setTransactions(raw.map((t,i)=>({id:t.id||`lg-${i}`,...t, type: fixCatName(t.type)}))); } catch {}
       }
-      if (fbCats) setCats(fbCats);
+      const normCats = (c) => c ? { entree: c.entree || [], sortie: (c.sortie || []).map(cat => ({ ...cat, name: fixCatName(cat.name) })) } : null;
+      if (fbCats) setCats(normCats(fbCats));
       else {
-        try { const c = JSON.parse(localStorage.getItem(BUDGET_CATS_KEY)); if(c) setCats(c); } catch {}
+        try { const c = JSON.parse(localStorage.getItem(BUDGET_CATS_KEY)); if(c) setCats(normCats(c)); } catch {}
       }
       budgetSyncedRef.current = true;
       setBudgetSynced(true);
@@ -3267,11 +3516,43 @@ function BudgetView({ uid, quickAddTx, setQuickAddTx, onCatsChange }) {
       if (!parsed.length) { setImportStatus("❌ Aucune donnée trouvée"); return; }
       const newKeys = new Set(parsed.map(t => `${t.annee}-${t.mois}`));
       const kept = transactions.filter(t => !newKeys.has(`${t.annee}-${t.mois}`));
+      const toReplace = transactions.length - kept.length;
+      if (toReplace > 5 && !confirm(`Cet import va remplacer ${toReplace} transactions existantes (${newKeys.size} mois couverts). Continuer ?`)) {
+        setImportStatus("Import annulé."); setTimeout(() => setImportStatus(""), 3000); return;
+      }
       setTransactions([...kept, ...parsed]);
       setImportStatus(`✅ ${parsed.length} transactions importées (${newKeys.size} mois)`);
       setTimeout(() => setImportStatus(""), 5000);
     };
     reader.readAsText(file, "UTF-8"); e.target.value = "";
+  };
+
+  // ── Import relevé bancaire ─────────────────────────────────────────────────
+  const handleBankFile = (e) => {
+    const file = e.target.files[0]; if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      const text = ev.target.result;
+      let parsed = [], format = "CSV";
+      if (text.includes("<OFX>") || text.includes("<STMTTRNRS>") || text.includes("<STMTTRN>")) {
+        parsed = parseBankOFX(text); format = "OFX";
+      } else {
+        parsed = parseBankCSVStatement(text);
+      }
+      if (!parsed.length) { setImportStatus("❌ Aucune transaction détectée — vérifie le format du fichier"); return; }
+      setBankPreview({ transactions: parsed, fileName: file.name, format });
+    };
+    reader.readAsText(file, "UTF-8"); e.target.value = "";
+  };
+
+  const confirmBankImport = () => {
+    if (!bankPreview) return;
+    const newKeys = new Set(bankPreview.transactions.map(t => `${t.annee}-${t.mois}`));
+    const kept = transactions.filter(t => !newKeys.has(`${t.annee}-${t.mois}`));
+    setTransactions([...kept, ...bankPreview.transactions]);
+    setImportStatus(`✅ ${bankPreview.transactions.length} transactions importées depuis ${bankPreview.fileName}`);
+    setBankPreview(null);
+    setTimeout(() => setImportStatus(""), 5000);
   };
 
   // ── Google Sheets ──────────────────────────────────────────────────────────
@@ -3297,6 +3578,10 @@ function BudgetView({ uid, quickAddTx, setQuickAddTx, onCatsChange }) {
       if (!parsed.length) throw new Error("Aucune donnée parsée — vérifie le format de la feuille");
       const newKeys = new Set(parsed.map(t => `${t.annee}-${t.mois}`));
       const kept = transactions.filter(t => !newKeys.has(`${t.annee}-${t.mois}`));
+      const toReplace = transactions.length - kept.length;
+      if (toReplace > 10 && !confirm(`Cette sync va remplacer ${toReplace} transactions existantes (${newKeys.size} mois couverts). Continuer ?`)) {
+        setImportStatus("Synchronisation annulée."); return;
+      }
       setTransactions([...kept, ...parsed]);
       if (gsMode === "custom") localStorage.setItem("patrimoine_gs_url", gsUrl);
       localStorage.setItem("patrimoine_gs_mode", gsMode);
@@ -4380,6 +4665,54 @@ function BudgetView({ uid, quickAddTx, setQuickAddTx, onCatsChange }) {
               📥 Choisir un fichier CSV
               <input type="file" accept=".csv,.txt" onChange={handleCSV} style={{ display:"none" }} />
             </label>
+          </Card>
+
+          <Card style={{ padding:20 }}>
+            <div style={{ fontSize:14, fontWeight:700, color:"#F1F5F9", marginBottom:6 }}>🏦 Relevé bancaire</div>
+            <div style={{ fontSize:12, color:"#64748B", marginBottom:14 }}>
+              Formats supportés : <strong style={{color:"#94A3B8"}}>OFX / QFX</strong> (toutes banques compatibles) et <strong style={{color:"#94A3B8"}}>CSV</strong> (BNP, Crédit Agricole, Société Générale, CIC, Crédit Mutuel, Boursorama, Revolut, N26…).
+              Les catégories sont détectées automatiquement à partir du libellé.
+            </div>
+            {!bankPreview ? (
+              <label style={{ display:"inline-flex", alignItems:"center", gap:8, background:"#6366F1", color:"#fff", borderRadius:10, padding:"9px 20px", cursor:"pointer", fontWeight:700, fontSize:13 }}>
+                🏦 Choisir un relevé
+                <input type="file" accept=".csv,.ofx,.qfx,.txt" onChange={handleBankFile} style={{ display:"none" }} />
+              </label>
+            ) : (
+              <div>
+                <div style={{ background:"rgba(99,102,241,0.08)", border:"1px solid rgba(99,102,241,0.2)", borderRadius:10, padding:14, marginBottom:12 }}>
+                  <div style={{ fontSize:13, fontWeight:600, color:"#818CF8", marginBottom:8 }}>
+                    📋 {bankPreview.fileName} — {bankPreview.format} — {bankPreview.transactions.length} transactions
+                  </div>
+                  <div style={{ display:"flex", gap:16, flexWrap:"wrap", fontSize:13, color:"#94A3B8", marginBottom:10 }}>
+                    <span><strong style={{color:"#34D399"}}>{bankPreview.transactions.filter(t=>t.es==="Entrée").length}</strong> entrées</span>
+                    <span><strong style={{color:"#F87171"}}>{bankPreview.transactions.filter(t=>t.es==="Sortie").length}</strong> sorties</span>
+                    <span><strong style={{color:"#F1F5F9"}}>{[...new Set(bankPreview.transactions.map(t=>`${t.annee}-${t.mois}`))].length}</strong> mois</span>
+                  </div>
+                  <div style={{ fontSize:11, color:"#94A3B8", maxHeight:130, overflowY:"auto" }}>
+                    {bankPreview.transactions.slice(0,8).map((t,i) => (
+                      <div key={i} style={{ display:"flex", gap:8, padding:"4px 0", borderBottom:"1px solid rgba(255,255,255,0.04)" }}>
+                        <span style={{ color:"#475569", width:54, flexShrink:0 }}>{t.mois}/{t.annee}</span>
+                        <span style={{ flex:1, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap", color:"#CBD5E1" }}>{t.note}</span>
+                        <span style={{ color: t.es==="Entrée" ? "#34D399" : "#F87171", flexShrink:0 }}>{t.es==="Sortie"?"-":"+"}{ t.montant.toFixed(2)} €</span>
+                        <span style={{ color:"#818CF8", fontSize:10, flexShrink:0, width:80, textAlign:"right" }}>{t.type}</span>
+                      </div>
+                    ))}
+                    {bankPreview.transactions.length > 8 && <div style={{color:"#475569",marginTop:4}}>… et {bankPreview.transactions.length-8} de plus</div>}
+                  </div>
+                </div>
+                <div style={{ display:"flex", gap:8 }}>
+                  <button onClick={confirmBankImport}
+                    style={{ flex:1, background:"linear-gradient(135deg,#6366F1,#4F46E5)", border:"none", borderRadius:10, color:"#fff", padding:"10px", cursor:"pointer", fontWeight:700, fontSize:13 }}>
+                    ✅ Importer {bankPreview.transactions.length} transactions
+                  </button>
+                  <button onClick={()=>setBankPreview(null)}
+                    style={{ background:"transparent", border:"1px solid rgba(255,255,255,0.1)", borderRadius:10, color:"#94A3B8", padding:"10px 16px", cursor:"pointer", fontSize:13 }}>
+                    Annuler
+                  </button>
+                </div>
+              </div>
+            )}
           </Card>
 
           <Card style={{ padding:20 }}>
@@ -5808,6 +6141,7 @@ function AppContent({ user }) {
   const [fbSynced, setFbSynced] = useState(false);
   const [fbStatus, setFbStatus] = useState("");
   const [showQuickAdd, setShowQuickAdd] = useState(false);
+  const [showExport,   setShowExport]   = useState(false);
   const [quickAddCats, setQuickAddCats] = useState({ entree: DEFAULT_CATS_ENTREE, sortie: DEFAULT_CATS_SORTIE });
   const [quickAddTx,   setQuickAddTx]   = useState([]); // "", "saving", "saved", "error"
 
@@ -6302,13 +6636,22 @@ function AppContent({ user }) {
           </div>
           <div style={{ textAlign: "right" }}>
             <div style={{ fontSize: 30, fontWeight: 800, color: "#F1F5F9", letterSpacing: "-1px" }}>{fmt(grandTotal)}</div>
-            <button onClick={fetchPrices} disabled={loading} style={{
-              marginTop: 6, background: "rgba(52,211,153,0.08)", border: "1px solid rgba(52,211,153,0.2)",
-              borderRadius: 20, color: "#34D399", padding: "4px 16px",
-              fontSize: 12, cursor: "pointer", fontWeight: 600, opacity: loading ? 0.6 : 1,
-            }}>
-              {loading ? "⏳ Sync…" : "↻ Actualiser"}
-            </button>
+            <div style={{ display:"flex", gap:8, justifyContent:"flex-end", marginTop:6 }}>
+              <button onClick={() => setShowExport(true)} style={{
+                background: "rgba(99,102,241,0.1)", border: "1px solid rgba(99,102,241,0.25)",
+                borderRadius: 20, color: "#818CF8", padding: "4px 14px",
+                fontSize: 12, cursor: "pointer", fontWeight: 600,
+              }}>
+                📤 Exporter
+              </button>
+              <button onClick={fetchPrices} disabled={loading} style={{
+                background: "rgba(52,211,153,0.08)", border: "1px solid rgba(52,211,153,0.2)",
+                borderRadius: 20, color: "#34D399", padding: "4px 16px",
+                fontSize: 12, cursor: "pointer", fontWeight: 600, opacity: loading ? 0.6 : 1,
+              }}>
+                {loading ? "⏳ Sync…" : "↻ Actualiser"}
+              </button>
+            </div>
           </div>
         </div>
 
@@ -6357,6 +6700,7 @@ function AppContent({ user }) {
           cats={quickAddCats}
           onClose={() => setShowQuickAdd(false)}
           onAdd={async (tx) => {
+
             // 1. Mettre à jour l'état local pour BudgetView si monté
             setQuickAddTx(prev => [...prev, tx]);
             // 2. Sauvegarder directement en Firebase sans dépendre du montage de BudgetView
@@ -6373,6 +6717,10 @@ function AppContent({ user }) {
             window.dispatchEvent(new CustomEvent("patrimoine:quickadd", { detail: tx }));
           }}
         />
+      )}
+
+      {showExport && uid && (
+        <ExportModal uid={uid} onClose={() => setShowExport(false)} />
       )}
     </div>
   );
