@@ -58,94 +58,86 @@ const EXPORT_ITEMS = [
 ];
 
 function ExportModal({ uid, onClose }) {
-  const initSelected = Object.fromEntries(EXPORT_ITEMS.map(i => [i.key, i.key !== "history"]));
-  const [selected, setSelected] = useState(initSelected);
-  const [format,   setFormat]   = useState("json");
-  const [loading,  setLoading]  = useState(false);
-  const [status,   setStatus]   = useState("");
+  const [tab, setTab] = useState("export"); // "export" | "import"
 
-  const groups = [...new Set(EXPORT_ITEMS.map(i => i.group))];
-  const count  = Object.values(selected).filter(Boolean).length;
-  const allOn  = EXPORT_ITEMS.every(i => selected[i.key]);
-  const toggle = (k) => setSelected(s => ({ ...s, [k]: !s[k] }));
-  const toggleAll = () => setSelected(Object.fromEntries(EXPORT_ITEMS.map(i => [i.key, !allOn])));
-  const toggleGroup = (g) => {
-    const keys = EXPORT_ITEMS.filter(i => i.group === g).map(i => i.key);
-    const allGroupOn = keys.every(k => selected[k]);
-    setSelected(s => ({ ...s, ...Object.fromEntries(keys.map(k => [k, !allGroupOn])) }));
-  };
-
-  const doExport = async () => {
-    if (count === 0) { setStatus("Sélectionne au moins une catégorie."); return; }
-    setLoading(true); setStatus("Chargement des données…");
-    try {
-      const keys = Object.keys(selected).filter(k => selected[k]);
-      const results = await Promise.all(keys.map(k => fbGet(uid, k).then(v => [k, v])));
-      const fetched = Object.fromEntries(results);
-
-      if (format === "csv") {
-        const txs = fetched["budget_tx"];
-        if (txs?.length) {
-          const lines = ["Année;Mois;Entrée/Sortie;Type;Sous-type;Montant;Notes"];
-          txs.forEach(t => lines.push([t.annee, t.mois, t.es, t.type, "", t.montant, (t.note||"").replace(/;/g,",")].join(";")));
-          downloadFile("﻿" + lines.join("\n"), `budget-${new Date().toISOString().slice(0,10)}.csv`, "text/csv;charset=utf-8");
-        }
-        const rest = Object.fromEntries(Object.entries(fetched).filter(([k]) => k !== "budget_tx"));
-        if (Object.keys(rest).length) {
-          const payload = { exportDate: new Date().toISOString(), version: "1.0", data: rest };
-          downloadFile(JSON.stringify(payload, null, 2), `patrimoine-${new Date().toISOString().slice(0,10)}.json`, "application/json");
-        }
-      } else {
-        const payload = { exportDate: new Date().toISOString(), version: "1.0", data: fetched };
-        downloadFile(JSON.stringify(payload, null, 2), `patrimoine-export-${new Date().toISOString().slice(0,10)}.json`, "application/json");
-      }
-      setStatus("✅ Fichier(s) téléchargé(s) !");
-      setTimeout(() => setStatus(""), 3000);
-    } catch(e) {
-      setStatus("❌ Erreur : " + e.message);
-    } finally { setLoading(false); }
-  };
-
+  // ── Styles partagés ──────────────────────────────────────────────────────────
   const S = {
     overlay:  { position:"fixed", inset:0, background:"rgba(0,0,0,0.7)", zIndex:1000, display:"flex", alignItems:"center", justifyContent:"center", padding:20 },
     modal:    { background:"#0F1929", border:"1px solid rgba(255,255,255,0.08)", borderRadius:16, width:"100%", maxWidth:520, maxHeight:"90vh", overflowY:"auto", padding:28, boxShadow:"0 24px 64px rgba(0,0,0,0.6)" },
-    head:     { display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:22 },
+    head:     { display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:18 },
     title:    { fontSize:18, fontWeight:800, color:"#F1F5F9" },
     close:    { background:"none", border:"none", color:"#64748B", fontSize:20, cursor:"pointer", lineHeight:1 },
+    tabs:     { display:"flex", gap:6, marginBottom:20, background:"rgba(255,255,255,0.04)", borderRadius:10, padding:4 },
+    tabBtn:   (a) => ({ flex:1, padding:"8px", borderRadius:7, border:"none", cursor:"pointer", fontWeight:700, fontSize:13,
+                  background: a ? "rgba(99,102,241,0.3)" : "transparent",
+                  color: a ? "#A5B4FC" : "#475569" }),
     groupHd:  { fontSize:11, fontWeight:700, color:"#475569", textTransform:"uppercase", letterSpacing:1, marginBottom:8, marginTop:18 },
-    row:      { display:"flex", alignItems:"center", gap:10, padding:"8px 10px", borderRadius:8, cursor:"pointer", transition:"background .15s" },
+    row:      { display:"flex", alignItems:"center", gap:10, padding:"8px 10px", borderRadius:8, cursor:"pointer" },
     check:    { width:16, height:16, accentColor:"#6366F1", cursor:"pointer", flexShrink:0 },
     lbl:      { fontSize:13, color:"#CBD5E1", userSelect:"none" },
     divider:  { height:1, background:"rgba(255,255,255,0.06)", margin:"18px 0" },
     fmtRow:   { display:"flex", gap:10, marginBottom:20 },
-    fmtBtn:   (active) => ({ flex:1, padding:"10px 14px", borderRadius:10, cursor:"pointer", fontWeight:600, fontSize:13, border:"none", textAlign:"center",
-                  background: active ? "linear-gradient(135deg,#6366F1,#4F46E5)" : "rgba(255,255,255,0.04)",
-                  color: active ? "#fff" : "#64748B", outline: active ? "none" : "1px solid rgba(255,255,255,0.08)" }),
-    btn:      { width:"100%", background:"linear-gradient(135deg,#6366F1,#4F46E5)", border:"none", borderRadius:12, color:"#fff", padding:"13px", cursor:"pointer", fontWeight:700, fontSize:15, opacity: loading||count===0 ? 0.5 : 1 },
-    status:   { marginTop:12, textAlign:"center", fontSize:13, color:"#94A3B8" },
+    fmtBtn:   (a) => ({ flex:1, padding:"10px 14px", borderRadius:10, cursor:"pointer", fontWeight:600, fontSize:13, border:"none", textAlign:"center",
+                  background: a ? "linear-gradient(135deg,#6366F1,#4F46E5)" : "rgba(255,255,255,0.04)",
+                  color: a ? "#fff" : "#64748B", outline: a ? "none" : "1px solid rgba(255,255,255,0.08)" }),
   };
 
-  return (
-    <div style={S.overlay} onClick={e => { if(e.target===e.currentTarget) onClose(); }}>
-      <div style={S.modal}>
-        <div style={S.head}>
-          <span style={S.title}>📤 Exporter mes données</span>
-          <button style={S.close} onClick={onClose}>✕</button>
-        </div>
-
-        {/* Sélection */}
+  // ── Onglet EXPORT ────────────────────────────────────────────────────────────
+  const ExportTab = () => {
+    const initSelected = Object.fromEntries(EXPORT_ITEMS.map(i => [i.key, i.key !== "history"]));
+    const [selected, setSelected] = useState(initSelected);
+    const [format,   setFormat]   = useState("json");
+    const [loading,  setLoading]  = useState(false);
+    const [status,   setStatus]   = useState("");
+    const groups = [...new Set(EXPORT_ITEMS.map(i => i.group))];
+    const count  = Object.values(selected).filter(Boolean).length;
+    const allOn  = EXPORT_ITEMS.every(i => selected[i.key]);
+    const toggle = (k) => setSelected(s => ({ ...s, [k]: !s[k] }));
+    const toggleAll = () => setSelected(Object.fromEntries(EXPORT_ITEMS.map(i => [i.key, !allOn])));
+    const toggleGroup = (g) => {
+      const keys = EXPORT_ITEMS.filter(i => i.group === g).map(i => i.key);
+      const allGroupOn = keys.every(k => selected[k]);
+      setSelected(s => ({ ...s, ...Object.fromEntries(keys.map(k => [k, !allGroupOn])) }));
+    };
+    const doExport = async () => {
+      if (count === 0) { setStatus("Sélectionne au moins une catégorie."); return; }
+      setLoading(true); setStatus("Chargement des données…");
+      try {
+        const keys = Object.keys(selected).filter(k => selected[k]);
+        const results = await Promise.all(keys.map(k => fbGet(uid, k).then(v => [k, v])));
+        const fetched = Object.fromEntries(results);
+        if (format === "csv") {
+          const txs = fetched["budget_tx"];
+          if (txs?.length) {
+            const lines = ["Année;Mois;Entrée/Sortie;Type;Sous-type;Montant;Notes"];
+            txs.forEach(t => lines.push([t.annee, t.mois, t.es, t.type, "", t.montant, (t.note||"").replace(/;/g,",")].join(";")));
+            downloadFile("﻿" + lines.join("\n"), `budget-${new Date().toISOString().slice(0,10)}.csv`, "text/csv;charset=utf-8");
+          }
+          const rest = Object.fromEntries(Object.entries(fetched).filter(([k]) => k !== "budget_tx"));
+          if (Object.keys(rest).length) {
+            downloadFile(JSON.stringify({ exportDate: new Date().toISOString(), version:"1.0", data: rest }, null, 2),
+              `patrimoine-${new Date().toISOString().slice(0,10)}.json`, "application/json");
+          }
+        } else {
+          downloadFile(JSON.stringify({ exportDate: new Date().toISOString(), version:"1.0", data: fetched }, null, 2),
+            `patrimoine-export-${new Date().toISOString().slice(0,10)}.json`, "application/json");
+        }
+        setStatus("✅ Fichier(s) téléchargé(s) !");
+        setTimeout(() => setStatus(""), 3000);
+      } catch(e) { setStatus("❌ Erreur : " + e.message); }
+      finally { setLoading(false); }
+    };
+    return (
+      <>
         <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:4 }}>
           <input type="checkbox" checked={allOn} onChange={toggleAll} style={S.check} />
-          <span style={{ fontSize:12, color:"#64748B", userSelect:"none", cursor:"pointer" }} onClick={toggleAll}>
+          <span style={{ fontSize:12, color:"#64748B", cursor:"pointer" }} onClick={toggleAll}>
             Tout sélectionner ({count}/{EXPORT_ITEMS.length})
           </span>
         </div>
-
         {groups.map(g => (
           <div key={g}>
-            <div style={S.groupHd}>
-              <span style={{ cursor:"pointer" }} onClick={() => toggleGroup(g)}>{g}</span>
-            </div>
+            <div style={S.groupHd}><span style={{ cursor:"pointer" }} onClick={() => toggleGroup(g)}>{g}</span></div>
             {EXPORT_ITEMS.filter(i => i.group === g).map(item => (
               <label key={item.key} style={{ ...S.row, background: selected[item.key] ? "rgba(99,102,241,0.08)" : "transparent" }}>
                 <input type="checkbox" checked={!!selected[item.key]} onChange={() => toggle(item.key)} style={S.check} />
@@ -156,26 +148,139 @@ function ExportModal({ uid, onClose }) {
             ))}
           </div>
         ))}
-
         <div style={S.divider} />
-
-        {/* Format */}
         <div style={{ fontSize:12, fontWeight:700, color:"#94A3B8", marginBottom:10 }}>FORMAT</div>
         <div style={S.fmtRow}>
           <button style={S.fmtBtn(format==="json")} onClick={() => setFormat("json")}>
-            <div>📦 JSON</div>
-            <div style={{ fontSize:10, marginTop:3, opacity:.7 }}>Backup complet</div>
+            <div>📦 JSON</div><div style={{ fontSize:10, marginTop:3, opacity:.7 }}>Backup complet</div>
           </button>
           <button style={S.fmtBtn(format==="csv")} onClick={() => setFormat("csv")}>
-            <div>📊 CSV + JSON</div>
-            <div style={{ fontSize:10, marginTop:3, opacity:.7 }}>Budget en CSV · reste en JSON</div>
+            <div>📊 CSV + JSON</div><div style={{ fontSize:10, marginTop:3, opacity:.7 }}>Budget en CSV · reste en JSON</div>
           </button>
         </div>
-
-        <button style={S.btn} onClick={doExport} disabled={loading || count===0}>
+        <button onClick={doExport} disabled={loading || count===0}
+          style={{ width:"100%", background:"linear-gradient(135deg,#6366F1,#4F46E5)", border:"none", borderRadius:12, color:"#fff", padding:"13px", cursor:"pointer", fontWeight:700, fontSize:15, opacity: loading||count===0 ? 0.5 : 1 }}>
           {loading ? "⏳ Export en cours…" : `Télécharger (${count} catégorie${count>1?"s":""})`}
         </button>
-        {status && <div style={S.status}>{status}</div>}
+        {status && <div style={{ marginTop:12, textAlign:"center", fontSize:13, color:"#94A3B8" }}>{status}</div>}
+      </>
+    );
+  };
+
+  // ── Onglet IMPORT ────────────────────────────────────────────────────────────
+  const ImportTab = () => {
+    const [parsed,   setParsed]   = useState(null); // { exportDate, data: {key: value} }
+    const [selected, setSelected] = useState({});
+    const [loading,  setLoading]  = useState(false);
+    const [status,   setStatus]   = useState("");
+
+    const handleFile = (e) => {
+      const file = e.target.files[0]; if (!file) return;
+      const reader = new FileReader();
+      reader.onload = (ev) => {
+        try {
+          const json = JSON.parse(ev.target.result);
+          if (!json.data || typeof json.data !== "object") throw new Error("Format non reconnu — le fichier ne contient pas de clé \"data\".");
+          setParsed(json);
+          setSelected(Object.fromEntries(Object.keys(json.data).map(k => [k, true])));
+          setStatus("");
+        } catch(err) { setStatus("❌ " + err.message); }
+      };
+      reader.readAsText(file, "UTF-8"); e.target.value = "";
+    };
+
+    const doImport = async () => {
+      const keys = Object.keys(selected).filter(k => selected[k]);
+      if (!keys.length) { setStatus("Sélectionne au moins une catégorie."); return; }
+      if (!confirm(`Importer ${keys.length} catégorie(s) ? Les données existantes seront remplacées.`)) return;
+      setLoading(true); setStatus("Import en cours…");
+      try {
+        await Promise.all(keys.map(k => fbSet(uid, k, parsed.data[k])));
+        setStatus(`✅ ${keys.length} catégorie(s) importée(s). Rechargez la page pour voir les changements.`);
+      } catch(e) { setStatus("❌ Erreur : " + e.message); }
+      finally { setLoading(false); }
+    };
+
+    const LABEL = Object.fromEntries(EXPORT_ITEMS.map(i => [i.key, { label: i.label, icon: i.icon }]));
+    const describeValue = (k, v) => {
+      if (Array.isArray(v)) return `${v.length} élément(s)`;
+      if (v && typeof v === "object") return `${Object.keys(v).length} clé(s)`;
+      return "—";
+    };
+
+    return (
+      <>
+        {!parsed ? (
+          <div>
+            <div style={{ fontSize:13, color:"#64748B", marginBottom:16, lineHeight:1.6 }}>
+              Sélectionne un fichier <strong style={{color:"#94A3B8"}}>.json</strong> exporté depuis cette application
+              pour restaurer tout ou partie de tes données.
+            </div>
+            <div style={{ background:"rgba(251,191,36,0.06)", border:"1px solid rgba(251,191,36,0.2)", borderRadius:10, padding:"10px 14px", marginBottom:16, fontSize:12, color:"#FCD34D" }}>
+              ⚠️ L'import <strong>écrase</strong> les données existantes pour chaque catégorie sélectionnée.
+            </div>
+            <label style={{ display:"flex", flexDirection:"column", alignItems:"center", gap:10, border:"2px dashed rgba(99,102,241,0.3)", borderRadius:12, padding:"28px 20px", cursor:"pointer", background:"rgba(99,102,241,0.04)" }}>
+              <span style={{ fontSize:32 }}>📂</span>
+              <span style={{ fontSize:14, fontWeight:700, color:"#818CF8" }}>Choisir un fichier JSON</span>
+              <span style={{ fontSize:12, color:"#475569" }}>patrimoine-export-AAAA-MM-JJ.json</span>
+              <input type="file" accept=".json" onChange={handleFile} style={{ display:"none" }} />
+            </label>
+            {status && <div style={{ marginTop:12, textAlign:"center", fontSize:13, color:"#F87171" }}>{status}</div>}
+          </div>
+        ) : (
+          <div>
+            <div style={{ background:"rgba(52,211,153,0.06)", border:"1px solid rgba(52,211,153,0.15)", borderRadius:10, padding:"10px 14px", marginBottom:14, fontSize:12, color:"#94A3B8" }}>
+              📦 Fichier du <strong style={{color:"#F1F5F9"}}>{new Date(parsed.exportDate).toLocaleDateString("fr-FR", { day:"2-digit", month:"long", year:"numeric" })}</strong>
+              {" · "}{Object.keys(parsed.data).length} catégorie(s) disponible(s)
+            </div>
+            <div style={{ fontSize:12, fontWeight:700, color:"#475569", textTransform:"uppercase", letterSpacing:1, marginBottom:8 }}>
+              Sélectionne ce que tu veux restaurer
+            </div>
+            {Object.keys(parsed.data).map(k => {
+              const meta = LABEL[k] || { label: k, icon: "📄" };
+              return (
+                <label key={k} style={{ ...S.row, background: selected[k] ? "rgba(99,102,241,0.08)" : "transparent", marginBottom:2 }}>
+                  <input type="checkbox" checked={!!selected[k]} onChange={() => setSelected(s => ({...s, [k]: !s[k]}))} style={S.check} />
+                  <span style={{ fontSize:15 }}>{meta.icon}</span>
+                  <span style={S.lbl}>{meta.label}</span>
+                  <span style={{ marginLeft:"auto", fontSize:11, color:"#475569" }}>{describeValue(k, parsed.data[k])}</span>
+                </label>
+              );
+            })}
+            <div style={S.divider} />
+            <div style={{ background:"rgba(251,191,36,0.06)", border:"1px solid rgba(251,191,36,0.2)", borderRadius:10, padding:"10px 14px", marginBottom:14, fontSize:12, color:"#FCD34D" }}>
+              ⚠️ Les données actuelles seront <strong>remplacées</strong> pour les catégories cochées.
+            </div>
+            <div style={{ display:"flex", gap:8 }}>
+              <button onClick={() => { setParsed(null); setStatus(""); }}
+                style={{ background:"transparent", border:"1px solid rgba(255,255,255,0.1)", borderRadius:10, color:"#94A3B8", padding:"10px 16px", cursor:"pointer", fontSize:13 }}>
+                ← Autre fichier
+              </button>
+              <button onClick={doImport} disabled={loading || !Object.values(selected).some(Boolean)}
+                style={{ flex:1, background:"linear-gradient(135deg,#059669,#34D399)", border:"none", borderRadius:10, color:"#fff", padding:"10px", cursor:"pointer", fontWeight:700, fontSize:13,
+                  opacity: loading || !Object.values(selected).some(Boolean) ? 0.5 : 1 }}>
+                {loading ? "⏳ Import…" : `📥 Restaurer (${Object.values(selected).filter(Boolean).length} catégorie${Object.values(selected).filter(Boolean).length>1?"s":""})`}
+              </button>
+            </div>
+            {status && <div style={{ marginTop:12, textAlign:"center", fontSize:13, color: status.startsWith("✅") ? "#34D399" : "#94A3B8" }}>{status}</div>}
+          </div>
+        )}
+      </>
+    );
+  };
+
+  return (
+    <div style={S.overlay} onClick={e => { if(e.target===e.currentTarget) onClose(); }}>
+      <div style={S.modal}>
+        <div style={S.head}>
+          <span style={S.title}>🗄 Mes données</span>
+          <button style={S.close} onClick={onClose}>✕</button>
+        </div>
+        <div style={S.tabs}>
+          <button style={S.tabBtn(tab==="export")} onClick={() => setTab("export")}>📤 Exporter</button>
+          <button style={S.tabBtn(tab==="import")} onClick={() => setTab("import")}>📥 Importer</button>
+        </div>
+        {tab === "export" ? <ExportTab /> : <ImportTab />}
       </div>
     </div>
   );
