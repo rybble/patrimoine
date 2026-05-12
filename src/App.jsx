@@ -897,6 +897,7 @@ function ScoreSanteFinanciere({ uid, refreshKey, cryptoTotal, stocksTotal, bankT
 // ══════════════════════════════════════════════════════════════════════════════
 function ObjectifsFinanciers({ uid }) {
   const [objectifs, setObjectifs] = useState([]);
+  const [transactions, setTransactions] = useState([]);
   const [showForm, setShowForm] = useState(false);
   const [editObj, setEditObj] = useState(null);
   const [form, setForm] = useState({ nom:"", cible:0, actuel:0, categorie:"Épargne", dateLimit:"", couleur:"#818CF8" });
@@ -906,8 +907,26 @@ function ObjectifsFinanciers({ uid }) {
 
   useEffect(() => {
     if (!uid) return;
-    fbGet(uid, "objectifs").then(v => { if (Array.isArray(v)) setObjectifs(v); });
+    Promise.all([fbGet(uid, "objectifs"), fbGet(uid, "budget_tx")]).then(([objs, txs]) => {
+      if (Array.isArray(objs)) setObjectifs(objs);
+      if (Array.isArray(txs))  setTransactions(txs);
+    });
   }, [uid]);
+
+  // Épargne mensuelle moyenne sur les 12 derniers mois
+  const avgEpargne = (() => {
+    if (!transactions.length) return 0;
+    const now = new Date();
+    const mo = now.getMonth() + 1, yr = now.getFullYear();
+    const moisPassés = [];
+    for (let i = 1; i <= 12; i++) { let m = mo - i, y = yr; if (m <= 0) { m += 12; y -= 1; } moisPassés.push({y, m}); }
+    const totals = moisPassés.map(({y, m}) => {
+      const entrees = transactions.filter(t => t.annee===y && t.mois===m && t.es==="Entrée").reduce((s,t) => s+t.montant, 0);
+      const sorties = transactions.filter(t => t.annee===y && t.mois===m && t.es==="Sortie").reduce((s,t) => s+t.montant, 0);
+      return entrees - sorties;
+    }).filter(v => v > 0);
+    return totals.length > 0 ? totals.reduce((s,v) => s+v, 0) / totals.length : 0;
+  })();
 
   const save = async (list) => {
     setObjectifs(list);
@@ -1063,6 +1082,18 @@ function ObjectifsFinanciers({ uid }) {
                   {!done && <span style={{ fontSize:11, color:"#64748B" }}>reste {fmt(reste)}</span>}
                 </div>
               </div>
+              {/* Projection */}
+              {!done && reste > 0 && avgEpargne > 0 && (() => {
+                const mois = Math.ceil(reste / avgEpargne);
+                const dateAtteinte = new Date(); dateAtteinte.setMonth(dateAtteinte.getMonth() + mois);
+                const label = mois <= 1 ? "ce mois-ci" : mois < 12 ? `dans ${mois} mois` : `dans ${(mois/12).toFixed(1).replace(".0","")} an${mois>=24?"s":""}`;
+                return (
+                  <div style={{ fontSize:11, color:"#A78BFA", background:"rgba(167,139,250,0.08)", borderRadius:6, padding:"4px 8px", marginBottom:6, display:"inline-flex", alignItems:"center", gap:4 }}>
+                    📅 À ce rythme (+{fmt(Math.round(avgEpargne))}/mois) : <strong>{label}</strong>
+                    <span style={{ color:"#64748B" }}>({dateAtteinte.toLocaleDateString("fr-FR",{month:"short",year:"numeric"})})</span>
+                  </div>
+                );
+              })()}
 
               {/* Mise à jour rapide du montant actuel */}
               <div style={{ display:"flex", gap:8, alignItems:"center" }}>
