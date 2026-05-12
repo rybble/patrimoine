@@ -287,8 +287,8 @@ function ExportModal({ uid, onClose }) {
 }
 
 // ─── CONSTANTS ────────────────────────────────────────────────────────────────
-const CG_KEY = "CG-awA3tjVWYZgAyyAngdNth8Ek";
-const FINNHUB_KEY = "d6m3vjpr01qi0ajkqmp0d6m3vjpr01qi0ajkqmpg";
+const CG_KEY = import.meta.env.VITE_CG_KEY || "";
+const FINNHUB_KEY = import.meta.env.VITE_FINNHUB_KEY || "";
 const ORA_REF_PRICE = 13.50;
 
 // Mapping code → CoinGecko ID
@@ -3163,7 +3163,7 @@ function parseBankOFX(text) {
   const txs = [];
   const blocks = text.split(/<STMTTRN>/i).slice(1);
   for (const block of blocks) {
-    const get = (tag) => { const m = block.match(new RegExp(`<${tag}>([^<\r\n]+)`, "i")); return m ? m[1].trim() : ""; };
+    const get = (tag) => { const safe = tag.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"); const m = block.match(new RegExp(`<${safe}>([^<\r\n]+)`, "i")); return m ? m[1].trim() : ""; };
     const dtPosted = get("DTPOSTED");
     const amtStr   = get("TRNAMT").replace(",", ".");
     const name     = get("NAME") || get("MEMO") || "";
@@ -3615,6 +3615,7 @@ function BudgetView({ uid, quickAddTx, setQuickAddTx, onCatsChange }) {
   // ── Import CSV ─────────────────────────────────────────────────────────────
   const handleCSV = (e) => {
     const file = e.target.files[0]; if (!file) return;
+    if (file.size > 10_000_000) { setImportStatus("❌ Fichier trop volumineux (max 10 Mo)"); e.target.value = ""; return; }
     const reader = new FileReader();
     reader.onload = (ev) => {
       const parsed = parseBudgetCSV(ev.target.result);
@@ -3635,6 +3636,7 @@ function BudgetView({ uid, quickAddTx, setQuickAddTx, onCatsChange }) {
   // ── Import relevé bancaire ─────────────────────────────────────────────────
   const handleBankFile = (e) => {
     const file = e.target.files[0]; if (!file) return;
+    if (file.size > 10_000_000) { setImportStatus("❌ Fichier trop volumineux (max 10 Mo)"); e.target.value = ""; return; }
     const reader = new FileReader();
     reader.onload = (ev) => {
       const text = ev.target.result;
@@ -3666,6 +3668,10 @@ function BudgetView({ uid, quickAddTx, setQuickAddTx, onCatsChange }) {
     setGsLoading(true); setImportStatus("");
     try {
       let fetchUrl = gsActiveUrl.trim();
+      if (!fetchUrl.startsWith("https://docs.google.com/")) {
+        setImportStatus("❌ URL invalide — doit commencer par https://docs.google.com/");
+        setGsLoading(false); return;
+      }
       // Cas /pub?output=csv → fetch direct (pas de reconstruction nécessaire)
       if (!fetchUrl.includes("/pub")) {
         const match = fetchUrl.match(/\/d\/([a-zA-Z0-9_-]+)/);
@@ -4905,23 +4911,33 @@ function LoginScreen({ onLogin }) {
   const [error,    setError]    = useState("");
   const [loading,  setLoading]  = useState(false);
   const [shake,    setShake]    = useState(false);
+  const failCount    = React.useRef(0);
+  const blockedUntil = React.useRef(0);
 
   const doShake = () => { setShake(true); setTimeout(() => setShake(false), 450); };
 
   const tryLogin = async () => {
     if (!email || !pwd) { setError("Email et mot de passe requis"); doShake(); return; }
+    const now = Date.now();
+    if (now < blockedUntil.current) {
+      const secs = Math.ceil((blockedUntil.current - now) / 1000);
+      setError(`Trop de tentatives — réessaie dans ${secs}s`); doShake(); return;
+    }
     setLoading(true); setError("");
     try {
       await signInWithEmailAndPassword(auth, email.trim(), pwd);
+      failCount.current = 0;
       onLogin();
     } catch (e) {
+      failCount.current += 1;
+      if (failCount.current >= 5) {
+        blockedUntil.current = Date.now() + 30_000;
+        failCount.current = 0;
+      }
       const msg = {
-        "auth/user-not-found":   "Utilisateur introuvable",
-        "auth/wrong-password":   "Mot de passe incorrect",
         "auth/invalid-email":    "Email invalide",
         "auth/too-many-requests":"Trop de tentatives — réessaie plus tard",
-        "auth/invalid-credential": "Email ou mot de passe incorrect",
-      }[e.code] || "Erreur de connexion";
+      }[e.code] || "Email ou mot de passe incorrect";
       setError(msg); doShake();
     } finally { setLoading(false); }
   };
@@ -5130,7 +5146,6 @@ export default function App() {
 
 // ─── PDF EXPORT ───────────────────────────────────────────────────────────────
 async function exportSimulationPDF(params, computed, tableauAnnuel, tableauMensuel) {
-  // Charger jsPDF dynamiquement
   if (!window.jspdf) {
     await new Promise((res, rej) => {
       const s = document.createElement("script");
