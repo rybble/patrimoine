@@ -3410,6 +3410,11 @@ function parseBudgetCSV(text) {
   return parsed;
 }
 
+// ─── NORMALISATION libellé pour mapping mémorisé ──────────────────────────────
+function normalizeLabel(s) {
+  return (s || "").trim().toLowerCase().replace(/\s+/g, " ");
+}
+
 // ─── AUTO-CATÉGORISATION relevé bancaire ─────────────────────────────────────
 function autoCategory(label, es) {
   const l = (label || "").toUpperCase();
@@ -3794,6 +3799,13 @@ function BudgetView({ uid, quickAddTx, setQuickAddTx, onCatsChange }) {
   const [editingCat,   setEditingCat]  = useState(null);
   const [editCatForm,  setEditCatForm] = useState({});
 
+  // ── Mapping mémorisé { normalizedNote → { type, es } } ───────────────────
+  const [mappings, setMappings] = useState({});
+  const saveMappings = useCallback(async (m) => {
+    setMappings(m);
+    if (uid) await fbSet(uid, "budget_mappings", m);
+  }, [uid]);
+
   // ── Firebase sync budget ─────────────────────────────────────────────────
   const budgetSyncedRef = useRef(false);
   const budgetTimers    = useRef({});
@@ -3818,7 +3830,8 @@ function BudgetView({ uid, quickAddTx, setQuickAddTx, onCatsChange }) {
   // Load budget from Firestore on mount
   useEffect(() => {
     if (!uid) return;
-    Promise.all([fbGet(uid, "budget_tx"), fbGet(uid, "budget_cats")]).then(([fbTx, fbCats]) => {
+    Promise.all([fbGet(uid, "budget_tx"), fbGet(uid, "budget_cats"), fbGet(uid, "budget_mappings")]).then(([fbTx, fbCats, fbMappings]) => {
+      if (fbMappings && typeof fbMappings === "object") setMappings(fbMappings);
       const fixCatName = n => n === "Petits achats" ? "petits achat" : n;
       if (fbTx) {
         const loaded = fbTx.map((t, i) => ({ id: t.id || `legacy-${i}`, ...t, type: fixCatName(t.type) }));
@@ -3935,18 +3948,39 @@ function BudgetView({ uid, quickAddTx, setQuickAddTx, onCatsChange }) {
     reader.readAsText(file, "UTF-8"); e.target.value = "";
   };
 
+  // Applique le mapping mémorisé sur une transaction importée
+  const applyMapping = (tx) => {
+    if (!tx.note) return tx;
+    const norm = normalizeLabel(tx.note);
+    // Match exact
+    if (mappings[norm]) return { ...tx, type: mappings[norm].type, es: mappings[norm].es };
+    // Match préfixe : trouve la clé la plus longue qui est un préfixe du libellé (min 6 chars)
+    const prefix = Object.keys(mappings)
+      .filter(k => k.length >= 6 && norm.startsWith(k))
+      .sort((a, b) => b.length - a.length)[0];
+    if (prefix) return { ...tx, type: mappings[prefix].type, es: mappings[prefix].es };
+    return tx;
+  };
+
   const confirmBankImport = () => {
     if (!bankPreview) return;
     const newKeys = new Set(bankPreview.transactions.map(t => `${t.annee}-${t.mois}`));
     const kept = transactions.filter(t => !newKeys.has(`${t.annee}-${t.mois}`));
     // Détection doublons : même mois+montant+note
     const existingSet = new Set(transactions.map(t => `${t.annee}-${t.mois}-${t.montant}-${(t.note||"").trim().toLowerCase()}`));
-    const deduped = bankPreview.transactions.filter(t => !existingSet.has(`${t.annee}-${t.mois}-${t.montant}-${(t.note||"").trim().toLowerCase()}`));
+    const deduped = bankPreview.transactions
+      .filter(t => !existingSet.has(`${t.annee}-${t.mois}-${t.montant}-${(t.note||"").trim().toLowerCase()}`))
+      .map(applyMapping);
     const dupCount = bankPreview.transactions.length - deduped.length;
+    const mappedCount = deduped.filter((t, i) => {
+      const orig = bankPreview.transactions.filter(tx => !existingSet.has(`${tx.annee}-${tx.mois}-${tx.montant}-${(tx.note||"").trim().toLowerCase()}`))[i];
+      return orig && t.type !== orig.type;
+    }).length;
     setTransactions([...kept, ...deduped]);
-    const msg = dupCount > 0
-      ? `✅ ${deduped.length} transactions importées (${dupCount} doublon${dupCount>1?"s":""} ignoré${dupCount>1?"s":""}) depuis ${bankPreview.fileName}`
-      : `✅ ${deduped.length} transactions importées depuis ${bankPreview.fileName}`;
+    const parts = [];
+    if (dupCount > 0) parts.push(`${dupCount} doublon${dupCount>1?"s":""} ignoré${dupCount>1?"s":""}`);
+    if (mappedCount > 0) parts.push(`${mappedCount} catégorie${mappedCount>1?"s":""} auto-assignée${mappedCount>1?"s":""}`);
+    const msg = `✅ ${deduped.length} transactions importées depuis ${bankPreview.fileName}${parts.length ? ` (${parts.join(", ")})` : ""}`;
     setImportStatus(msg);
     setBankPreview(null);
     setTimeout(() => setImportStatus(""), 5000);
@@ -4005,7 +4039,16 @@ function BudgetView({ uid, quickAddTx, setQuickAddTx, onCatsChange }) {
   // ── Edit / delete transactions ─────────────────────────────────────────────
   const startEditTx = (tx) => { setEditingTx(tx.id); setEditForm({...tx}); };
   const saveEditTx  = () => {
+    const orig = transactions.find(t => t.id === editingTx);
     setTransactions(p => p.map(t => t.id === editingTx ? { ...editForm, montant: parseFloat(editForm.montant)||0 } : t));
+    // Apprendre le mapping si la catégorie a changé et que la transaction a un libellé
+    if (orig?.note && orig.note.trim().length >= 3) {
+      const changed = editForm.type !== orig.type || editForm.es !== orig.es;
+      if (changed) {
+        const key = normalizeLabel(orig.note);
+        saveMappings({ ...mappings, [key]: { type: editForm.type, es: editForm.es } });
+      }
+    }
     setEditingTx(null);
   };
   const deleteTx = async (id) => { if (await confirm("Supprimer cette transaction ?")) setTransactions(p => p.filter(t => t.id !== id)); };
@@ -5330,6 +5373,36 @@ function BudgetView({ uid, quickAddTx, setQuickAddTx, onCatsChange }) {
               {gsLoading ? "⏳ Synchronisation…" : "🔄 Synchroniser depuis Google Sheets"}
             </button>
           </Card>
+
+          {/* ── Mappings mémorisés ── */}
+          {Object.keys(mappings).length > 0 && (
+            <Card style={{ padding:16 }}>
+              <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:12 }}>
+                <div style={{ fontSize:13, fontWeight:700, color:"#F1F5F9" }}>
+                  🔖 Mappings mémorisés <span style={{ fontSize:11, color:"#64748B", fontWeight:400 }}>({Object.keys(mappings).length})</span>
+                </div>
+                <button onClick={() => saveMappings({})}
+                  style={{ background:"transparent", border:"1px solid rgba(248,113,113,0.3)", borderRadius:6, color:"#F87171", padding:"3px 10px", fontSize:11, cursor:"pointer" }}>
+                  Tout effacer
+                </button>
+              </div>
+              <div style={{ fontSize:11, color:"#475569", marginBottom:10 }}>
+                Ces règles sont appliquées automatiquement lors du prochain import de relevé bancaire.
+              </div>
+              <div style={{ display:"flex", flexDirection:"column", gap:4, maxHeight:260, overflowY:"auto" }}>
+                {Object.entries(mappings).sort((a,b) => a[0].localeCompare(b[0])).map(([note, {type, es}]) => (
+                  <div key={note} style={{ display:"flex", alignItems:"center", gap:8, background:"rgba(255,255,255,0.03)", borderRadius:6, padding:"6px 10px" }}>
+                    <div style={{ flex:1, fontSize:12, color:"#94A3B8", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{note}</div>
+                    <div style={{ fontSize:11, color:"#64748B", flexShrink:0 }}>→</div>
+                    <div style={{ fontSize:12, fontWeight:600, color: es === "Entrée" ? "#34D399" : "#F87171", flexShrink:0 }}>{type}</div>
+                    <div style={{ fontSize:10, color:"#475569", flexShrink:0 }}>({es})</div>
+                    <button onClick={() => { const m = {...mappings}; delete m[note]; saveMappings(m); }}
+                      style={{ background:"transparent", border:"none", color:"#475569", cursor:"pointer", padding:"0 2px", fontSize:13, flexShrink:0, lineHeight:1 }}>✕</button>
+                  </div>
+                ))}
+              </div>
+            </Card>
+          )}
 
           <Card style={{ padding:16, background:"rgba(99,102,241,0.05)", border:"1px solid rgba(99,102,241,0.2)" }}>
             <div style={{ fontSize:13, fontWeight:600, color:"#818CF8", marginBottom:10 }}>📊 Données chargées</div>
