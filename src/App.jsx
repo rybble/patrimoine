@@ -1468,7 +1468,7 @@ function CryptoView({ cryptoData, setCryptoData, cryptoPrices, loading, history,
   const [addQty, setAddQty] = useState("");
 
   // P&L — prix de revient
-  const [editingPR, setEditingPR] = useState(null); // code du token en cours d'édition
+  const [editingPR, setEditingPR] = useState(null);
   const [editPRValue, setEditPRValue] = useState("");
   const savePR = (code) => {
     const val = parseFloat(editPRValue.replace(",", "."));
@@ -1479,6 +1479,17 @@ function CryptoView({ cryptoData, setCryptoData, cryptoPrices, loading, history,
   };
   const removePR = (code) => {
     setCryptoData(prev => prev.map(c => c.code === code ? { ...c, prixRevient: null } : c));
+  };
+
+  // Date d'achat — pour calcul CAGR
+  const [editingDA, setEditingDA] = useState(null);
+  const [editDAValue, setEditDAValue] = useState("");
+  const saveDA = (code) => {
+    if (editDAValue) setCryptoData(prev => prev.map(c => c.code === code ? { ...c, dateAchat: editDAValue } : c));
+    setEditingDA(null);
+  };
+  const removeDA = (code) => {
+    setCryptoData(prev => prev.map(c => c.code === code ? { ...c, dateAchat: null } : c));
   };
 
   const totalEur = cryptoData.reduce((s, c) => s + (cryptoPrices[c.code]?.eur || 0) * c.qty, 0);
@@ -1571,6 +1582,27 @@ function CryptoView({ cryptoData, setCryptoData, cryptoPrices, loading, history,
               : <StatCard label="Stablecoins" value={fmt((cryptoPrices["USDC"]?.eur || 1) * (cryptoData.find(c => c.code === "USDC")?.qty || 0))} sub="USDC · liquidités sûres" color="#2775CA" icon="🔒" />
             }
             <StatCard label="Nb positions" value={cryptoData.length} sub="Tokens différents" color="#6366F1" icon="🎯" />
+          </div>
+        );
+      })()}
+
+      {/* ── Alertes variation 24h > 10% ── */}
+      {(() => {
+        const alerts = sorted.filter(c => Math.abs(cryptoPrices[c.code]?.eur_24h_change || 0) > 10);
+        if (!alerts.length) return null;
+        return (
+          <div style={{ background:"rgba(251,191,36,0.08)", border:"1px solid rgba(251,191,36,0.3)", borderRadius:10, padding:"10px 14px", marginBottom:14 }}>
+            <div style={{ fontSize:12, fontWeight:700, color:"#FBBF24", marginBottom:6 }}>⚡ Variation importante en 24h</div>
+            <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
+              {alerts.map(c => {
+                const pct = cryptoPrices[c.code]?.eur_24h_change || 0;
+                return (
+                  <span key={c.code} style={{ fontSize:12, padding:"3px 10px", borderRadius:6, background: pct > 0 ? "rgba(52,211,153,0.15)" : "rgba(248,113,113,0.15)", color: pct > 0 ? "#34D399" : "#F87171", fontWeight:700 }}>
+                    {c.symbol} {pct > 0 ? "+" : ""}{pct.toFixed(1)}%
+                  </span>
+                );
+              })}
+            </div>
           </div>
         );
       })()}
@@ -1707,9 +1739,10 @@ function CryptoView({ cryptoData, setCryptoData, cryptoPrices, loading, history,
                 </div>
                 <div style={{ textAlign: "right", flexShrink: 0 }}>
                   <div style={{ fontSize: 15, fontWeight: 700, color: "#F1F5F9" }}>{price > 0 ? fmt(value) : "—"}</div>
-                  <div style={{ display:"flex", gap:6, justifyContent:"flex-end", fontSize: 11 }}>
+                  <div style={{ display:"flex", gap:6, justifyContent:"flex-end", fontSize: 11, alignItems:"center" }}>
                     <span style={{ color: "#64748B" }}>{share.toFixed(1)}%</span>
                     <span style={{ color: pctColor(pct), fontWeight: 600 }}>{fmtPct(pct)}</span>
+                    {Math.abs(pct) > 10 && <span style={{ fontSize:9, padding:"1px 5px", borderRadius:4, background:pct>0?"rgba(52,211,153,0.2)":"rgba(248,113,113,0.2)", color:pct>0?"#34D399":"#F87171", fontWeight:800 }}>⚡</span>}
                   </div>
                 </div>
                 <button onClick={() => removeToken(c.code)}
@@ -1761,6 +1794,13 @@ function CryptoView({ cryptoData, setCryptoData, cryptoPrices, loading, history,
                       style={{ background: "transparent", border: "none", color: "#334155", fontSize: 10, cursor: "pointer", padding: 0 }}>
                       ✕
                     </button>
+                    {/* CAGR */}
+                    {c.dateAchat && price > 0 && c.prixRevient > 0 && (() => {
+                      const years = (Date.now() - new Date(c.dateAchat).getTime()) / (1000 * 60 * 60 * 24 * 365.25);
+                      if (years < 0.05) return null;
+                      const cagr = (Math.pow(price / c.prixRevient, 1 / years) - 1) * 100;
+                      return <span style={{ fontSize:10, color:"#A78BFA", marginLeft:4 }}>CAGR {cagr > 0 ? "+" : ""}{cagr.toFixed(1)}%/an</span>;
+                    })()}
                   </div>
                 );
               })() : (
@@ -1770,6 +1810,28 @@ function CryptoView({ cryptoData, setCryptoData, cryptoPrices, loading, history,
                     + ajouter prix de revient
                   </button>
                 </div>
+              )}
+              {/* Date d'achat (pour CAGR) */}
+              {!editingPR && c.prixRevient > 0 && (
+                editingDA === c.code ? (
+                  <div style={{ marginTop:6, paddingLeft:48, display:"flex", alignItems:"center", gap:6 }}>
+                    <span style={{ fontSize:11, color:"#64748B" }}>Date d'achat :</span>
+                    <input type="date" value={editDAValue} onChange={e=>setEditDAValue(e.target.value)} autoFocus
+                      style={{ background:"#1E293B", border:"1px solid #4F46E5", borderRadius:6, color:"#F1F5F9", fontSize:12, padding:"2px 6px" }} />
+                    <button onClick={()=>saveDA(c.code)} style={{ background:"#4F46E5", border:"none", borderRadius:4, color:"#fff", padding:"2px 7px", cursor:"pointer", fontSize:11 }}>✓</button>
+                    <button onClick={()=>setEditingDA(null)} style={{ background:"transparent", border:"none", color:"#64748B", cursor:"pointer", fontSize:11 }}>✕</button>
+                  </div>
+                ) : c.dateAchat ? (
+                  <div style={{ marginTop:4, paddingLeft:48, display:"flex", gap:8, alignItems:"center" }}>
+                    <span style={{ fontSize:10, color:"#475569" }}>Achat le {new Date(c.dateAchat).toLocaleDateString("fr-FR")}</span>
+                    <button onClick={()=>{setEditingDA(c.code); setEditDAValue(c.dateAchat);}} style={{ background:"transparent", border:"none", color:"#475569", fontSize:10, cursor:"pointer", padding:0, textDecoration:"underline" }}>modifier</button>
+                    <button onClick={()=>removeDA(c.code)} style={{ background:"transparent", border:"none", color:"#334155", fontSize:10, cursor:"pointer", padding:0 }}>✕</button>
+                  </div>
+                ) : (
+                  <div style={{ marginTop:2, paddingLeft:48 }}>
+                    <button onClick={()=>{setEditingDA(c.code); setEditDAValue("");}} style={{ background:"transparent", border:"none", color:"#334155", fontSize:10, cursor:"pointer", padding:0, textDecoration:"underline dotted" }}>+ date d'achat (CAGR)</button>
+                  </div>
+                )
               )}
             </Card>
           );
@@ -1782,7 +1844,7 @@ function CryptoView({ cryptoData, setCryptoData, cryptoPrices, loading, history,
 // ─── STOCKS VIEW ──────────────────────────────────────────────────────────────
 
 // ─── STOCK SEARCH BAR ────────────────────────────────────────────────────────
-function StockSearchBar({ onAdd, workerUrl = "https://ora-proxy.rybble.workers.dev" }) {
+function StockSearchBar({ onAdd, workerUrl = "https://ora-proxy.rybble.workers.dev", usdToEur = 0.92 }) {
   const [query, setQuery]             = useState("");
   const [suggestions, setSuggestions] = useState([]);
   const [selected, setSelected]       = useState(null);
@@ -1852,8 +1914,8 @@ function StockSearchBar({ onAdd, workerUrl = "https://ora-proxy.rybble.workers.d
 
   const toEur = (lp) => {
     if (!lp) return 0;
-    if (lp.currency === "USD") return lp.price * 0.92;
-    if (lp.currency === "GBp") return lp.price / 100 * 1.18;
+    if (lp.currency === "USD") return lp.price * usdToEur;
+    if (lp.currency === "GBp") return lp.price / 100 * (usdToEur * 1.27);
     return lp.price;
   };
 
@@ -1967,7 +2029,7 @@ function StockSearchBar({ onAdd, workerUrl = "https://ora-proxy.rybble.workers.d
   );
 }
 
-function StocksView({ stocks, setStocks, history, marketHistory, stocksHistory24h, stocksHistory7d, peaValue, nonCoteValue }) {
+function StocksView({ stocks, setStocks, history, marketHistory, stocksHistory24h, stocksHistory7d, peaValue, nonCoteValue, usdToEur }) {
   const [editing, setEditing] = useState(null);
   const [form, setForm] = useState({});
   const [importStatus, setImportStatus] = useState("");
@@ -2115,7 +2177,7 @@ function StocksView({ stocks, setStocks, history, marketHistory, stocksHistory24
 
   return (
     <div>
-      <SectionTitle sub={`Trade Republic · Total ${fmt(total + PEA_VALUE)}`}>Bourse</SectionTitle>
+      <SectionTitle sub={`Trade Republic · Total ${fmt(total + PEA_VALUE)} · 1 USD = ${usdToEur.toFixed(4)} EUR`}>Bourse</SectionTitle>
 
       {(() => {
         const withPR = stocks.filter(s => s.prixRevient > 0 && s.price > 0);
@@ -2216,7 +2278,7 @@ function StocksView({ stocks, setStocks, history, marketHistory, stocksHistory24
           if (idx >= 0) return prev.map((s, i) => i === idx ? { ...s, qty: s.qty + newEntry.qty, price: newEntry.price } : s);
           return [...prev, newEntry];
         });
-      }} />
+      }} usdToEur={usdToEur} />
     </div>
   );
 }
@@ -5524,6 +5586,7 @@ function SimulateurCredit({ cryptoTotal, stocksTotal, savingsTotal, bankTotal, r
   const [assurance,   setAssurance]     = useState(0.35);
   const [fraisNotaire, setFraisNotaire] = useState(7.5); // % du prix pour RP (neuf=3%)
   const [differe,     setDiffere]       = useState(0); // mois de différé
+  const [ptz,         setPtz]           = useState(0); // Prêt à Taux Zéro
   const [tauxEndet,   setTauxEndet]     = useState(35); // % max endettement
 
   // ── Tableau amortissement
@@ -5569,7 +5632,7 @@ function SimulateurCredit({ cryptoTotal, stocksTotal, savingsTotal, bankTotal, r
   // ── Calculs de base
   const fraisNotaireMontant = montantBien * fraisNotaire / 100;
   const coutTotal_bien = montantBien + fraisNotaireMontant;
-  const montantEmprunte = Math.max(0, coutTotal_bien - apport);
+  const montantEmprunte = Math.max(0, coutTotal_bien - apport - ptz);
 
   // Mensualité (formule annuité constante) + assurance
   const tauxMensuel = taux / 100 / 12;
@@ -5657,7 +5720,7 @@ function SimulateurCredit({ cryptoTotal, stocksTotal, savingsTotal, bankTotal, r
   // ── Snapshot des paramètres courants
   const snapshotParams = () => ({
     contexte, contexteLabel: CONTEXTES.find(c=>c.key===contexte)?.label || contexte,
-    montantBien, apport, duree, taux, assurance, fraisNotaire, differe, tauxEndet,
+    montantBien, apport, ptz, duree, taux, assurance, fraisNotaire, differe, tauxEndet,
     revenuMode, revenuManuel, chargesExistantes, selectedSources,
   });
 
@@ -5789,7 +5852,11 @@ function SimulateurCredit({ cryptoTotal, stocksTotal, savingsTotal, bankTotal, r
           <div>
             <label style={lblS}>Taux nominal — <strong style={{ color:"#F1F5F9" }}>{taux}%</strong></label>
             <input type="range" min={0.5} max={8} step={0.05} value={taux} onChange={e=>setTaux(+e.target.value)} style={rangeS} />
-            <input type="number" step={0.05} value={taux} onChange={e=>setTaux(+e.target.value)} style={{...inpS, marginTop:6}} />
+            <div style={{ display:"flex", gap:6, marginTop:6 }}>
+              <input type="number" step={0.05} value={taux} onChange={e=>setTaux(+e.target.value)} style={{...inpS, flex:1}} />
+              <button onClick={()=>setTaux(t=>Math.max(0.5, +(t-0.5).toFixed(2)))} style={{ background:"rgba(248,113,113,0.15)", border:"1px solid rgba(248,113,113,0.3)", borderRadius:6, color:"#F87171", padding:"6px 10px", cursor:"pointer", fontSize:12, fontWeight:700, flexShrink:0 }}>−0.5%</button>
+              <button onClick={()=>setTaux(t=>Math.min(8, +(t+0.5).toFixed(2)))} style={{ background:"rgba(251,191,36,0.15)", border:"1px solid rgba(251,191,36,0.3)", borderRadius:6, color:"#FBBF24", padding:"6px 10px", cursor:"pointer", fontSize:12, fontWeight:700, flexShrink:0 }}>+0.5%</button>
+            </div>
           </div>
           {/* Assurance */}
           <div>
@@ -5815,13 +5882,19 @@ function SimulateurCredit({ cryptoTotal, stocksTotal, savingsTotal, bankTotal, r
               {differe > 0 ? `Remboursement commence en mois ${differe+1}` : "Pas de différé"}
             </div>
           </div>
+          {/* PTZ */}
+          <div>
+            <label style={lblS}>Prêt à Taux Zéro (PTZ) — <strong style={{ color:"#60A5FA" }}>{fmt(ptz)}</strong></label>
+            <input type="range" min={0} max={100000} step={1000} value={ptz} onChange={e=>setPtz(+e.target.value)} style={rangeS} />
+            <input type="number" value={ptz} onChange={e=>setPtz(+e.target.value)} style={{...inpS, marginTop:6}} />
+          </div>
         </div>
       </Card>
 
       {/* ── KPIs résumé ── */}
       <div style={{ display:"flex", gap:10, flexWrap:"wrap", marginBottom:14 }}>
         <StatCard label="Mensualité totale" value={fmt(mensualiteTotale)} sub={`dont assurance ${fmt(assuranceMensuelle)}/mois`} color="#818CF8" icon="💶" />
-        <StatCard label="Montant emprunté" value={fmt(montantEmprunte)} sub={`Bien ${fmt(montantBien)} − Apport ${fmt(apport)}`} color="#60A5FA" icon="🏦" />
+        <StatCard label="Montant emprunté" value={fmt(montantEmprunte)} sub={ptz > 0 ? `Bien ${fmt(montantBien)} − Apport ${fmt(apport)} − PTZ ${fmt(ptz)}` : `Bien ${fmt(montantBien)} − Apport ${fmt(apport)}`} color="#60A5FA" icon="🏦" />
         <StatCard label="Coût total du crédit" value={fmt(coutTotalCredit)} sub={`Intérêts ${fmt(coutInterets)}`} color="#F87171" icon="💸" />
         <StatCard label="TAEG estimé" value={`${taeg.toFixed(2)}%`} sub={`Taux + assurance`} color="#FBBF24" icon="📊" />
         <StatCard label="Frais de notaire" value={fmt(fraisNotaireMontant)} sub={`${fraisNotaire}% du prix d'achat`} color="#60A5FA" icon="📜" />
@@ -6357,6 +6430,7 @@ function AppContent({ user }) {
   const [loading, setLoading] = useState(false);
   const [lastUpdate, setLastUpdate] = useState(null);
   const [oraPrice, setOraPrice] = useState(0);
+  const [usdToEur, setUsdToEur] = useState(0.92);
   const [history, setHistory] = useState(() => loadHistory());
   const [marketHistory, setMarketHistory] = useState({ stocks: [], crypto: [], total: [], crypto24h: [], crypto7d: [], stocks24h: [], stocks7d: [] });
   const [fbSynced, setFbSynced] = useState(false);
@@ -6713,6 +6787,7 @@ function AppContent({ user }) {
       const fxRes = await cgFetch("https://api.coingecko.com/api/v3/simple/price?ids=usd&vs_currencies=eur");
       const fxData = await fxRes.json();
       const usdToEur = fxData?.usd?.eur || 0.92;
+      setUsdToEur(usdToEur);
 
       // ── Stocks via Worker Cloudflare universel ──────────────────────────────────
       // Le Worker fetch Yahoo Finance avec le symbole passé en paramètre
@@ -6904,7 +6979,7 @@ function AppContent({ user }) {
         {/* Views */}
         {view === "overview"   && <Overview cryptoData={cryptoData} cryptoPrices={cryptoPrices} stocks={stocks} bank={bank} savings={savings} oraPrice={oraPrice} realestateTotal={realestateTotal} scpiTotal={scpiTotal} onNavigate={setView} history={history} marketHistoryTotal={marketHistory.total} marketHistoryIntraday={marketHistory} uid={user?.uid} refreshKey={overviewRefreshKey} />}
         {view === "crypto"     && <CryptoView cryptoData={cryptoData} setCryptoData={setCryptoData} cryptoPrices={cryptoPrices} loading={loading} history={history} cryptoHistory={marketHistory.crypto} cryptoHistory24h={marketHistory.crypto24h} cryptoHistory7d={marketHistory.crypto7d} />}
-        {view === "stocks"     && <StocksView stocks={stocks} setStocks={setStocks} history={history} marketHistory={marketHistory.stocks} stocksHistory24h={marketHistory.stocks24h} stocksHistory7d={marketHistory.stocks7d} peaValue={(() => { const pea = stocks.filter(s=>s.account==="pea").reduce((s,st)=>s+st.price*st.qty,0); return pea || 549.89; })()} nonCoteValue={stocks.filter(s=>["APOLLO","EQTF"].includes(s.symbol)).reduce((s,st)=>s+st.price*st.qty,0)} />}
+        {view === "stocks"     && <StocksView stocks={stocks} setStocks={setStocks} history={history} marketHistory={marketHistory.stocks} stocksHistory24h={marketHistory.stocks24h} stocksHistory7d={marketHistory.stocks7d} peaValue={(() => { const pea = stocks.filter(s=>s.account==="pea").reduce((s,st)=>s+st.price*st.qty,0); return pea || 549.89; })()} nonCoteValue={stocks.filter(s=>["APOLLO","EQTF"].includes(s.symbol)).reduce((s,st)=>s+st.price*st.qty,0)} usdToEur={usdToEur} />}
         {view === "savings"    && <SavingsView savings={savings} setSavings={setSavings} oraPrice={oraPrice} />}
         {view === "scpi"       && <ScpiView scpi={scpi} setScpi={setScpi} history={history} />}
         {view === "realestate" && <RealEstateView realestate={realestate} setRealestate={setRealestate} history={history} />}
