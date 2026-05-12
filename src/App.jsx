@@ -3498,11 +3498,16 @@ function BudgetView({ uid, quickAddTx, setQuickAddTx, onCatsChange }) {
   const [editForm,    setEditForm]    = useState({});
   const [txFilter,    setTxFilter]    = useState({ es:"", type:"", year:"", month:"" });
   const [txPage,      setTxPage]      = useState(0);
+  const [txSearch,    setTxSearch]    = useState("");
+  const [txSort,      setTxSort]      = useState("date");
+  const [txSortDir,   setTxSortDir]   = useState("desc");
+  const [txSelected,  setTxSelected]  = useState(new Set());
   const TX_PER_PAGE = 20;
 
   // Category stats
-  const [catStatEs,   setCatStatEs]   = useState("Sortie");
-  const [catStatName, setCatStatName] = useState("");
+  const [catStatEs,     setCatStatEs]     = useState("Sortie");
+  const [catStatName,   setCatStatName]   = useState("");
+  const [catStatPeriod, setCatStatPeriod] = useState("all"); // "all" | "12m"
 
   // Cat manager
   const [catMgrEs,     setCatMgrEs]    = useState("sortie");
@@ -3656,8 +3661,15 @@ function BudgetView({ uid, quickAddTx, setQuickAddTx, onCatsChange }) {
     if (!bankPreview) return;
     const newKeys = new Set(bankPreview.transactions.map(t => `${t.annee}-${t.mois}`));
     const kept = transactions.filter(t => !newKeys.has(`${t.annee}-${t.mois}`));
-    setTransactions([...kept, ...bankPreview.transactions]);
-    setImportStatus(`✅ ${bankPreview.transactions.length} transactions importées depuis ${bankPreview.fileName}`);
+    // Détection doublons : même mois+montant+note
+    const existingSet = new Set(transactions.map(t => `${t.annee}-${t.mois}-${t.montant}-${(t.note||"").trim().toLowerCase()}`));
+    const deduped = bankPreview.transactions.filter(t => !existingSet.has(`${t.annee}-${t.mois}-${t.montant}-${(t.note||"").trim().toLowerCase()}`));
+    const dupCount = bankPreview.transactions.length - deduped.length;
+    setTransactions([...kept, ...deduped]);
+    const msg = dupCount > 0
+      ? `✅ ${deduped.length} transactions importées (${dupCount} doublon${dupCount>1?"s":""} ignoré${dupCount>1?"s":""}) depuis ${bankPreview.fileName}`
+      : `✅ ${deduped.length} transactions importées depuis ${bankPreview.fileName}`;
+    setImportStatus(msg);
     setBankPreview(null);
     setTimeout(() => setImportStatus(""), 5000);
   };
@@ -3719,6 +3731,17 @@ function BudgetView({ uid, quickAddTx, setQuickAddTx, onCatsChange }) {
     setEditingTx(null);
   };
   const deleteTx = (id) => { if (confirm("Supprimer cette transaction ?")) setTransactions(p => p.filter(t => t.id !== id)); };
+  const deleteSelected = () => {
+    if (!txSelected.size) return;
+    if (!confirm(`Supprimer ${txSelected.size} transaction${txSelected.size > 1 ? "s" : ""} sélectionnée${txSelected.size > 1 ? "s" : ""} ?`)) return;
+    setTransactions(p => p.filter(t => !txSelected.has(t.id)));
+    setTxSelected(new Set());
+  };
+  const toggleSort = (key) => {
+    if (txSort === key) setTxSortDir(d => d === "desc" ? "asc" : "desc");
+    else { setTxSort(key); setTxSortDir("desc"); }
+    setTxPage(0);
+  };
 
   // ── Category manager ───────────────────────────────────────────────────────
   const addCat = () => {
@@ -3762,14 +3785,29 @@ function BudgetView({ uid, quickAddTx, setQuickAddTx, onCatsChange }) {
     if (txFilter.type && t.type !== txFilter.type) return false;
     if (txFilter.year && t.annee !== parseInt(txFilter.year)) return false;
     if (txFilter.month && t.mois !== parseInt(txFilter.month)) return false;
+    if (txSearch) { const q = txSearch.toLowerCase(); if (!t.note?.toLowerCase().includes(q) && !t.type?.toLowerCase().includes(q)) return false; }
     return true;
-  }).sort((a,b) => b.annee!==a.annee ? b.annee-a.annee : b.mois-a.mois);
+  }).sort((a,b) => {
+    let cmp = 0;
+    if (txSort === "date") cmp = b.annee !== a.annee ? b.annee - a.annee : b.mois - a.mois;
+    else if (txSort === "montant") cmp = b.montant - a.montant;
+    else if (txSort === "type") cmp = a.type.localeCompare(b.type, "fr");
+    return txSortDir === "asc" ? -cmp : cmp;
+  });
   const txPageData = txFiltered.slice(txPage*TX_PER_PAGE, (txPage+1)*TX_PER_PAGE);
 
   // Cat stats
   const allCatNames = [...new Set(transactions.filter(t => t.es === catStatEs).map(t => t.type))].sort();
   const activeCatName = catStatName || allCatNames[0] || "";
-  const catTxs    = transactions.filter(t => t.es === catStatEs && t.type === activeCatName);
+  const rolling12Cutoff = (() => { const d = new Date(); d.setMonth(d.getMonth() - 11); return { annee: d.getFullYear(), mois: d.getMonth() + 1 }; })();
+  const catTxs    = transactions.filter(t => {
+    if (t.es !== catStatEs || t.type !== activeCatName) return false;
+    if (catStatPeriod === "12m") {
+      const cutoff = rolling12Cutoff;
+      if (t.annee < cutoff.annee || (t.annee === cutoff.annee && t.mois < cutoff.mois)) return false;
+    }
+    return true;
+  });
   const catTxsYr  = catTxs.filter(t => t.annee === curYear); // filtré sur l'année courante
   const catTotalYr = catTxsYr.reduce((s,t) => s+t.montant, 0); // pour le ratio Part du budget
   const catMonthly = (() => {
@@ -4116,6 +4154,33 @@ function BudgetView({ uid, quickAddTx, setQuickAddTx, onCatsChange }) {
               </button>
             ))}
           </div>
+          {(() => {
+            const txsSk = transactions.filter(t => t.annee === curYear && (!selectedMonth || t.mois === selectedMonth));
+            const entSk = txsSk.filter(t=>t.es==="Entrée").reduce((s,t)=>s+t.montant,0);
+            const sorSk = txsSk.filter(t=>t.es==="Sortie").reduce((s,t)=>s+t.montant,0);
+            const savSk = entSk - sorSk;
+            const rateSk = entSk > 0 ? (savSk/entSk*100) : 0;
+            return (
+              <div style={{ display:"flex", gap:10, marginBottom:16, flexWrap:"wrap" }}>
+                <div style={{ flex:1, minWidth:120, background:"rgba(52,211,153,0.08)", border:"1px solid rgba(52,211,153,0.2)", borderRadius:10, padding:"10px 14px" }}>
+                  <div style={{ fontSize:11, color:"#64748B" }}>Entrées</div>
+                  <div style={{ fontSize:18, fontWeight:800, color:"#34D399" }}>{fmt(entSk)}</div>
+                </div>
+                <div style={{ flex:1, minWidth:120, background:"rgba(248,113,113,0.08)", border:"1px solid rgba(248,113,113,0.2)", borderRadius:10, padding:"10px 14px" }}>
+                  <div style={{ fontSize:11, color:"#64748B" }}>Sorties</div>
+                  <div style={{ fontSize:18, fontWeight:800, color:"#F87171" }}>{fmt(sorSk)}</div>
+                </div>
+                <div style={{ flex:1, minWidth:120, background:savSk>=0?"rgba(52,211,153,0.08)":"rgba(248,113,113,0.08)", border:`1px solid ${savSk>=0?"rgba(52,211,153,0.2)":"rgba(248,113,113,0.2)"}`, borderRadius:10, padding:"10px 14px" }}>
+                  <div style={{ fontSize:11, color:"#64748B" }}>Épargne</div>
+                  <div style={{ fontSize:18, fontWeight:800, color:savSk>=0?"#34D399":"#F87171" }}>{fmt(savSk)}</div>
+                </div>
+                <div style={{ flex:1, minWidth:120, background:"rgba(99,102,241,0.08)", border:"1px solid rgba(99,102,241,0.2)", borderRadius:10, padding:"10px 14px" }}>
+                  <div style={{ fontSize:11, color:"#64748B" }}>Taux d'épargne</div>
+                  <div style={{ fontSize:18, fontWeight:800, color:"#818CF8" }}>{rateSk.toFixed(1)}%</div>
+                </div>
+              </div>
+            );
+          })()}
           <SankeyBudget
             transactions={transactions}
             curYear={curYear}
@@ -4436,6 +4501,15 @@ function BudgetView({ uid, quickAddTx, setQuickAddTx, onCatsChange }) {
 
           {activeCatName && (
             <>
+              {/* Période toggle */}
+              <div style={{ display:"flex", gap:6, marginBottom:12 }}>
+                {[["all","Tout l'historique"],["12m","12 mois glissants"]].map(([k,l])=>(
+                  <button key={k} onClick={()=>setCatStatPeriod(k)}
+                    style={{ background:catStatPeriod===k?"rgba(99,102,241,0.2)":"rgba(255,255,255,0.04)", border:`1px solid ${catStatPeriod===k?"#6366F1":"rgba(255,255,255,0.08)"}`, borderRadius:6, color:catStatPeriod===k?"#818CF8":"#94A3B8", padding:"4px 12px", cursor:"pointer", fontSize:12, fontWeight:catStatPeriod===k?700:400 }}>
+                    {l}
+                  </button>
+                ))}
+              </div>
               {/* KPIs */}
               <div style={{ display:"flex", gap:10, flexWrap:"wrap", marginBottom:14 }}>
                 <StatCard label="Total cumulé" value={fmt(catTotal)} sub={`${catTxs.length} transaction${catTxs.length>1?"s":""}`} color={catColor} icon="💳" />
@@ -4536,9 +4610,11 @@ function BudgetView({ uid, quickAddTx, setQuickAddTx, onCatsChange }) {
               </div>
               <div>
                 <div style={lblS}>Couleur</div>
-                <div style={{ display:"flex", gap:8, alignItems:"center" }}>
+                <div style={{ display:"flex", gap:8, alignItems:"center", flexWrap:"wrap" }}>
                   <input type="color" value={newCatColor} onChange={e=>setNewCatColor(e.target.value)}
                     style={{ width:40, height:34, border:"1px solid #334155", borderRadius:8, background:"#1E293B", cursor:"pointer", padding:2 }} />
+                  <input value={newCatColor} onChange={e=>{ if (/^#[0-9A-Fa-f]{6}$/.test(e.target.value)) setNewCatColor(e.target.value); else setNewCatColor(e.target.value); }}
+                    style={{ width:82, background:"#1E293B", border:"1px solid #334155", borderRadius:6, color:"#F1F5F9", fontSize:12, padding:"5px 8px" }} maxLength={7} />
                   {["#F87171","#FB923C","#FBBF24","#34D399","#60A5FA","#A78BFA","#F472B6","#38BDF8","#818CF8","#4ADE80"].map(c => (
                     <div key={c} onClick={()=>setNewCatColor(c)} style={{ width:18, height:18, borderRadius:"50%", background:c, cursor:"pointer", border:newCatColor===c?"2px solid #fff":"2px solid transparent", flexShrink:0 }} />
                   ))}
@@ -4652,7 +4728,7 @@ function BudgetView({ uid, quickAddTx, setQuickAddTx, onCatsChange }) {
             <div style={{ display:"flex", gap:10, flexWrap:"wrap", alignItems:"flex-end" }}>
               <div>
                 <div style={lblS}>Type</div>
-                <select value={txFilter.es} onChange={e=>{setTxFilter(f=>({...f,es:e.target.value,type:""})); setTxPage(0);}} style={{...inpS,width:130}}>
+                <select value={txFilter.es} onChange={e=>{setTxFilter(f=>({...f,es:e.target.value,type:""})); setTxPage(0); setTxSelected(new Set());}} style={{...inpS,width:130}}>
                   <option value="">Tous</option>
                   <option value="Sortie">📤 Sorties</option>
                   <option value="Entrée">📥 Entrées</option>
@@ -4660,27 +4736,49 @@ function BudgetView({ uid, quickAddTx, setQuickAddTx, onCatsChange }) {
               </div>
               <div style={{ minWidth:160 }}>
                 <div style={lblS}>Catégorie</div>
-                <select value={txFilter.type} onChange={e=>{setTxFilter(f=>({...f,type:e.target.value})); setTxPage(0);}} style={inpS}>
+                <select value={txFilter.type} onChange={e=>{setTxFilter(f=>({...f,type:e.target.value})); setTxPage(0); setTxSelected(new Set());}} style={inpS}>
                   <option value="">Toutes</option>
                   {[...new Set(transactions.filter(t=>!txFilter.es||t.es===txFilter.es).map(t=>t.type))].sort().map(n=><option key={n} value={n}>{n}</option>)}
                 </select>
               </div>
               <div>
                 <div style={lblS}>Année</div>
-                <select value={txFilter.year} onChange={e=>{setTxFilter(f=>({...f,year:e.target.value,month:""})); setTxPage(0);}} style={{...inpS,width:100}}>
+                <select value={txFilter.year} onChange={e=>{setTxFilter(f=>({...f,year:e.target.value,month:""})); setTxPage(0); setTxSelected(new Set());}} style={{...inpS,width:100}}>
                   <option value="">Toutes</option>
                   {years.map(y=><option key={y} value={y}>{y}</option>)}
                 </select>
               </div>
               <div>
                 <div style={lblS}>Mois</div>
-                <select value={txFilter.month} onChange={e=>{setTxFilter(f=>({...f,month:e.target.value})); setTxPage(0);}} style={{...inpS,width:100}}>
+                <select value={txFilter.month} onChange={e=>{setTxFilter(f=>({...f,month:e.target.value})); setTxPage(0); setTxSelected(new Set());}} style={{...inpS,width:100}}>
                   <option value="">Tous</option>
                   {MOIS_FR.map((m,i)=><option key={i+1} value={i+1}>{m}</option>)}
                 </select>
               </div>
-              <div style={{ marginLeft:"auto", fontSize:12, color:"#64748B", alignSelf:"center" }}>
-                {txFiltered.length} transaction{txFiltered.length>1?"s":""} · {fmt(txFiltered.reduce((s,t)=>s+(t.es==="Entrée"?t.montant:0),0))} entrées / {fmt(txFiltered.reduce((s,t)=>s+(t.es==="Sortie"?t.montant:0),0))} sorties
+              <div style={{ flex:1, minWidth:160 }}>
+                <div style={lblS}>Recherche</div>
+                <input value={txSearch} onChange={e=>{setTxSearch(e.target.value); setTxPage(0); setTxSelected(new Set());}}
+                  placeholder="Libellé ou note…" style={{...inpS, width:"100%", boxSizing:"border-box"}} />
+              </div>
+            </div>
+            <div style={{ display:"flex", gap:8, marginTop:10, alignItems:"center", flexWrap:"wrap" }}>
+              <span style={{ fontSize:12, color:"#64748B" }}>Trier :</span>
+              {[["date","Date"],["montant","Montant"],["type","Catégorie"]].map(([k,l]) => (
+                <button key={k} onClick={()=>toggleSort(k)}
+                  style={{ background: txSort===k ? "rgba(99,102,241,0.2)" : "rgba(255,255,255,0.04)", border:`1px solid ${txSort===k?"#6366F1":"rgba(255,255,255,0.08)"}`, borderRadius:6, color: txSort===k ? "#818CF8" : "#94A3B8", padding:"3px 10px", cursor:"pointer", fontSize:12 }}>
+                  {l} {txSort===k ? (txSortDir==="desc"?"↓":"↑") : ""}
+                </button>
+              ))}
+              <div style={{ marginLeft:"auto", display:"flex", alignItems:"center", gap:8 }}>
+                {txSelected.size > 0 && (
+                  <button onClick={deleteSelected}
+                    style={{ background:"rgba(248,113,113,0.15)", border:"1px solid rgba(248,113,113,0.3)", borderRadius:6, color:"#F87171", padding:"3px 12px", cursor:"pointer", fontSize:12, fontWeight:600 }}>
+                    🗑 Supprimer ({txSelected.size})
+                  </button>
+                )}
+                <span style={{ fontSize:12, color:"#64748B" }}>
+                  {txFiltered.length} transaction{txFiltered.length>1?"s":""} · {fmt(txFiltered.reduce((s,t)=>s+(t.es==="Entrée"?t.montant:0),0))} entrées / {fmt(txFiltered.reduce((s,t)=>s+(t.es==="Sortie"?t.montant:0),0))} sorties
+                </span>
               </div>
             </div>
           </Card>
@@ -4721,6 +4819,9 @@ function BudgetView({ uid, quickAddTx, setQuickAddTx, onCatsChange }) {
                         </div>
                       ) : (
                         <div style={{ display:"flex", alignItems:"center", gap:10 }}>
+                          <input type="checkbox" checked={txSelected.has(tx.id)}
+                            onChange={e => setTxSelected(s => { const n = new Set(s); e.target.checked ? n.add(tx.id) : n.delete(tx.id); return n; })}
+                            style={{ width:14, height:14, flexShrink:0, cursor:"pointer", accentColor:"#818CF8" }} />
                           <div style={{ flex:1, minWidth:0 }}>
                             <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:3 }}>
                               <span style={{ fontSize:11, padding:"2px 7px", borderRadius:4, background:tx.es==="Sortie"?"rgba(248,113,113,0.15)":"rgba(52,211,153,0.15)", color:tx.es==="Sortie"?"#F87171":"#34D399", fontWeight:600, flexShrink:0 }}>{tx.es}</span>
