@@ -169,6 +169,7 @@ function ExportModal({ uid, onClose }) {
 
   // ── Onglet IMPORT ────────────────────────────────────────────────────────────
   const ImportTab = () => {
+    const confirm = useConfirm();
     const [parsed,   setParsed]   = useState(null); // { exportDate, data: {key: value} }
     const [selected, setSelected] = useState({});
     const [loading,  setLoading]  = useState(false);
@@ -192,7 +193,7 @@ function ExportModal({ uid, onClose }) {
     const doImport = async () => {
       const keys = Object.keys(selected).filter(k => selected[k]);
       if (!keys.length) { setStatus("Sélectionne au moins une catégorie."); return; }
-      if (!confirm(`Importer ${keys.length} catégorie(s) ? Les données existantes seront remplacées.`)) return;
+      if (!await confirm(`Importer ${keys.length} catégorie(s) ? Les données existantes seront remplacées.`)) return;
       setLoading(true); setStatus("Import en cours…");
       try {
         await Promise.all(keys.map(k => fbSet(uid, k, parsed.data[k])));
@@ -710,6 +711,40 @@ function Pill({ label, active, onClick }) {
     </button>
   );
 }
+
+function ConfirmModal({ message, onConfirm, onCancel }) {
+  if (!message) return null;
+  return (
+    <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.7)", zIndex:2000, display:"flex", alignItems:"center", justifyContent:"center" }}
+         onClick={onCancel}>
+      <div style={{ background:"#161B27", border:"1px solid #334155", borderRadius:16, padding:"24px 28px", minWidth:320, maxWidth:420, boxShadow:"0 24px 60px rgba(0,0,0,0.6)" }}
+           onClick={e=>e.stopPropagation()}>
+        <div style={{ fontSize:15, fontWeight:700, color:"#F1F5F9", marginBottom:18 }}>{message}</div>
+        <div style={{ display:"flex", gap:10, justifyContent:"flex-end" }}>
+          <button onClick={onCancel} style={{ background:"rgba(255,255,255,0.06)", border:"1px solid rgba(255,255,255,0.12)", borderRadius:8, color:"#94A3B8", padding:"7px 18px", fontSize:13, cursor:"pointer", fontWeight:600 }}>Annuler</button>
+          <button onClick={onConfirm} style={{ background:"rgba(248,113,113,0.2)", border:"1px solid rgba(248,113,113,0.4)", borderRadius:8, color:"#F87171", padding:"7px 18px", fontSize:13, cursor:"pointer", fontWeight:700 }}>Supprimer</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+const ConfirmContext = React.createContext(null);
+
+function ConfirmProvider({ children }) {
+  const [state, setState] = useState({ message: null, resolve: null });
+  const askConfirm = useCallback((message) => new Promise(resolve => setState({ message, resolve })), []);
+  const handleConfirm = () => { state.resolve(true);  setState({ message:null, resolve:null }); };
+  const handleCancel  = () => { state.resolve(false); setState({ message:null, resolve:null }); };
+  return (
+    <ConfirmContext.Provider value={askConfirm}>
+      {children}
+      <ConfirmModal message={state.message} onConfirm={handleConfirm} onCancel={handleCancel} />
+    </ConfirmContext.Provider>
+  );
+}
+
+function useConfirm() { return useContext(ConfirmContext); }
 
 function StatCard({ label, value, sub, color, icon }) {
   return (
@@ -3566,6 +3601,7 @@ function SankeyBudget({ transactions, curYear, selectedMonth, fmt, getColor }) {
 }
 
 function BudgetView({ uid, quickAddTx, setQuickAddTx, onCatsChange }) {
+  const confirm = useConfirm();
   // ── State ────────────────────────────────────────────────────────────────
   const [transactions, setTransactions] = useState([]);
   const [cats, setCats] = useState({ entree: DEFAULT_CATS_ENTREE, sortie: DEFAULT_CATS_SORTIE });
@@ -3715,13 +3751,13 @@ function BudgetView({ uid, quickAddTx, setQuickAddTx, onCatsChange }) {
     const file = e.target.files[0]; if (!file) return;
     if (file.size > 10_000_000) { setImportStatus("❌ Fichier trop volumineux (max 10 Mo)"); e.target.value = ""; return; }
     const reader = new FileReader();
-    reader.onload = (ev) => {
+    reader.onload = async (ev) => {
       const parsed = parseBudgetCSV(ev.target.result);
       if (!parsed.length) { setImportStatus("❌ Aucune donnée trouvée"); return; }
       const newKeys = new Set(parsed.map(t => `${t.annee}-${t.mois}`));
       const kept = transactions.filter(t => !newKeys.has(`${t.annee}-${t.mois}`));
       const toReplace = transactions.length - kept.length;
-      if (toReplace > 5 && !confirm(`Cet import va remplacer ${toReplace} transactions existantes (${newKeys.size} mois couverts). Continuer ?`)) {
+      if (toReplace > 5 && !await confirm(`Cet import va remplacer ${toReplace} transactions existantes (${newKeys.size} mois couverts). Continuer ?`)) {
         setImportStatus("Import annulé."); setTimeout(() => setImportStatus(""), 3000); return;
       }
       setTransactions([...kept, ...parsed]);
@@ -3795,7 +3831,7 @@ function BudgetView({ uid, quickAddTx, setQuickAddTx, onCatsChange }) {
       const newKeys = new Set(parsed.map(t => `${t.annee}-${t.mois}`));
       const kept = transactions.filter(t => !newKeys.has(`${t.annee}-${t.mois}`));
       const toReplace = transactions.length - kept.length;
-      if (toReplace > 10 && !confirm(`Cette sync va remplacer ${toReplace} transactions existantes (${newKeys.size} mois couverts). Continuer ?`)) {
+      if (toReplace > 10 && !await confirm(`Cette sync va remplacer ${toReplace} transactions existantes (${newKeys.size} mois couverts). Continuer ?`)) {
         setImportStatus("Synchronisation annulée."); return;
       }
       setTransactions([...kept, ...parsed]);
@@ -3823,10 +3859,10 @@ function BudgetView({ uid, quickAddTx, setQuickAddTx, onCatsChange }) {
     setTransactions(p => p.map(t => t.id === editingTx ? { ...editForm, montant: parseFloat(editForm.montant)||0 } : t));
     setEditingTx(null);
   };
-  const deleteTx = (id) => { if (confirm("Supprimer cette transaction ?")) setTransactions(p => p.filter(t => t.id !== id)); };
-  const deleteSelected = () => {
+  const deleteTx = async (id) => { if (await confirm("Supprimer cette transaction ?")) setTransactions(p => p.filter(t => t.id !== id)); };
+  const deleteSelected = async () => {
     if (!txSelected.size) return;
-    if (!confirm(`Supprimer ${txSelected.size} transaction${txSelected.size > 1 ? "s" : ""} sélectionnée${txSelected.size > 1 ? "s" : ""} ?`)) return;
+    if (!await confirm(`Supprimer ${txSelected.size} transaction${txSelected.size > 1 ? "s" : ""} sélectionnée${txSelected.size > 1 ? "s" : ""} ?`)) return;
     setTransactions(p => p.filter(t => !txSelected.has(t.id)));
     setTxSelected(new Set());
   };
@@ -3843,8 +3879,8 @@ function BudgetView({ uid, quickAddTx, setQuickAddTx, onCatsChange }) {
     setCats(prev => ({ ...prev, [key]: [...prev[key], { name: newCatName.trim(), color: newCatColor }] }));
     setNewCatName(""); setNewCatColor("#818CF8");
   };
-  const deleteCat = (key, name) => {
-    if (confirm(`Supprimer la catégorie "${name}" ?`))
+  const deleteCat = async (key, name) => {
+    if (await confirm(`Supprimer la catégorie "${name}" ?`))
       setCats(prev => ({ ...prev, [key]: prev[key].filter(c => c.name !== name) }));
   };
   const saveEditCat = (key) => {
@@ -5085,7 +5121,7 @@ function BudgetView({ uid, quickAddTx, setQuickAddTx, onCatsChange }) {
               <span><strong style={{color:"#F1F5F9"}}>{[...new Set(transactions.map(t=>`${t.annee}-${t.mois}`))].length}</strong> mois</span>
             </div>
             {transactions.length > 0 && (
-              <button onClick={()=>{ if(confirm("Effacer toutes les données budget ?")){ setTransactions([]); localStorage.removeItem(BUDGET_KEY); }}}
+              <button onClick={async ()=>{ if(await confirm("Effacer toutes les données budget ?")){ setTransactions([]); localStorage.removeItem(BUDGET_KEY); }}}
                 style={{ marginTop:12, background:"transparent", border:"1px solid rgba(248,113,113,0.3)", borderRadius:6, color:"#F87171", padding:"4px 12px", fontSize:11, cursor:"pointer" }}>
                 🗑 Effacer toutes les données
               </button>
@@ -5567,6 +5603,7 @@ async function exportSimulationPDF(params, computed, tableauAnnuel, tableauMensu
 }
 
 function SimulateurCredit({ cryptoTotal, stocksTotal, savingsTotal, bankTotal, realestateTotal, scpiTotal, grandTotal, uid }) {
+  const confirm = useConfirm();
   const [transactions, setTransactions] = useState([]);
   useEffect(() => {
     if (uid) {
@@ -5792,7 +5829,7 @@ function SimulateurCredit({ cryptoTotal, stocksTotal, savingsTotal, bankTotal, r
   };
 
   const handleDelete = async (id) => {
-    if (!confirm("Supprimer cette simulation ?")) return;
+    if (!await confirm("Supprimer cette simulation ?")) return;
     const updated = simulations.filter(s => s.id !== id);
     await saveSimulations(updated);
   };
@@ -6934,6 +6971,7 @@ function AppContent({ user }) {
   ];
 
   return (
+    <ConfirmProvider>
     <div style={{ minHeight: "100vh", background: "#0B1120", fontFamily: "'DM Sans', 'Segoe UI', sans-serif", color: "#F1F5F9", width: "100%" }}>
       <style>{`
 
@@ -7050,5 +7088,6 @@ function AppContent({ user }) {
         <ExportModal uid={uid} onClose={() => setShowExport(false)} />
       )}
     </div>
+    </ConfirmProvider>
   );
 }
