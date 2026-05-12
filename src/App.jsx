@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import React, { useState, useEffect, useCallback, useRef, useContext } from "react";
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer, AreaChart, Area, XAxis, YAxis, CartesianGrid, LineChart, Line, BarChart, Bar, Legend, ReferenceLine } from "recharts";
 import { initializeApp } from "firebase/app";
 import { getFirestore, doc, getDoc, setDoc } from "firebase/firestore";
@@ -1147,6 +1147,153 @@ function ObjectifsFinanciers({ uid }) {
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
+// PROJECTIONS FINANCIÈRES (E2)
+// ══════════════════════════════════════════════════════════════════════════════
+function ProjectionsFinancieres({ uid, grandTotal }) {
+  const [transactions, setTransactions] = useState([]);
+
+  useEffect(() => {
+    if (!uid) return;
+    fbGet(uid, "budget_tx").then(v => { if (Array.isArray(v)) setTransactions(v); });
+  }, [uid]);
+
+  // Épargne mensuelle moyenne sur les 12 derniers mois
+  const avgEpargne = (() => {
+    if (!transactions.length) return 0;
+    const now = new Date();
+    const mo = now.getMonth() + 1, yr = now.getFullYear();
+    const moisPassés = [];
+    for (let i = 1; i <= 12; i++) { let m = mo - i, y = yr; if (m <= 0) { m += 12; y -= 1; } moisPassés.push({y, m}); }
+    const vals = moisPassés.map(({y, m}) => {
+      const e = transactions.filter(t=>t.annee===y&&t.mois===m&&t.es==="Entrée").reduce((s,t)=>s+t.montant,0);
+      const s = transactions.filter(t=>t.annee===y&&t.mois===m&&t.es==="Sortie").reduce((s,t)=>s+t.montant,0);
+      return e - s;
+    }).filter(v => v > 0);
+    return vals.length ? vals.reduce((s,v)=>s+v,0) / vals.length : 0;
+  })();
+
+  // Dépenses mensuelles moyennes (pour la règle des 4%)
+  const avgDepenses = (() => {
+    if (!transactions.length) return 0;
+    const now = new Date();
+    const mo = now.getMonth() + 1, yr = now.getFullYear();
+    const moisPassés = [];
+    for (let i = 1; i <= 12; i++) { let m = mo - i, y = yr; if (m <= 0) { m += 12; y -= 1; } moisPassés.push({y, m}); }
+    const vals = moisPassés.map(({y, m}) =>
+      transactions.filter(t=>t.annee===y&&t.mois===m&&t.es==="Sortie").reduce((s,t)=>s+t.montant,0)
+    ).filter(v => v > 0);
+    return vals.length ? vals.reduce((s,v)=>s+v,0) / vals.length : 0;
+  })();
+
+  // Courbe de projection sur 30 ans (épargne linéaire, pas d'intérêts composés)
+  const projData = (() => {
+    if (avgEpargne <= 0 || grandTotal <= 0) return [];
+    const data = [];
+    for (let y = 0; y <= 30; y++) {
+      data.push({ annee: new Date().getFullYear() + y, val: Math.round(grandTotal + avgEpargne * 12 * y) });
+    }
+    return data;
+  })();
+
+  // Milestones
+  const MILESTONES = [100000, 250000, 500000, 1000000, 2000000].filter(m => m > grandTotal);
+  const milestones = MILESTONES.slice(0, 3).map(target => {
+    if (avgEpargne <= 0) return null;
+    const mois = Math.ceil((target - grandTotal) / avgEpargne);
+    const ans = (mois / 12).toFixed(1).replace(".0", "");
+    const dateAtteinte = new Date(); dateAtteinte.setMonth(dateAtteinte.getMonth() + mois);
+    return { target, mois, ans, date: dateAtteinte.getFullYear() };
+  }).filter(Boolean);
+
+  // Retraite — règle des 4% (25x dépenses annuelles)
+  const cibleRetraite = avgDepenses > 0 ? Math.round(avgDepenses * 12 * 25) : 0;
+  const retraiteAtteinte = grandTotal >= cibleRetraite && cibleRetraite > 0;
+  const moisRetraite = cibleRetraite > 0 && avgEpargne > 0 && !retraiteAtteinte
+    ? Math.ceil((cibleRetraite - grandTotal) / avgEpargne) : 0;
+
+  if (!transactions.length) return null;
+
+  return (
+    <Card style={{ marginBottom:16, padding:"18px 20px" }}>
+      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:16 }}>
+        <div style={{ fontSize:14, fontWeight:700, color:"#F1F5F9" }}>📅 Projections financières</div>
+        {avgEpargne > 0 && (
+          <div style={{ fontSize:12, color:"#34D399", background:"rgba(52,211,153,0.1)", border:"1px solid rgba(52,211,153,0.2)", borderRadius:8, padding:"3px 10px" }}>
+            +{fmt(Math.round(avgEpargne))}/mois en moyenne
+          </div>
+        )}
+      </div>
+
+      {avgEpargne <= 0 ? (
+        <div style={{ color:"#475569", fontSize:13 }}>Pas assez de données d'épargne sur 12 mois pour projeter.</div>
+      ) : (
+        <>
+          {/* Milestones */}
+          {milestones.length > 0 && (
+            <div style={{ display:"flex", gap:10, flexWrap:"wrap", marginBottom:16 }}>
+              {milestones.map(m => (
+                <div key={m.target} style={{ flex:"1 1 140px", background:"rgba(129,140,248,0.08)", border:"1px solid rgba(129,140,248,0.2)", borderRadius:12, padding:"12px 14px" }}>
+                  <div style={{ fontSize:11, color:"#64748B", marginBottom:3 }}>Atteindre {fmt(m.target)}</div>
+                  <div style={{ fontSize:16, fontWeight:700, color:"#818CF8" }}>
+                    {m.mois < 12 ? `${m.mois} mois` : `${m.ans} an${parseFloat(m.ans) >= 2 ? "s" : ""}`}
+                  </div>
+                  <div style={{ fontSize:11, color:"#475569", marginTop:2 }}>vers {m.date}</div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Retraite (règle des 4%) */}
+          {cibleRetraite > 0 && (
+            <div style={{ background:"rgba(251,191,36,0.08)", border:"1px solid rgba(251,191,36,0.2)", borderRadius:12, padding:"12px 14px", marginBottom:16 }}>
+              <div style={{ fontSize:12, fontWeight:700, color:"#FBBF24", marginBottom:4 }}>🏖 Indépendance financière (règle des 4%)</div>
+              <div style={{ fontSize:12, color:"#94A3B8" }}>
+                Cible : <strong style={{ color:"#F1F5F9" }}>{fmt(cibleRetraite)}</strong>
+                {" "}(25× tes dépenses annuelles de {fmt(Math.round(avgDepenses * 12))})
+              </div>
+              {retraiteAtteinte ? (
+                <div style={{ fontSize:13, color:"#34D399", fontWeight:700, marginTop:4 }}>✅ Objectif atteint !</div>
+              ) : moisRetraite > 0 ? (
+                <div style={{ fontSize:13, color:"#FBBF24", fontWeight:700, marginTop:4 }}>
+                  Dans {moisRetraite < 12 ? `${moisRetraite} mois` : `${(moisRetraite/12).toFixed(1).replace(".0","")} ans`}
+                  {" "}· vers {(() => { const d = new Date(); d.setMonth(d.getMonth() + moisRetraite); return d.getFullYear(); })()}
+                </div>
+              ) : null}
+            </div>
+          )}
+
+          {/* Graphique projection */}
+          {projData.length > 1 && (
+            <div>
+              <div style={{ fontSize:11, color:"#64748B", marginBottom:8 }}>Évolution patrimoniale projetée (épargne constante)</div>
+              <ResponsiveContainer width="100%" height={160}>
+                <AreaChart data={projData} margin={{ top:4, right:8, left:0, bottom:0 }}>
+                  <defs>
+                    <linearGradient id="gradProj" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor="#818CF8" stopOpacity={0.3} />
+                      <stop offset="95%" stopColor="#818CF8" stopOpacity={0.02} />
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
+                  <XAxis dataKey="annee" tick={{ fill:"#475569", fontSize:10 }} tickLine={false} interval={4} />
+                  <YAxis tick={{ fill:"#475569", fontSize:9 }} tickLine={false} tickFormatter={v => v>=1000000?`${(v/1000000).toFixed(1)}M`:v>=1000?`${Math.round(v/1000)}k`:v} width={40} />
+                  <Tooltip
+                    contentStyle={{ background:"#1E293B", border:"1px solid #334155", borderRadius:8, fontSize:12 }}
+                    formatter={(v) => [fmt(v), "Patrimoine"]}
+                    labelStyle={{ color:"#94A3B8" }}
+                  />
+                  <Area type="monotone" dataKey="val" stroke="#818CF8" strokeWidth={2} fill="url(#gradProj)" dot={false} />
+                </AreaChart>
+              </ResponsiveContainer>
+            </div>
+          )}
+        </>
+      )}
+    </Card>
+  );
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
 // ALERTES BUDGET
 // ══════════════════════════════════════════════════════════════════════════════
 function AlertesBudget({ uid, transactions, curYear, curMonth }) {
@@ -1345,6 +1492,8 @@ function Overview({ cryptoData, cryptoPrices, stocks, bank, savings, oraPrice, r
       {/* ── Objectifs financiers ──────────────────────────── */}
       <ObjectifsFinanciers uid={uid} />
 
+      {/* ── Projections financières ───────────────────────── */}
+      <ProjectionsFinancieres uid={uid} grandTotal={grandTotal} />
 
       {/* Graphique répartition — sous les sections, pleine largeur */}
       <Card style={{ display: "flex", flexDirection: "column", alignItems: "center", marginBottom: 20, padding: "16px 20px" }}>
