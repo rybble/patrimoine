@@ -4032,8 +4032,28 @@ function BudgetView({ uid, quickAddTx, setQuickAddTx, onCatsChange }) {
     if (!form.type || !form.montant) return;
     const tx = { id:`tx-${Date.now()}`, annee:parseInt(form.annee), mois:parseInt(form.mois), es:form.es, type:form.type, montant:parseFloat(form.montant), note:form.note };
     setTransactions(p => [...p, tx]);
+    // Apprendre le mapping si la note est non-triviale
+    if (form.note && form.note.trim().length >= 3) {
+      const key = normalizeLabel(form.note);
+      saveMappings({ ...mappings, [key]: { type: form.type, es: form.es } });
+    }
     setForm(f => ({...f, type:"", montant:"", note:""}));
     setImportStatus("✅ Transaction ajoutée"); setTimeout(() => setImportStatus(""), 2000);
+  };
+
+  // Pré-remplit catégorie + es depuis le mapping quand la note change
+  const handleNoteChange = (note) => {
+    const norm = normalizeLabel(note);
+    let mapped = null;
+    if (mappings[norm]) {
+      mapped = mappings[norm];
+    } else {
+      const prefix = Object.keys(mappings)
+        .filter(k => k.length >= 6 && norm.startsWith(k))
+        .sort((a, b) => b.length - a.length)[0];
+      if (prefix) mapped = mappings[prefix];
+    }
+    setForm(f => ({ ...f, note, ...(mapped ? { type: mapped.type, es: mapped.es } : {}) }));
   };
 
   // ── Edit / delete transactions ─────────────────────────────────────────────
@@ -5072,7 +5092,12 @@ function BudgetView({ uid, quickAddTx, setQuickAddTx, onCatsChange }) {
               </select>
             </div>
             <div>
-              <div style={lblS}>Catégorie</div>
+              <div style={{ ...lblS, display:"flex", alignItems:"center", gap:6 }}>
+                Catégorie
+                {form.note && form.type && mappings[normalizeLabel(form.note)]?.type === form.type && (
+                  <span style={{ fontSize:10, color:"#60A5FA", background:"rgba(96,165,250,0.12)", border:"1px solid rgba(96,165,250,0.25)", borderRadius:4, padding:"1px 5px" }}>🔖 mémorisé</span>
+                )}
+              </div>
               <select value={form.type} onChange={e=>setForm(f=>({...f,type:e.target.value}))} style={inpS}>
                 <option value="">— Sélectionner —</option>
                 {allCats(form.es).map(c => <option key={c.name} value={c.name}>{c.name}</option>)}
@@ -5097,7 +5122,7 @@ function BudgetView({ uid, quickAddTx, setQuickAddTx, onCatsChange }) {
             </div>
             <div>
               <div style={lblS}>Note (optionnel)</div>
-              <input value={form.note} onChange={e=>setForm(f=>({...f,note:e.target.value}))} placeholder="Lidl, Amazon…" style={inpS}
+              <input value={form.note} onChange={e=>handleNoteChange(e.target.value)} placeholder="Lidl, Amazon…" style={inpS}
                 onKeyDown={e=>e.key==="Enter" && addTransaction()} />
             </div>
           </div>
