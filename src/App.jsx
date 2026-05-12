@@ -4057,6 +4057,13 @@ function BudgetView({ uid, quickAddTx, setQuickAddTx, onCatsChange }) {
   const pieE = catBreakdown("Entrée", curYear, selectedMonth);
   const pieS = catBreakdown("Sortie", curYear, selectedMonth);
 
+  // Stats filtrées par mois si selectedMonth est défini
+  const selBilanRow = selectedMonth ? bilan.find(r => r.mo === selectedMonth) : null;
+  const statsE     = selBilanRow ? selBilanRow.entrees : totalE_yr;
+  const statsS     = selBilanRow ? selBilanRow.sorties : totalS_yr;
+  const statsSolde = statsE - statsS;
+  const statsTaux  = statsE > 0 ? (statsSolde / statsE * 100) : 0;
+
   // Filtered transactions list
   const txFiltered = transactions.filter(t => {
     if (txFilter.es   && t.es !== txFilter.es) return false;
@@ -4153,28 +4160,94 @@ function BudgetView({ uid, quickAddTx, setQuickAddTx, onCatsChange }) {
       ══════════════════════════════════════════════════════════════════════ */}
       {activeTab === "overview" && (
         <div>
+          {/* ── Filtre mois ─────────────────────────────────────── */}
+          {(() => {
+            const mosDispo = [...new Set(filteredByYear.map(t => t.mois))].sort((a,b)=>a-b);
+            if (mosDispo.length < 2) return null;
+            const btnS = (active) => ({
+              background: active ? "rgba(99,102,241,0.25)" : "rgba(255,255,255,0.04)",
+              border: active ? "1px solid rgba(99,102,241,0.5)" : "1px solid rgba(255,255,255,0.08)",
+              borderRadius: 8, color: active ? "#A5B4FC" : "#94A3B8",
+              padding: "3px 10px", fontSize: 11, cursor: "pointer", fontWeight: 600,
+            });
+            return (
+              <div style={{ display:"flex", gap:5, marginBottom:14, flexWrap:"wrap", alignItems:"center" }}>
+                <span style={{ fontSize:11, color:"#475569", marginRight:2 }}>Mois :</span>
+                <button onClick={() => setSelectedMonth(null)} style={btnS(!selectedMonth)}>Tout</button>
+                {mosDispo.map(mo => (
+                  <button key={mo} onClick={() => setSelectedMonth(selectedMonth === mo ? null : mo)} style={btnS(selectedMonth === mo)}>
+                    {MOIS_FR[mo-1]}
+                  </button>
+                ))}
+              </div>
+            );
+          })()}
+
           {/* ── Alertes budget ──────────────────────────────────── */}
           <AlertesBudget
             uid={uid}
             transactions={transactions}
             curYear={curYear}
-            curMonth={new Date().getMonth() + 1}
+            curMonth={selectedMonth || new Date().getMonth() + 1}
           />
-          {/* ── Solde prévisionnel ─────────────────────────────── */}
+          {/* ── Solde / Bilan du mois ──────────────────────────── */}
           {(() => {
             const now = new Date();
-            const mo = now.getMonth() + 1;
-            const yr = now.getFullYear();
-            const jourDuMois = now.getDate();
-            const joursTotal = new Date(yr, mo, 0).getDate();
-            const joursRestants = joursTotal - jourDuMois;
+            const mo = selectedMonth || (now.getMonth() + 1);
+            const yr = curYear;
+            const isCurrentMonth = (yr === now.getFullYear() && mo === now.getMonth() + 1);
+            const MOIS_NOM = ["Jan","Fév","Mar","Avr","Mai","Jun","Jul","Aoû","Sep","Oct","Nov","Déc"];
 
-            // Revenus et dépenses du mois en cours
             const txMois = transactions.filter(t => t.annee === yr && t.mois === mo);
             const revenusMois = txMois.filter(t => t.es === "Entrée").reduce((s,t) => s+t.montant, 0);
             const depensesMois = txMois.filter(t => t.es === "Sortie").reduce((s,t) => s+t.montant, 0);
+            const soldeMois = revenusMois - depensesMois;
 
-            // Moyenne dépenses sur 12 derniers mois (hors mois courant)
+            if (!isCurrentMonth) {
+              // Mois passé (ou futur) — bilan réel sans projection
+              const col = soldeMois >= 0 ? "#34D399" : "#F87171";
+              const tauxConso = revenusMois > 0 ? (depensesMois / revenusMois) * 100 : 0;
+              return (
+                <Card style={{ marginBottom:14, padding:"16px 20px", background:"rgba(15,23,42,0.6)", border:`1px solid ${col}33` }}>
+                  <div style={{ fontSize:11, color:"#64748B", textTransform:"uppercase", letterSpacing:"0.1em", marginBottom:10 }}>
+                    📋 Bilan réel — {MOIS_NOM[mo-1]} {yr}
+                  </div>
+                  <div style={{ display:"flex", gap:16, flexWrap:"wrap", marginBottom:12 }}>
+                    <div>
+                      <div style={{ fontSize:11, color:"#64748B", marginBottom:2 }}>Revenus</div>
+                      <div style={{ fontSize:20, fontWeight:800, color:"#34D399" }}>{fmt(revenusMois)}</div>
+                    </div>
+                    <div>
+                      <div style={{ fontSize:11, color:"#64748B", marginBottom:2 }}>Dépenses</div>
+                      <div style={{ fontSize:20, fontWeight:800, color:"#F87171" }}>{fmt(depensesMois)}</div>
+                    </div>
+                    <div>
+                      <div style={{ fontSize:11, color:"#64748B", marginBottom:2 }}>Solde net</div>
+                      <div style={{ fontSize:24, fontWeight:800, color:col }}>{soldeMois >= 0 ? "+" : ""}{fmt(soldeMois)}</div>
+                    </div>
+                    <div>
+                      <div style={{ fontSize:11, color:"#64748B", marginBottom:2 }}>Taux d'épargne</div>
+                      <div style={{ fontSize:20, fontWeight:800, color:"#818CF8" }}>{revenusMois > 0 ? `${((soldeMois/revenusMois)*100).toFixed(1)}%` : "—"}</div>
+                    </div>
+                  </div>
+                  <div style={{ marginBottom:6 }}>
+                    <div style={{ display:"flex", justifyContent:"space-between", marginBottom:4 }}>
+                      <span style={{ fontSize:11, color:"#64748B" }}>Dépenses / Revenus</span>
+                      <span style={{ fontSize:11, color: tauxConso > 90 ? "#F87171" : tauxConso > 70 ? "#FBBF24" : "#34D399", fontWeight:600 }}>{tauxConso.toFixed(0)}%</span>
+                    </div>
+                    <div style={{ height:8, background:"rgba(255,255,255,0.08)", borderRadius:4, overflow:"hidden" }}>
+                      <div style={{ width:`${Math.min(100,tauxConso)}%`, height:"100%", borderRadius:4,
+                        background: tauxConso > 90 ? "#F87171" : tauxConso > 70 ? "#FBBF24" : "#34D399" }} />
+                    </div>
+                  </div>
+                </Card>
+              );
+            }
+
+            // Mois en cours — projection
+            const jourDuMois = now.getDate();
+            const joursTotal = new Date(yr, mo, 0).getDate();
+            const joursRestants = joursTotal - jourDuMois;
             const moisPassés = [];
             for (let i = 1; i <= 12; i++) {
               let m = mo - i; let y = yr;
@@ -4184,13 +4257,10 @@ function BudgetView({ uid, quickAddTx, setQuickAddTx, onCatsChange }) {
             const depMoyMensuelle = moisPassés.reduce((s, {y, m}) => {
               return s + transactions.filter(t => t.annee===y && t.mois===m && t.es==="Sortie").reduce((a,t)=>a+t.montant, 0);
             }, 0) / 12;
-
-            // Projection dépenses restantes (au prorata des jours restants)
             const projDepRestantes = (depMoyMensuelle / joursTotal) * joursRestants;
             const soldePrev = revenusMois - depensesMois - projDepRestantes;
             const tauxConso = revenusMois > 0 ? (depensesMois / revenusMois) * 100 : 0;
             const col = soldePrev > 0 ? "#34D399" : "#F87171";
-            const MOIS_NOM = ["Jan","Fév","Mar","Avr","Mai","Jun","Jul","Aoû","Sep","Oct","Nov","Déc"];
 
             return (
               <Card style={{ marginBottom:14, padding:"16px 20px", background:"rgba(15,23,42,0.6)", border:`1px solid ${col}33` }}>
@@ -4215,7 +4285,6 @@ function BudgetView({ uid, quickAddTx, setQuickAddTx, onCatsChange }) {
                     <div style={{ fontSize:24, fontWeight:800, color:col }}>{soldePrev >= 0 ? "+" : ""}{fmt(soldePrev)}</div>
                   </div>
                 </div>
-                {/* Barre de consommation du budget */}
                 <div style={{ marginBottom:6 }}>
                   <div style={{ display:"flex", justifyContent:"space-between", marginBottom:4 }}>
                     <span style={{ fontSize:11, color:"#64748B" }}>Consommation budget</span>
@@ -4234,10 +4303,10 @@ function BudgetView({ uid, quickAddTx, setQuickAddTx, onCatsChange }) {
             );
           })()}
           <div style={{ display:"flex", gap:10, flexWrap:"wrap", marginBottom:18 }}>
-            <StatCard label="Entrées" value={fmt(totalE_yr)} sub={`${curYear} · ${bilan.length} mois`} color="#34D399" icon="📥" />
-            <StatCard label="Sorties" value={fmt(totalS_yr)} sub={`Moy. ${fmt(totalS_yr/(bilan.length||1))}/mois`} color="#F87171" icon="📤" />
-            <StatCard label="Solde net" value={fmt(solde_yr)} sub={solde_yr>=0?"Bilan positif ✓":"Bilan négatif ⚠"} color={solde_yr>=0?"#34D399":"#F87171"} icon="⚖️" />
-            <StatCard label="Taux d'épargne" value={`${tauxEpargne.toFixed(1)}%`} sub="(Entrées−Sorties)/Entrées" color="#818CF8" icon="🎯" />
+            <StatCard label="Entrées" value={fmt(statsE)} sub={selectedMonth ? MOIS_FR[selectedMonth-1] + " " + curYear : `${curYear} · ${bilan.length} mois`} color="#34D399" icon="📥" />
+            <StatCard label="Sorties" value={fmt(statsS)} sub={selectedMonth ? `Taux dépen. ${statsE>0?(statsS/statsE*100).toFixed(0):0}%` : `Moy. ${fmt(totalS_yr/(bilan.length||1))}/mois`} color="#F87171" icon="📤" />
+            <StatCard label="Solde net" value={fmt(statsSolde)} sub={statsSolde>=0?"Bilan positif ✓":"Bilan négatif ⚠"} color={statsSolde>=0?"#34D399":"#F87171"} icon="⚖️" />
+            <StatCard label="Taux d'épargne" value={`${statsTaux.toFixed(1)}%`} sub="(Entrées−Sorties)/Entrées" color="#818CF8" icon="🎯" />
           </div>
 
           <Card style={{ marginBottom:14, padding:"16px 20px" }}>
