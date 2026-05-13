@@ -1687,6 +1687,368 @@ function CryptoTreemap({ cryptoData, cryptoPrices }) {
 }
 
 
+function AnalysePortefeuille({ cryptoData, cryptoPrices, stocks, bank, savings, scpi, realestate, history, oraPrice }) {
+  const [tab, setTab] = useState("profil");
+  const [manualProfile, setManualProfile] = useState(null);
+
+  const getVl = (f) => (f.type === "ora_linked" && oraPrice > 0) ? oraPrice : f.manualVl;
+  const cryptoTotal     = cryptoData.reduce((s,c) => s + (cryptoPrices[c.code]?.eur || 0)*c.qty, 0);
+  const stocksTotal     = stocks.reduce((s,st) => s + st.price*st.qty, 0);
+  const savingsTotal    = [...savings.peg, ...savings.percol].reduce((s,f) => s + getVl(f)*f.qty, 0);
+  const bankTotal       = bank.reduce((s,b) => s + b.balance, 0);
+  const scpiTotal       = scpi.reduce((s,p) => s + p.pricePerPart*p.parts, 0);
+  const realestateTotal = realestate.reduce((s,r) => s + r.estimatedPrice, 0);
+  const grandTotal      = cryptoTotal + stocksTotal + savingsTotal + bankTotal + scpiTotal + realestateTotal;
+
+  const PROFILES = {
+    prudent:   { label:"Prudent",   color:"#60A5FA", icon:"🛡", desc:"Capital préservé, faible volatilité", risk:1,
+                  alloc: { crypto:3, stocks:7, savings:35, scpi:20, realestate:25, bank:10 } },
+    equilibre: { label:"Équilibré", color:"#34D399", icon:"⚖", desc:"Croissance modérée, diversification équilibrée", risk:2,
+                  alloc: { crypto:8, stocks:22, savings:25, scpi:15, realestate:20, bank:10 } },
+    dynamique: { label:"Dynamique", color:"#FBBF24", icon:"📈", desc:"Croissance prioritaire, tolérance risque moyenne", risk:3,
+                  alloc: { crypto:15, stocks:35, savings:20, scpi:10, realestate:15, bank:5 } },
+    agressif:  { label:"Agressif",  color:"#F87171", icon:"🚀", desc:"Rendement maximal, forte exposition crypto/bourse", risk:4,
+                  alloc: { crypto:30, stocks:40, savings:15, scpi:5, realestate:7, bank:3 } },
+  };
+
+  const cryptoPct   = grandTotal > 0 ? cryptoTotal/grandTotal : 0;
+  const volatilePct = grandTotal > 0 ? (cryptoTotal+stocksTotal)/grandTotal : 0;
+  const stablePct   = grandTotal > 0 ? (bankTotal+savingsTotal)/grandTotal : 0;
+  const autoProfile = (() => {
+    if (cryptoPct > 0.35) return "agressif";
+    if (volatilePct > 0.5) return "dynamique";
+    if (stablePct > 0.55) return "prudent";
+    return "equilibre";
+  })();
+  const activeProfile = manualProfile || autoProfile;
+  const profile       = PROFILES[activeProfile];
+
+  const ASSET_META = [
+    { key:"crypto",     label:"Crypto",  color:"#818CF8", icon:"₿",  val:cryptoTotal },
+    { key:"stocks",     label:"Bourse",  color:"#34D399", icon:"📈", val:stocksTotal },
+    { key:"savings",    label:"Épargne", color:"#FBBF24", icon:"🟠", val:savingsTotal },
+    { key:"scpi",       label:"SCPI",    color:"#A78BFA", icon:"🏢", val:scpiTotal },
+    { key:"realestate", label:"Immo",    color:"#F472B6", icon:"🏠", val:realestateTotal },
+    { key:"bank",       label:"Banque",  color:"#60A5FA", icon:"🏦", val:bankTotal },
+  ];
+  const actualAlloc = {};
+  ASSET_META.forEach(a => { actualAlloc[a.key] = grandTotal > 0 ? a.val/grandTotal*100 : 0; });
+
+  const CORR_KEYS   = ["crypto","stocks","savings","bank","scpi"];
+  const CORR_LABELS = { crypto:"Crypto", stocks:"Bourse", savings:"Épargne", bank:"Banque", scpi:"SCPI" };
+  const CORR_COLORS = { crypto:"#818CF8", stocks:"#34D399", savings:"#FBBF24", bank:"#60A5FA", scpi:"#A78BFA" };
+
+  function pearsonCorr(xs, ys) {
+    const n = xs.length;
+    if (n < 3) return null;
+    const mx = xs.reduce((a,b)=>a+b,0)/n;
+    const my = ys.reduce((a,b)=>a+b,0)/n;
+    const num = xs.reduce((s,x,i) => s+(x-mx)*(ys[i]-my), 0);
+    const den = Math.sqrt(xs.reduce((s,x)=>s+(x-mx)**2,0) * ys.reduce((s,y)=>s+(y-my)**2,0));
+    return den === 0 ? null : Math.round((num/den)*100)/100;
+  }
+
+  const corrMatrix = (() => {
+    const h = history.filter(p => CORR_KEYS.some(k => p[k] !== undefined && p[k] > 0));
+    if (h.length < 5) return null;
+    const series = {};
+    CORR_KEYS.forEach(k => { series[k] = h.map(p => p[k] || 0); });
+    const matrix = {};
+    CORR_KEYS.forEach(a => {
+      matrix[a] = {};
+      CORR_KEYS.forEach(b => {
+        matrix[a][b] = a === b ? 1.0 : pearsonCorr(series[a], series[b]);
+      });
+    });
+    return matrix;
+  })();
+
+  const geoAlloc = (() => {
+    const geo = { france:0, usa:0, europe:0, intl:0 };
+    stocks.forEach(st => {
+      const val = st.price * st.qty;
+      const sym = (st.symbol || "").toUpperCase();
+      if (sym.endsWith(".PA") || sym.endsWith(".FR")) geo.france += val;
+      else if ([".L",".DE",".AS",".BR",".SW",".MI"].some(s => sym.endsWith(s))) geo.europe += val;
+      else if (["APOLLO","EQTF"].includes(sym)) geo.intl += val;
+      else geo.usa += val;
+    });
+    geo.france += bankTotal + savingsTotal + scpiTotal + realestateTotal;
+    geo.intl   += cryptoTotal;
+    return geo;
+  })();
+  const geoTotal = Object.values(geoAlloc).reduce((s,v)=>s+v,0);
+  const geoData = [
+    { name:"France",              value:geoAlloc.france, color:"#60A5FA" },
+    { name:"États-Unis",          value:geoAlloc.usa,    color:"#34D399" },
+    { name:"Europe (hors FR)",    value:geoAlloc.europe, color:"#FBBF24" },
+    { name:"International/Crypto",value:geoAlloc.intl,   color:"#818CF8" },
+  ].filter(d => d.value > 0);
+
+  const recoms = ASSET_META.map(a => ({
+    ...a,
+    actual: actualAlloc[a.key],
+    target: profile.alloc[a.key] || 0,
+    diff:   actualAlloc[a.key] - (profile.alloc[a.key] || 0),
+  })).filter(r => Math.abs(r.diff) >= 5).sort((a,b) => Math.abs(b.diff)-Math.abs(a.diff));
+
+  const tabStyle = (active) => ({
+    padding:"7px 14px", borderRadius:8, border:"none", cursor:"pointer", fontWeight:600, fontSize:12,
+    background: active ? "rgba(129,140,248,0.2)" : "transparent",
+    color: active ? "#A5B4FC" : "#475569",
+  });
+  const corrColor = (v) => {
+    if (v === null) return "rgba(255,255,255,0.05)";
+    if (v >= 0.7)  return "rgba(248,113,113,0.5)";
+    if (v >= 0.4)  return "rgba(251,191,36,0.35)";
+    if (v >= 0.1)  return "rgba(255,255,255,0.1)";
+    if (v > -0.1)  return "rgba(255,255,255,0.06)";
+    if (v > -0.4)  return "rgba(52,211,153,0.25)";
+    return "rgba(52,211,153,0.5)";
+  };
+
+  return (
+    <div>
+      <SectionTitle sub="Profil investisseur, corrélations et diversification">Analyse Portefeuille</SectionTitle>
+
+      <div style={{ display:"flex", gap:4, marginBottom:20, background:"rgba(255,255,255,0.04)", borderRadius:10, padding:4, flexWrap:"wrap" }}>
+        {[
+          { key:"profil",      label:"🎯 Profil & Allocation" },
+          { key:"correlation", label:"🔗 Corrélation" },
+          { key:"geo",         label:"🌍 Géographie" },
+          { key:"recom",       label:"💡 Recommandations" },
+        ].map(t => <button key={t.key} style={tabStyle(tab===t.key)} onClick={() => setTab(t.key)}>{t.label}</button>)}
+      </div>
+
+      {/* ── Profil & Allocation ───────────────────────────────────────────────── */}
+      {tab === "profil" && (
+        <div>
+          <div style={{ display:"flex", gap:8, flexWrap:"wrap", marginBottom:16 }}>
+            {Object.entries(PROFILES).map(([key, p]) => (
+              <button key={key} onClick={() => setManualProfile(key === activeProfile && manualProfile ? null : key)}
+                style={{ flex:1, minWidth:120, padding:"12px 14px", borderRadius:12, border:"none", cursor:"pointer", textAlign:"left",
+                  background: activeProfile===key ? `${p.color}22` : "rgba(255,255,255,0.04)",
+                  outline: activeProfile===key ? `1.5px solid ${p.color}66` : "1px solid rgba(255,255,255,0.08)" }}>
+                <div style={{ fontSize:16, marginBottom:4 }}>{p.icon}</div>
+                <div style={{ fontWeight:700, color: activeProfile===key ? p.color : "#94A3B8", fontSize:13 }}>{p.label}</div>
+                <div style={{ fontSize:10, color:"#475569", marginTop:2 }}>{p.desc}</div>
+                {key === autoProfile && !manualProfile && (
+                  <div style={{ fontSize:9, color:"#818CF8", marginTop:4 }}>● Auto-détecté</div>
+                )}
+              </button>
+            ))}
+          </div>
+          {manualProfile && (
+            <button onClick={() => setManualProfile(null)}
+              style={{ fontSize:11, color:"#64748B", background:"none", border:"none", cursor:"pointer", marginBottom:12, textDecoration:"underline" }}>
+              ↩ Revenir à la détection automatique ({PROFILES[autoProfile].label})
+            </button>
+          )}
+          <Card>
+            <div style={{ fontSize:12, fontWeight:700, color:"#94A3B8", textTransform:"uppercase", letterSpacing:1, marginBottom:14 }}>
+              Allocation actuelle vs recommandée — profil {profile.label}
+            </div>
+            <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
+              {ASSET_META.map(a => {
+                const actual = actualAlloc[a.key];
+                const target = profile.alloc[a.key] || 0;
+                const diff   = actual - target;
+                return (
+                  <div key={a.key}>
+                    <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:5 }}>
+                      <span style={{ fontSize:12, color:"#CBD5E1", display:"flex", alignItems:"center", gap:6 }}>
+                        <span>{a.icon}</span> {a.label}
+                      </span>
+                      <div style={{ display:"flex", gap:14, alignItems:"center" }}>
+                        <span style={{ fontSize:11, color:"#475569" }}>cible {target}%</span>
+                        <span style={{ fontSize:13, fontWeight:700, color: Math.abs(diff)>=10 ? (diff>0?"#F87171":"#60A5FA") : "#94A3B8" }}>
+                          {actual.toFixed(1)}%
+                          {Math.abs(diff)>=5 && <span style={{ fontSize:10, marginLeft:4 }}>{diff>0?"↑":"↓"}{Math.abs(diff).toFixed(0)}pp</span>}
+                        </span>
+                      </div>
+                    </div>
+                    <div style={{ position:"relative", height:8, background:"rgba(255,255,255,0.06)", borderRadius:4 }}>
+                      <div style={{ position:"absolute", left:0, top:0, height:"100%", borderRadius:4, width:`${Math.min(100,actual)}%`, background:a.color, transition:"width 0.5s" }} />
+                      {target > 0 && (
+                        <div style={{ position:"absolute", top:-3, left:`${Math.min(100,target)}%`, height:14, width:2, background:"rgba(255,255,255,0.5)", borderRadius:1 }} />
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+            <div style={{ fontSize:10, color:"#334155", marginTop:14 }}>│ = cible recommandée pour le profil {profile.label}</div>
+          </Card>
+        </div>
+      )}
+
+      {/* ── Corrélation ──────────────────────────────────────────────────────── */}
+      {tab === "correlation" && (
+        <div>
+          <Card style={{ marginBottom:14 }}>
+            <div style={{ fontSize:12, fontWeight:700, color:"#94A3B8", textTransform:"uppercase", letterSpacing:1, marginBottom:6 }}>Matrice de corrélation inter-actifs</div>
+            <div style={{ fontSize:11, color:"#475569", marginBottom:14 }}>
+              Calculée sur {history.length} points d'historique · Vert = décorrélé (bonne diversification) · Rouge = fortement corrélé (même exposition au risque)
+            </div>
+            {corrMatrix ? (
+              <div style={{ overflowX:"auto" }}>
+                <table style={{ borderCollapse:"separate", borderSpacing:3, width:"100%" }}>
+                  <thead>
+                    <tr>
+                      <th style={{ width:72 }} />
+                      {CORR_KEYS.map(k => (
+                        <th key={k} style={{ padding:"4px 6px", fontSize:11, color:CORR_COLORS[k], fontWeight:700, textAlign:"center" }}>
+                          {CORR_LABELS[k]}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {CORR_KEYS.map(row => (
+                      <tr key={row}>
+                        <td style={{ padding:"4px 6px", fontSize:11, fontWeight:700, color:CORR_COLORS[row] }}>{CORR_LABELS[row]}</td>
+                        {CORR_KEYS.map(col => {
+                          const v = corrMatrix[row][col];
+                          return (
+                            <td key={col}
+                              title={v !== null ? `Corrélation ${CORR_LABELS[row]}/${CORR_LABELS[col]}: ${v}` : "Données insuffisantes"}
+                              style={{ padding:"10px 8px", textAlign:"center", borderRadius:6, background:corrColor(v),
+                                fontSize:12, fontWeight: row===col ? 800 : 600,
+                                color: row===col ? "#F1F5F9" : (v !== null ? "#F1F5F9" : "#334155") }}>
+                              {row === col ? "─" : v !== null ? v.toFixed(2) : "n/a"}
+                            </td>
+                          );
+                        })}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <div style={{ textAlign:"center", padding:"32px 20px", color:"#475569", fontSize:13 }}>
+                <div style={{ fontSize:28, marginBottom:8 }}>📊</div>
+                <div>Données insuffisantes pour calculer les corrélations.</div>
+                <div style={{ fontSize:11, marginTop:6 }}>Il faut au moins 5 points d'historique — revenez après quelques jours d'utilisation.</div>
+              </div>
+            )}
+          </Card>
+          <Card>
+            <div style={{ fontSize:12, fontWeight:700, color:"#94A3B8", marginBottom:10 }}>Comment lire la matrice</div>
+            <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
+              {[
+                { color:"rgba(52,211,153,0.5)",  label:"Corrélation négative (< −0.1)",        desc:"Actifs décorrélés — excellente diversification" },
+                { color:"rgba(255,255,255,0.08)", label:"Corrélation neutre (−0.1 à +0.4)",     desc:"Peu de relation — diversification correcte" },
+                { color:"rgba(251,191,36,0.35)",  label:"Corrélation modérée (0.4 à 0.7)",      desc:"Bougent souvent dans le même sens — partielle" },
+                { color:"rgba(248,113,113,0.5)",  label:"Corrélation élevée (> 0.7)",           desc:"Très liés — peu de bénéfice à les détenir ensemble" },
+              ].map(r => (
+                <div key={r.label} style={{ display:"flex", alignItems:"flex-start", gap:10 }}>
+                  <div style={{ width:28, height:18, borderRadius:4, background:r.color, flexShrink:0, marginTop:1 }} />
+                  <div>
+                    <div style={{ fontSize:11, fontWeight:600, color:"#CBD5E1" }}>{r.label}</div>
+                    <div style={{ fontSize:10, color:"#475569" }}>{r.desc}</div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </Card>
+        </div>
+      )}
+
+      {/* ── Géographie ───────────────────────────────────────────────────────── */}
+      {tab === "geo" && (
+        <div>
+          <Card style={{ marginBottom:14 }}>
+            <div style={{ fontSize:12, fontWeight:700, color:"#94A3B8", textTransform:"uppercase", letterSpacing:1, marginBottom:14 }}>Diversification géographique</div>
+            <div style={{ display:"flex", flexWrap:"wrap", gap:20, alignItems:"center", justifyContent:"center" }}>
+              <ResponsiveContainer width={180} height={180}>
+                <PieChart>
+                  <Pie data={geoData} cx="50%" cy="50%" innerRadius={42} outerRadius={68} paddingAngle={3} dataKey="value">
+                    {geoData.map((d,i) => <Cell key={i} fill={d.color} />)}
+                  </Pie>
+                  <Tooltip formatter={(v) => fmt(v)} contentStyle={{ background:"#1E293B", border:"none", borderRadius:8, color:"#F1F5F9", fontSize:12 }} />
+                </PieChart>
+              </ResponsiveContainer>
+              <div style={{ flex:1, minWidth:200 }}>
+                {geoData.map(d => (
+                  <div key={d.name} style={{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"8px 0", borderBottom:"1px solid rgba(255,255,255,0.05)" }}>
+                    <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+                      <div style={{ width:10, height:10, borderRadius:2, background:d.color, flexShrink:0 }} />
+                      <span style={{ fontSize:12, color:"#CBD5E1" }}>{d.name}</span>
+                    </div>
+                    <div style={{ textAlign:"right" }}>
+                      <div style={{ fontSize:13, fontWeight:700, color:d.color }}>{geoTotal>0?(d.value/geoTotal*100).toFixed(1):0}%</div>
+                      <div style={{ fontSize:10, color:"#475569" }}>{fmt(d.value)}</div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </Card>
+          <Card>
+            <div style={{ fontSize:12, fontWeight:700, color:"#94A3B8", marginBottom:8 }}>Méthodologie</div>
+            <div style={{ fontSize:11, color:"#475569", lineHeight:1.7 }}>
+              Banque, Épargne, SCPI et Immobilier → France · Actions sans suffixe de marché → États-Unis · .PA / .FR → France · .L / .DE / .AS… → Europe · Crypto → International (décentralisé)
+            </div>
+          </Card>
+        </div>
+      )}
+
+      {/* ── Recommandations ──────────────────────────────────────────────────── */}
+      {tab === "recom" && (
+        <div>
+          <Card style={{ marginBottom:14 }}>
+            <div style={{ fontSize:12, fontWeight:700, color:"#94A3B8", textTransform:"uppercase", letterSpacing:1, marginBottom:6 }}>Recommandations — profil {profile.label}</div>
+            <div style={{ fontSize:11, color:"#475569", marginBottom:14 }}>{profile.desc}</div>
+            {recoms.length === 0 ? (
+              <div style={{ textAlign:"center", padding:"24px", color:"#34D399", fontSize:13 }}>
+                ✅ Allocation bien alignée avec le profil {profile.label} ! (écarts &lt; 5%)
+              </div>
+            ) : (
+              <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
+                {recoms.map(r => {
+                  const over   = r.diff > 0;
+                  const color  = over ? "#F87171" : "#60A5FA";
+                  const action = over ? "Réduire" : "Renforcer";
+                  const amount = grandTotal > 0 ? Math.abs(r.diff/100*grandTotal) : 0;
+                  return (
+                    <div key={r.key} style={{ display:"flex", alignItems:"flex-start", gap:12, padding:"12px 14px", borderRadius:10, background:"rgba(255,255,255,0.03)", border:`1px solid ${color}22` }}>
+                      <div style={{ fontSize:18, flexShrink:0 }}>{r.icon}</div>
+                      <div style={{ flex:1 }}>
+                        <div style={{ fontSize:13, fontWeight:700, color }}>{action} {r.label} de {Math.abs(r.diff).toFixed(0)}pp</div>
+                        <div style={{ fontSize:11, color:"#64748B", marginTop:2 }}>
+                          Actuel : {r.actual.toFixed(1)}% · Cible : {r.target}% · Écart ≈ {fmt(amount)}
+                        </div>
+                      </div>
+                      <div style={{ fontSize:18 }}>{over ? "📉" : "📈"}</div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </Card>
+          <Card>
+            <div style={{ fontSize:12, fontWeight:700, color:"#94A3B8", marginBottom:12 }}>Indicateurs de risque</div>
+            <div style={{ display:"flex", gap:10, flexWrap:"wrap" }}>
+              {[
+                { label:"Volatilité",  value:`${(volatilePct*100).toFixed(0)}%`, sub:"actifs volatils",   color:"#FBBF24" },
+                { label:"Liquidité",   value:`${((cryptoTotal+stocksTotal+bankTotal)/grandTotal*100||0).toFixed(0)}%`, sub:"actifs liquides",  color:"#34D399" },
+                { label:"Immobilisé",  value:`${((realestateTotal+scpiTotal)/grandTotal*100||0).toFixed(0)}%`, sub:"immo + SCPI",    color:"#A78BFA" },
+                { label:"Diversif.",   value:`${ASSET_META.filter(a=>a.val>0).length}/6`,                   sub:"classes actives", color:"#818CF8" },
+              ].map(c => (
+                <div key={c.label} style={{ flex:1, minWidth:120, padding:"12px", background:"rgba(255,255,255,0.03)", borderRadius:10, textAlign:"center" }}>
+                  <div style={{ fontSize:10, color:"#64748B", marginBottom:4 }}>{c.label}</div>
+                  <div style={{ fontSize:22, fontWeight:800, color:c.color }}>{c.value}</div>
+                  <div style={{ fontSize:10, color:"#475569" }}>{c.sub}</div>
+                </div>
+              ))}
+            </div>
+          </Card>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function CryptoView({ cryptoData, setCryptoData, cryptoPrices, loading, history, cryptoHistory, cryptoHistory24h, cryptoHistory7d }) {
   const [editingCode, setEditingCode] = useState(null);
   const [editQty, setEditQty] = useState("");
@@ -7400,6 +7762,7 @@ function AppContent({ user }) {
     { key: "bank",        icon: "🏦", label: "Banque" },
     { key: "budget",      icon: "💰", label: "Budget" },
     { key: "simulateur",  icon: "🏦", label: "Simulateur crédit" },
+    { key: "analyse",     icon: "🔬", label: "Analyse portefeuille" },
   ];
 
   return (
@@ -7487,6 +7850,7 @@ function AppContent({ user }) {
         {view === "bank"       && <BankView bank={bank} setBank={setBank} />}
         {view === "budget"     && <BudgetView uid={user?.uid} onOpenQuickAdd={() => setShowQuickAdd(true)} quickAddTx={quickAddTx} setQuickAddTx={setQuickAddTx} onCatsChange={setQuickAddCats} />}
         {view === "simulateur" && <SimulateurCredit cryptoTotal={cryptoTotal} stocksTotal={stocksTotal} savingsTotal={savingsTotal} bankTotal={bankTotal} realestateTotal={realestateTotal} scpiTotal={scpiTotal} grandTotal={grandTotal} uid={user?.uid} />}
+        {view === "analyse"    && <AnalysePortefeuille cryptoData={cryptoData} cryptoPrices={cryptoPrices} stocks={stocks} bank={bank} savings={savings} scpi={scpi} realestate={realestate} history={history} oraPrice={oraPrice} />}
       </div>
 
       {/* Bouton ajout intégré dans la nav — supprimé du bas de page */}
