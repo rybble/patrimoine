@@ -3875,11 +3875,6 @@ function BudgetView({ uid, quickAddTx, setQuickAddTx, onCatsChange }) {
     });
   }, [uid]);
 
-  // Synchroniser l'année du formulaire avec curYear quand on ouvre l'onglet Ajouter
-  useEffect(() => {
-    if (activeTab === "add") setForm(f => ({ ...f, annee: curYear }));
-  }, [activeTab, curYear]);
-
   // Ré-appliquer quickAddTx après rechargement Firebase (anti race condition)
   const quickAddTxRef = useRef(quickAddTx);
   useEffect(() => { quickAddTxRef.current = quickAddTx; }, [quickAddTx]);
@@ -3909,6 +3904,12 @@ function BudgetView({ uid, quickAddTx, setQuickAddTx, onCatsChange }) {
 
   const years = [...new Set(transactions.map(t => t.annee))].sort((a,b) => b-a);
   const curYear = selectedYear || (years[0] ?? new Date().getFullYear());
+
+  // Synchroniser l'année du formulaire avec curYear quand on ouvre l'onglet Ajouter
+  // (placé après curYear pour éviter le TDZ)
+  useEffect(() => {
+    if (activeTab === "add") setForm(f => ({ ...f, annee: curYear }));
+  }, [activeTab, curYear]);
 
   const filteredByYear = transactions.filter(t => t.annee === curYear);
   const byPeriod = (yr, mo) => transactions.filter(t => t.annee === yr && (!mo || t.mois === mo));
