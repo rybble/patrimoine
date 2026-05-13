@@ -3875,6 +3875,11 @@ function BudgetView({ uid, quickAddTx, setQuickAddTx, onCatsChange }) {
     });
   }, [uid]);
 
+  // Synchroniser l'année du formulaire avec curYear quand on ouvre l'onglet Ajouter
+  useEffect(() => {
+    if (activeTab === "add") setForm(f => ({ ...f, annee: curYear }));
+  }, [activeTab, curYear]);
+
   // Ré-appliquer quickAddTx après rechargement Firebase (anti race condition)
   const quickAddTxRef = useRef(quickAddTx);
   useEffect(() => { quickAddTxRef.current = quickAddTx; }, [quickAddTx]);
@@ -4282,6 +4287,8 @@ function BudgetView({ uid, quickAddTx, setQuickAddTx, onCatsChange }) {
           {/* ── Solde / Bilan du mois ──────────────────────────── */}
           {(() => {
             const now = new Date();
+            // Pas de mois sélectionné + on regarde une autre année → pas de bilan individuel (les StatCards annuelles suffisent)
+            if (!selectedMonth && curYear !== now.getFullYear()) return null;
             const mo = selectedMonth || (now.getMonth() + 1);
             const yr = curYear;
             const isCurrentMonth = (yr === now.getFullYear() && mo === now.getMonth() + 1);
@@ -4477,7 +4484,10 @@ function BudgetView({ uid, quickAddTx, setQuickAddTx, onCatsChange }) {
 
           {/* ── Enveloppes budgétaires ── */}
           {Object.keys(targets).filter(k => (targets[k] || 0) > 0).length > 0 && (() => {
-            const mo = selectedMonth || (new Date().getMonth() + 1);
+            const _now = new Date();
+            // Pas de mois sélectionné + autre année → afficher le mois courant de cette année si disponible, sinon ne pas afficher
+            if (!selectedMonth && curYear !== _now.getFullYear()) return null;
+            const mo = selectedMonth || (_now.getMonth() + 1);
             const periodTx = transactions.filter(t => t.es === "Sortie" && t.annee === curYear && t.mois === mo);
             const catTotals = {};
             periodTx.forEach(t => { catTotals[t.type] = (catTotals[t.type] || 0) + t.montant; });
@@ -5207,8 +5217,8 @@ function BudgetView({ uid, quickAddTx, setQuickAddTx, onCatsChange }) {
             </div>
             <div>
               <div style={lblS}>Année</div>
-              <select value={form.annee} onChange={e=>setForm(f=>({...f,annee:e.target.value}))} style={inpS}>
-                {[2024,2025,2026,2027].map(y=><option key={y} value={y}>{y}</option>)}
+              <select value={form.annee} onChange={e=>setForm(f=>({...f,annee:parseInt(e.target.value)}))} style={inpS}>
+                {[...new Set([...years, new Date().getFullYear(), new Date().getFullYear()+1, new Date().getFullYear()+2])].sort((a,b)=>b-a).map(y=><option key={y} value={y}>{y}</option>)}
               </select>
             </div>
             <div>
@@ -5307,7 +5317,7 @@ function BudgetView({ uid, quickAddTx, setQuickAddTx, onCatsChange }) {
                         <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
                           <div style={{ display:"flex", gap:6, flexWrap:"wrap" }}>
                             <select value={editForm.annee} onChange={e=>setEditForm(f=>({...f,annee:parseInt(e.target.value)}))} style={{...inpS,width:80,padding:"5px 8px",fontSize:12}}>
-                              {[2024,2025,2026,2027].map(y=><option key={y} value={y}>{y}</option>)}
+                              {[...new Set([...years, new Date().getFullYear(), new Date().getFullYear()+1])].sort((a,b)=>b-a).map(y=><option key={y} value={y}>{y}</option>)}
                             </select>
                             <select value={editForm.mois} onChange={e=>setEditForm(f=>({...f,mois:parseInt(e.target.value)}))} style={{...inpS,width:72,padding:"5px 8px",fontSize:12}}>
                               {MOIS_FR.map((m,idx)=><option key={idx+1} value={idx+1}>{m}</option>)}
@@ -5743,9 +5753,9 @@ function QuickAddModal({ onClose, onAdd, cats }) {
             {["Jan","Fév","Mar","Avr","Mai","Jun","Jul","Aoû","Sep","Oct","Nov","Déc"].map((m,i)=>
               <option key={i+1} value={i+1}>{m}</option>)}
           </select>
-          <select value={annee} onChange={e=>setAnnee(e.target.value)}
+          <select value={annee} onChange={e=>setAnnee(parseInt(e.target.value))}
             style={{ ...inp, fontSize:13, padding:"8px 10px" }}>
-            {[2024,2025,2026,2027].map(y=><option key={y} value={y}>{y}</option>)}
+            {Array.from({length:6}, (_,i) => now.getFullYear()+2-i).map(y=><option key={y} value={y}>{y}</option>)}
           </select>
           <input value={note} onChange={e=>setNote(e.target.value)}
             onKeyDown={e=>e.key==="Enter"&&doAdd()}
