@@ -788,24 +788,24 @@ function ScoreSanteFinanciere({ uid, refreshKey, cryptoTotal, stocksTotal, bankT
   const now = new Date();
   const curYear = now.getFullYear(), curMonth = now.getMonth() + 1;
 
-  // ── Sous-score 1 : Taux d'épargne du mois (0–25) ──────────────────────────
+  // ── Sous-score 1 : Taux d'épargne du mois (0–20) ──────────────────────────
   const monthTx  = transactions.filter(t => t.annee === curYear && t.mois === curMonth);
   const revenus  = monthTx.filter(t => t.es === "Entrée").reduce((s, t) => s + t.montant, 0);
   const depenses = monthTx.filter(t => t.es === "Sortie").reduce((s, t) => s + t.montant, 0);
-  let scoreTauxEpargne = 10; // neutre si aucune donnée
+  let scoreTauxEpargne = 8; // neutre si aucune donnée
   let tauxEpargneAff = null;
   if (revenus > 0) {
     const taux = Math.max(0, (revenus - depenses) / revenus);
     tauxEpargneAff = Math.round(taux * 100);
-    // 0%→0, 10%→6, 20%→12, 30%→20, 40%+→25
-    scoreTauxEpargne = Math.min(25, Math.round(taux * 80));
+    // 0%→0, 10%→5, 20%→10, 30%→16, 40%+→20
+    scoreTauxEpargne = Math.min(20, Math.round(taux * 64));
   }
 
-  // ── Sous-score 2 : Diversification (0–25) ─────────────────────────────────
+  // ── Sous-score 2 : Diversification (0–20) ─────────────────────────────────
   const activeClasses = [cryptoTotal, stocksTotal, savingsTotal, scpiTotal, realestateTotal, bankTotal].filter(v => v > 0).length;
-  const scoreDiversification = Math.round((activeClasses / 6) * 25);
+  const scoreDiversification = Math.round((activeClasses / 6) * 20);
 
-  // ── Sous-score 3 : Liquidité (0–25) ───────────────────────────────────────
+  // ── Sous-score 3 : Liquidité (0–20) ───────────────────────────────────────
   const liquidAssets = cryptoTotal + stocksTotal + bankTotal;
   const avgMonthlyExp = (() => {
     const byMonth = {};
@@ -817,17 +817,28 @@ function ScoreSanteFinanciere({ uid, refreshKey, cryptoTotal, stocksTotal, bankT
     return vals.length > 0 ? vals.reduce((s, v) => s + v, 0) / vals.length : 1500;
   })();
   const monthsReserve = avgMonthlyExp > 0 ? liquidAssets / avgMonthlyExp : 0;
-  // 0m→0, 3m→10, 6m→18, 12m+→25
-  const scoreLiquidite = Math.min(25, Math.round((monthsReserve / 12) * 25));
+  // 0m→0, 3m→8, 6m→14, 12m+→20
+  const scoreLiquidite = Math.min(20, Math.round((monthsReserve / 12) * 20));
 
-  // ── Sous-score 4 : Objectifs (0–25) ───────────────────────────────────────
-  let scoreObjectifs = 10; // neutre
+  // ── Sous-score 4 : Objectifs (0–20) ───────────────────────────────────────
+  let scoreObjectifs = 8; // neutre
   if (objectifs.length > 0) {
     const avg = objectifs.reduce((s, o) => s + Math.min(100, o.cible > 0 ? (o.actuel / o.cible) * 100 : 0), 0) / objectifs.length;
-    scoreObjectifs = Math.round(avg / 4);
+    scoreObjectifs = Math.round(avg / 5);
   }
 
-  const totalScore = scoreTauxEpargne + scoreDiversification + scoreLiquidite + scoreObjectifs;
+  // ── Sous-score 5 : Couverture retraite (0–20) ─────────────────────────────
+  // Cible FIRE = 25× les dépenses annuelles (règle des 4%)
+  const annualExpenses = avgMonthlyExp * 12;
+  const fireTarget = annualExpenses * 25;
+  let scoreRetraite = 8; // neutre si pas de données
+  let retraitePct = null;
+  if (fireTarget > 0 && grandTotal > 0) {
+    retraitePct = Math.round((grandTotal / fireTarget) * 100);
+    scoreRetraite = Math.min(20, Math.round((grandTotal / fireTarget) * 20));
+  }
+
+  const totalScore = scoreTauxEpargne + scoreDiversification + scoreLiquidite + scoreObjectifs + scoreRetraite;
   const scoreColor = totalScore >= 75 ? "#34D399" : totalScore >= 60 ? "#FBBF24" : totalScore >= 40 ? "#FB923C" : "#F87171";
   const scoreLabel = totalScore >= 75 ? "Excellent" : totalScore >= 60 ? "Bon" : totalScore >= 40 ? "À améliorer" : "Fragile";
   const scoreComment = totalScore >= 75
@@ -841,6 +852,7 @@ function ScoreSanteFinanciere({ uid, refreshKey, cryptoTotal, stocksTotal, bankT
   const circumference = 2 * Math.PI * 34;
   const dash = circumference * Math.min(totalScore, 100) / 100;
 
+  const maxScore = 20;
   const subScores = [
     {
       label: "Taux d'épargne",
@@ -865,6 +877,12 @@ function ScoreSanteFinanciere({ uid, refreshKey, cryptoTotal, stocksTotal, bankT
       score: scoreObjectifs,
       detail: objectifs.length > 0 ? `${objectifs.length} objectif(s) suivi(s)` : "Aucun objectif défini",
       color: "#FBBF24", icon: "🎯",
+    },
+    {
+      label: "Couverture retraite",
+      score: scoreRetraite,
+      detail: retraitePct != null ? `${retraitePct}% de l'objectif FIRE` : "Données de dépenses manquantes",
+      color: "#F472B6", icon: "🏖",
     },
   ];
 
@@ -908,12 +926,12 @@ function ScoreSanteFinanciere({ uid, refreshKey, cryptoTotal, stocksTotal, bankT
               </div>
               <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
                 <span style={{ fontSize: 11, color: "#475569" }}>{s.detail}</span>
-                <span style={{ fontSize: 12, fontWeight: 700, color: s.color, minWidth: 36, textAlign: "right" }}>{s.score}/25</span>
+                <span style={{ fontSize: 12, fontWeight: 700, color: s.color, minWidth: 36, textAlign: "right" }}>{s.score}/{maxScore}</span>
               </div>
             </div>
             <div style={{ height: 6, background: "rgba(255,255,255,0.06)", borderRadius: 3, overflow: "hidden" }}>
               <div style={{
-                width: `${(s.score / 25) * 100}%`, height: "100%", borderRadius: 3,
+                width: `${(s.score / maxScore) * 100}%`, height: "100%", borderRadius: 3,
                 background: `linear-gradient(90deg, ${s.color}99, ${s.color})`,
                 transition: "width 0.8s ease",
               }} />
@@ -3806,6 +3824,13 @@ function BudgetView({ uid, quickAddTx, setQuickAddTx, onCatsChange }) {
     if (uid) await fbSet(uid, "budget_mappings", m);
   }, [uid]);
 
+  // ── Enveloppes budgétaires { catName → montantMensuel } ──────────────────
+  const [targets, setTargets] = useState({});
+  const saveTargets = useCallback(async (t) => {
+    setTargets(t);
+    if (uid) await fbSet(uid, "budget_targets", t);
+  }, [uid]);
+
   // ── Firebase sync budget ─────────────────────────────────────────────────
   const budgetSyncedRef = useRef(false);
   const budgetTimers    = useRef({});
@@ -3830,8 +3855,9 @@ function BudgetView({ uid, quickAddTx, setQuickAddTx, onCatsChange }) {
   // Load budget from Firestore on mount
   useEffect(() => {
     if (!uid) return;
-    Promise.all([fbGet(uid, "budget_tx"), fbGet(uid, "budget_cats"), fbGet(uid, "budget_mappings")]).then(([fbTx, fbCats, fbMappings]) => {
+    Promise.all([fbGet(uid, "budget_tx"), fbGet(uid, "budget_cats"), fbGet(uid, "budget_mappings"), fbGet(uid, "budget_targets")]).then(([fbTx, fbCats, fbMappings, fbTargets]) => {
       if (fbMappings && typeof fbMappings === "object") setMappings(fbMappings);
+      if (fbTargets && typeof fbTargets === "object") setTargets(fbTargets);
       const fixCatName = n => n === "Petits achats" ? "petits achat" : n;
       if (fbTx) {
         const loaded = fbTx.map((t, i) => ({ id: t.id || `legacy-${i}`, ...t, type: fixCatName(t.type) }));
@@ -4449,6 +4475,60 @@ function BudgetView({ uid, quickAddTx, setQuickAddTx, onCatsChange }) {
             ))}
           </div>
 
+          {/* ── Enveloppes budgétaires ── */}
+          {Object.keys(targets).filter(k => (targets[k] || 0) > 0).length > 0 && (() => {
+            const mo = selectedMonth || curMonth;
+            const periodTx = transactions.filter(t => t.es === "Sortie" && t.annee === curYear && t.mois === mo);
+            const catTotals = {};
+            periodTx.forEach(t => { catTotals[t.type] = (catTotals[t.type] || 0) + t.montant; });
+            const rows = Object.entries(targets)
+              .filter(([, v]) => (v || 0) > 0)
+              .map(([cat, budget]) => ({ cat, budget, actual: catTotals[cat] || 0 }))
+              .sort((a, b) => (b.actual / b.budget) - (a.actual / a.budget));
+            return (
+              <Card style={{ padding:"16px 20px", marginBottom:14 }}>
+                <div style={{ fontSize:13, fontWeight:600, color:"#F1F5F9", marginBottom:12 }}>
+                  🎯 Enveloppes budgétaires — {MOIS_FR[(mo || 1) - 1]}
+                  <span style={{ fontSize:11, color:"#64748B", marginLeft:8 }}>
+                    Définir les budgets dans l'onglet Catégories
+                  </span>
+                </div>
+                <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
+                  {rows.map(({ cat, budget, actual }) => {
+                    const pct = budget > 0 ? Math.min(150, (actual / budget) * 100) : 0;
+                    const pctDisp = budget > 0 ? Math.round((actual / budget) * 100) : 0;
+                    const color = pctDisp >= 100 ? "#F87171" : pctDisp >= 80 ? "#FBBF24" : "#34D399";
+                    const catColor = (cats.sortie.find(c => c.name === cat) || {}).color || "#818CF8";
+                    return (
+                      <div key={cat}>
+                        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:4 }}>
+                          <div style={{ display:"flex", alignItems:"center", gap:6 }}>
+                            <div style={{ width:8, height:8, borderRadius:"50%", background:catColor, flexShrink:0 }} />
+                            <span style={{ fontSize:12, color:"#F1F5F9", fontWeight:600 }}>{cat}</span>
+                          </div>
+                          <div style={{ display:"flex", gap:12, alignItems:"center" }}>
+                            <span style={{ fontSize:11, color:"#94A3B8" }}>{fmt(actual)} / {fmt(budget)}</span>
+                            <span style={{ fontSize:11, fontWeight:700, color, minWidth:50, textAlign:"right" }}>
+                              {pctDisp >= 100 ? `⚠ +${fmt(actual - budget)}` : `${fmt(budget - actual)} restant`}
+                            </span>
+                            <span style={{ fontSize:11, fontWeight:700, color, minWidth:32, textAlign:"right" }}>{pctDisp}%</span>
+                          </div>
+                        </div>
+                        <div style={{ height:6, background:"rgba(255,255,255,0.06)", borderRadius:3, overflow:"hidden" }}>
+                          <div style={{ width:`${Math.min(100, pct)}%`, height:"100%", borderRadius:3, background:`linear-gradient(90deg, ${color}99, ${color})`, transition:"width 0.6s ease" }} />
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+                <div style={{ marginTop:12, paddingTop:10, borderTop:"1px solid rgba(255,255,255,0.06)", display:"flex", justifyContent:"space-between", fontSize:11, color:"#64748B" }}>
+                  <span>Total budget : <strong style={{ color:"#F1F5F9" }}>{fmt(rows.reduce((s, r) => s + r.budget, 0))}</strong></span>
+                  <span>Total dépensé : <strong style={{ color: rows.reduce((s,r)=>s+r.actual,0) > rows.reduce((s,r)=>s+r.budget,0) ? "#F87171" : "#34D399" }}>{fmt(rows.reduce((s, r) => s + r.actual, 0))}</strong></span>
+                </div>
+              </Card>
+            );
+          })()}
+
           {/* Tableau bilan mensuel */}
           <Card style={{ padding:0, overflow:"hidden" }}>
             <div style={{ padding:"14px 20px", borderBottom:"1px solid rgba(255,255,255,0.06)", fontSize:13, fontWeight:600, color:"#F1F5F9" }}>
@@ -5039,9 +5119,9 @@ function BudgetView({ uid, quickAddTx, setQuickAddTx, onCatsChange }) {
 
           {/* Liste catégories */}
           <Card style={{ padding:0, overflow:"hidden" }}>
-            <div style={{ padding:"12px 18px", borderBottom:"1px solid rgba(255,255,255,0.06)", fontSize:13, fontWeight:600, color:"#F1F5F9" }}>
-              {catMgrEs==="sortie" ? "📤 Catégories de sorties" : "📥 Catégories d'entrées"}
-              <span style={{ fontSize:11, color:"#64748B", marginLeft:8 }}>{cats[catMgrEs].length} catégories</span>
+            <div style={{ padding:"12px 18px", borderBottom:"1px solid rgba(255,255,255,0.06)", fontSize:13, fontWeight:600, color:"#F1F5F9", display:"flex", alignItems:"center", justifyContent:"space-between" }}>
+              <span>{catMgrEs==="sortie" ? "📤 Catégories de sorties" : "📥 Catégories d'entrées"}<span style={{ fontSize:11, color:"#64748B", marginLeft:8 }}>{cats[catMgrEs].length} catégories</span></span>
+              {catMgrEs === "sortie" && <span style={{ fontSize:11, color:"#64748B" }}>Enveloppe €/mois</span>}
             </div>
             {cats[catMgrEs].map((cat,i) => {
               const usageCount = transactions.filter(t => t.type === cat.name && t.es === (catMgrEs==="sortie"?"Sortie":"Entrée")).length;
@@ -5064,6 +5144,23 @@ function BudgetView({ uid, quickAddTx, setQuickAddTx, onCatsChange }) {
                       <div style={{ width:16, height:16, borderRadius:"50%", background:cat.color, flexShrink:0 }} />
                       <span style={{ flex:1, fontSize:13, color:"#F1F5F9" }}>{cat.name}</span>
                       <span style={{ fontSize:11, color:"#475569" }}>{usageCount} transaction{usageCount>1?"s":""}</span>
+                      {catMgrEs === "sortie" && (
+                        <div style={{ display:"flex", alignItems:"center", gap:4 }}>
+                          <input
+                            type="number" min={0} step={10}
+                            value={targets[cat.name] || ""}
+                            onChange={e => {
+                              const v = e.target.value ? parseFloat(e.target.value) : undefined;
+                              const updated = { ...targets };
+                              if (v) updated[cat.name] = v; else delete updated[cat.name];
+                              saveTargets(updated);
+                            }}
+                            placeholder="—"
+                            style={{ width:72, background:"#1E293B", border:"1px solid #334155", borderRadius:6, color:"#F1F5F9", fontSize:11, padding:"3px 6px", textAlign:"right" }}
+                          />
+                          <span style={{ fontSize:10, color:"#475569" }}>€/m</span>
+                        </div>
+                      )}
                       <button onClick={()=>{ setEditingCat(cat.name); setEditCatForm({name:cat.name, color:cat.color}); }}
                         style={{ background:"transparent", border:"1px solid #334155", borderRadius:6, color:"#818CF8", padding:"3px 10px", cursor:"pointer", fontSize:11 }}>✏ Modifier</button>
                       <button onClick={()=>deleteCat(catMgrEs, cat.name)}
@@ -6935,10 +7032,18 @@ function AppContent({ user }) {
       { qty: 0.463606, currency: "HKD", symbol: "0285.HK" },
       { qty: 0.211707, currency: "USD", symbol: "CSPX.L" },
     ];
-    const usdToEur = 0.92, hkdToEur = 0.118;
     const ethQty = 1.0258;
 
     const fetchMarketHistory = async () => {
+      // ── Taux de change live USD/HKD→EUR ───────────────────────────────────
+      let usdToEur = 0.92, hkdToEur = 0.118;
+      try {
+        const fxRes = await cgFetch("https://api.coingecko.com/api/v3/simple/price?ids=usd,hkd&vs_currencies=eur");
+        const fxData = await fxRes.json();
+        if (fxData?.usd?.eur) usdToEur = fxData.usd.eur;
+        if (fxData?.hkd?.eur) hkdToEur = fxData.hkd.eur;
+      } catch {}
+
       // ── Crypto daily (90j) ─────────────────────────────────────────────────
       try {
         const ethRes = await cgFetch("https://api.coingecko.com/api/v3/coins/ethereum/market_chart?vs_currency=eur&days=90&interval=daily");
