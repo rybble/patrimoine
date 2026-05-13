@@ -4477,7 +4477,7 @@ function BudgetView({ uid, quickAddTx, setQuickAddTx, onCatsChange }) {
 
           {/* ── Enveloppes budgétaires ── */}
           {Object.keys(targets).filter(k => (targets[k] || 0) > 0).length > 0 && (() => {
-            const mo = selectedMonth || curMonth;
+            const mo = selectedMonth || (new Date().getMonth() + 1);
             const periodTx = transactions.filter(t => t.es === "Sortie" && t.annee === curYear && t.mois === mo);
             const catTotals = {};
             periodTx.forEach(t => { catTotals[t.type] = (catTotals[t.type] || 0) + t.montant; });
