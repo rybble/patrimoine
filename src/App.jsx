@@ -4277,7 +4277,12 @@ function BudgetView({ uid, quickAddTx, setQuickAddTx, onCatsChange }) {
         logger: m => { if (m.status === "recognizing text") setOcrProgress(Math.round(m.progress * 100)); }
       });
       const parsed = parseBankOcrText(text);
-      if (!parsed.length) { setOcrError("Aucune transaction détectée — vérifiez que la capture contient une liste de mouvements avec dates et montants."); return; }
+      if (!parsed.length) {
+        // Afficher les 800 premiers caractères du texte brut pour diagnostic
+        const preview = text.replace(/\n{3,}/g, "\n\n").slice(0, 800);
+        setOcrError(`Aucune transaction détectée.\n\n── Texte brut OCR (debug) ──\n${preview}`);
+        return;
+      }
       setBankPreview({ transactions: parsed, fileName: "Capture d'écran OCR" });
     } catch (e) {
       setOcrError("Erreur OCR : " + (e?.message || String(e)));
@@ -6087,7 +6092,7 @@ function BudgetView({ uid, quickAddTx, setQuickAddTx, onCatsChange }) {
                 </div>
               </div>
             )}
-            {ocrError && <div style={{ fontSize:12, color:"#F87171", marginTop:8, padding:"8px 12px", background:"rgba(248,113,113,0.1)", borderRadius:6 }}>{ocrError}</div>}
+            {ocrError && <pre style={{ fontSize:11, color:"#F87171", marginTop:8, padding:"8px 12px", background:"rgba(248,113,113,0.08)", borderRadius:6, whiteSpace:"pre-wrap", wordBreak:"break-word", maxHeight:300, overflowY:"auto" }}>{ocrError}</pre>}
           </Card>
 
           <Card style={{ padding:16, background:"rgba(99,102,241,0.05)", border:"1px solid rgba(99,102,241,0.2)" }}>
