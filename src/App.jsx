@@ -3836,8 +3836,9 @@ function preprocessImageForOcr(blob) {
       ctx.drawImage(img, 0, 0);
       const d = ctx.getImageData(0, 0, canvas.width, canvas.height);
       for (let i = 0; i < d.data.length; i += 4) {
+        // Convertir en niveaux de gris puis booster le contraste (facteur 1.8)
         const gray = 0.299*d.data[i] + 0.587*d.data[i+1] + 0.114*d.data[i+2];
-        const val  = gray > 128 ? 255 : 0;
+        const val  = Math.min(255, Math.max(0, Math.round(128 + (gray - 128) * 1.8)));
         d.data[i] = d.data[i+1] = d.data[i+2] = val;
       }
       ctx.putImageData(d, 0, 0);
@@ -3849,25 +3850,61 @@ function preprocessImageForOcr(blob) {
 }
 
 function parseBankOcrText(text) {
-  const lines   = text.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
-  const txs     = [];
-  const dateRe  = /(\d{2}[\/\-]\d{2}[\/\-]\d{4}|\d{2}[\/\-]\d{2}[\/\-]\d{2})/;
-  const amtRe   = /([+\-]?\s?[\d\s]+[,\.]\d{2})\s*€?$/;
+  const FR_MONTHS = { janvier:1, "février":2, fevrier:2, mars:3, avril:4, mai:5, juin:6,
+    juillet:7, "àoût":8, aout:8, septembre:9, octobre:10, novembre:11,
+    "décembre":12, decembre:12 };
+  const FR_DATE_RE = /(?:lundi|mardi|mercredi|jeudi|vendredi|samedi|dimanche)\s+(\d{1,2})\s+(\S+)\s+(\d{4})/i;
+  const NUM_DATE_RE = /(\d{2})[\/\-](\d{2})[\/\-](\d{2,4})/;
+  // Montant : supporte tiret normal, tiret cadratin (–), espace insécable, signe +
+  const AMT_RE = /([+–\-]\s?)?(\d[\d\s ]*[,\.]\d{2})\s*€?\s*$/;
+  // Lignes de catégorie Boursobank à ignorer (pas de montant sur ces lignes)
+  const CAT_RE = /^(virements?\s|retraits?\s|retraits\s|télépho|assurance|paiement\s|abonnement|prélève)/i;
+
+  const lines = text.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+  const txs   = [];
+  let curYear = null, curMonth = null, pendingLabel = null;
+
   for (const line of lines) {
-    const dateM = line.match(dateRe);
-    const amtM  = line.match(amtRe);
-    if (!dateM || !amtM) continue;
-    const parts = dateM[1].split(/[\/\-]/);
-    const year  = parseInt(parts[2].length === 2 ? "20" + parts[2] : parts[2]);
-    const month = parseInt(parts[1]);
-    if (isNaN(year) || isNaN(month) || year < 2000) continue;
-    const amount = parseFloat(amtM[1].replace(/\s/g, "").replace(",", "."));
-    if (isNaN(amount)) continue;
-    const label = line.slice(dateM.index + dateM[0].length, line.lastIndexOf(amtM[0])).trim().replace(/\s+/g, " ");
+    // Détection entête de date en français "jeudi 14 mai 2026"
+    const frM = line.match(FR_DATE_RE);
+    if (frM) {
+      curYear  = parseInt(frM[3]);
+      curMonth = FR_MONTHS[(frM[2] || "").toLowerCase()] || null;
+      pendingLabel = null;
+      continue;
+    }
+    // Détection date numérique en fallback (dd/mm/yyyy)
+    const numM = line.match(NUM_DATE_RE);
+    if (numM && !line.match(AMT_RE)) {
+      const y = parseInt(numM[3]); curYear = y < 100 ? 2000 + y : y;
+      curMonth = parseInt(numM[2]); pendingLabel = null; continue;
+    }
+    if (!curYear || !curMonth) continue;
+
+    const amtM = line.match(AMT_RE);
+    if (!amtM) {
+      // Ligne sans montant = potentiel libellé pour la transaction suivante
+      if (!CAT_RE.test(line) && line.length > 3) pendingLabel = line.replace(/\s+/g, " ");
+      continue;
+    }
+
+    // Extraire montant
+    const sign    = (amtM[1] || "").replace(/\s/g, "");
+    const isNeg   = sign === "-" || sign === "–" || sign === "—";
+    const amtStr  = amtM[2].replace(/[\s ]/g, "").replace(",", ".");
+    const amount  = parseFloat(amtStr);
+    if (isNaN(amount) || amount === 0) continue;
+
+    // Libellé = ce qui précède le montant sur la même ligne, ou pendingLabel
+    const beforeAmt = line.slice(0, line.search(AMT_RE)).trim().replace(/\s+/g, " ");
+    const label = (beforeAmt.length > 2 ? beforeAmt : null) || pendingLabel;
+    pendingLabel = null;
     if (!label) continue;
-    const es     = amount >= 0 ? "Entrée" : "Sortie";
-    const montant = Math.round(Math.abs(amount) * 100) / 100;
-    txs.push({ id: `ocr-${Date.now()}-${txs.length}`, annee: year, mois: month, es, type: autoCategory(label, es), montant, note: label });
+
+    const es      = isNeg ? "Sortie" : "Entrée";
+    const montant = Math.round(amount * 100) / 100;
+    txs.push({ id: `ocr-${Date.now()}-${txs.length}`, annee: curYear, mois: curMonth,
+               es, type: autoCategory(label, es), montant, note: label });
   }
   return txs;
 }
