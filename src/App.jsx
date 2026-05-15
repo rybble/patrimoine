@@ -3802,8 +3802,12 @@ function autoCategory(label, es) {
     if (l.match(/SALAIRE|PAIE |VIR SAL|TRAITEMENT/)) return "Salaire";
     if (l.match(/LOYER.*(PERCEP|RECEP|VIRT)|VIRT.*LOYER/)) return "Loyer Studio";
     if (l.match(/PRIME|BONUS|INTERESSEMENT|PARTICIPATION/)) return "Prime";
+    if (l.match(/DIVIDEND|DIVIDENDE|ZINSEN|COUPON/)) return "Dividende";
+    if (l.match(/SELL |VENTE TITRE|CESSION TITRE/)) return "Investissement";
+    if (l.match(/INTEREST|INTERET|ZINSGUTSCHRIFT/)) return "Intérêts";
     return "Divers";
   }
+  if (l.match(/BUY |ACHAT TITRE|KAUF |SPARPLAN/)) return "Investissement";
   if (l.match(/CARREFOUR|LECLERC|LIDL|ALDI|MONOPRIX|FRANPRIX|CASINO |INTERMARCH|PICARD |NETTO |AUCHAN|U EXPRESS|BIOCOOP|NATURALIA|SPAR |CORA |EPICERIE|SUPERMARCHE|SIMPLY MARKET/)) return "Nourriture";
   if (l.match(/RATP|NAVIGO|SNCF|TRANSILIEN|OUIBUS|FLIXBUS|BLABLACAR|TAXI |UBER |AIR FRANCE|EASYJET|RYANAIR|VOLOTEA|EUROSTAR|THALYS|TRANSDEV|KEOLIS/)) return "Déplacement";
   if (l.match(/EDF|ENGIE|TOTAL ENERGIES|ELECTRICITE|ILEK|EKWATEUR|LUMINEA|VATTENFALL/)) return "Electricité";
@@ -3820,15 +3824,77 @@ function autoCategory(label, es) {
   return "Divers";
 }
 
+// ─── OCR PREPROCESSING + PARSER BANCAIRE ─────────────────────────────────────
+function preprocessImageForOcr(blob) {
+  return new Promise((resolve) => {
+    const img = new Image();
+    const url = URL.createObjectURL(blob);
+    img.onload = () => {
+      const canvas = document.createElement("canvas");
+      canvas.width = img.width; canvas.height = img.height;
+      const ctx = canvas.getContext("2d");
+      ctx.drawImage(img, 0, 0);
+      const d = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      for (let i = 0; i < d.data.length; i += 4) {
+        const gray = 0.299*d.data[i] + 0.587*d.data[i+1] + 0.114*d.data[i+2];
+        const val  = gray > 128 ? 255 : 0;
+        d.data[i] = d.data[i+1] = d.data[i+2] = val;
+      }
+      ctx.putImageData(d, 0, 0);
+      URL.revokeObjectURL(url);
+      canvas.toBlob(resolve, "image/png");
+    };
+    img.src = url;
+  });
+}
+
+function parseBankOcrText(text) {
+  const lines   = text.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+  const txs     = [];
+  const dateRe  = /(\d{2}[\/\-]\d{2}[\/\-]\d{4}|\d{2}[\/\-]\d{2}[\/\-]\d{2})/;
+  const amtRe   = /([+\-]?\s?[\d\s]+[,\.]\d{2})\s*€?$/;
+  for (const line of lines) {
+    const dateM = line.match(dateRe);
+    const amtM  = line.match(amtRe);
+    if (!dateM || !amtM) continue;
+    const parts = dateM[1].split(/[\/\-]/);
+    const year  = parseInt(parts[2].length === 2 ? "20" + parts[2] : parts[2]);
+    const month = parseInt(parts[1]);
+    if (isNaN(year) || isNaN(month) || year < 2000) continue;
+    const amount = parseFloat(amtM[1].replace(/\s/g, "").replace(",", "."));
+    if (isNaN(amount)) continue;
+    const label = line.slice(dateM.index + dateM[0].length, line.lastIndexOf(amtM[0])).trim().replace(/\s+/g, " ");
+    if (!label) continue;
+    const es     = amount >= 0 ? "Entrée" : "Sortie";
+    const montant = Math.round(Math.abs(amount) * 100) / 100;
+    txs.push({ id: `ocr-${Date.now()}-${txs.length}`, annee: year, mois: month, es, type: autoCategory(label, es), montant, note: label });
+  }
+  return txs;
+}
+
 // ─── PARSEUR OFX / QFX ───────────────────────────────────────────────────────
+function parseTRTransactionLabel(memo, trntype) {
+  const m = (memo || "").trim();
+  const t = (trntype || "").toUpperCase();
+  if (t === "BUY"  || m.match(/^Buy /i))      return m.replace(/^Buy /i,  "Achat ").replace(/ shares? @ .+$/i, "");
+  if (t === "SELL" || m.match(/^Sell /i))     return m.replace(/^Sell /i, "Vente ").replace(/ shares? @ .+$/i, "");
+  if (t === "DIV"  || m.match(/^Dividend/i))  return m.replace(/^Dividend\s*/i, "Dividende ");
+  if (t === "INT"  || m.match(/^Interest/i))  return "Intérêts Trade Republic";
+  if (t === "DEP")                            return m || "Dépôt";
+  return m;
+}
+
 function parseBankOFX(text) {
+  const isTR = /Trade\s*Republic/i.test(text);
   const txs = [];
   const blocks = text.split(/<STMTTRN>/i).slice(1);
   for (const block of blocks) {
     const get = (tag) => { const safe = tag.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"); const m = block.match(new RegExp(`<${safe}>([^<\r\n]+)`, "i")); return m ? m[1].trim() : ""; };
     const dtPosted = get("DTPOSTED");
     const amtStr   = get("TRNAMT").replace(",", ".");
-    const name     = get("NAME") || get("MEMO") || "";
+    const trntype  = get("TRNTYPE");
+    const memo     = get("MEMO");
+    const name     = get("NAME") || memo || "";
     const amount   = parseFloat(amtStr);
     if (!dtPosted || isNaN(amount)) continue;
     const clean = dtPosted.replace(/\[.*\]/, "").trim();
@@ -3837,7 +3903,8 @@ function parseBankOFX(text) {
     const es = amount >= 0 ? "Entrée" : "Sortie";
     const montant = Math.round(Math.abs(amount) * 100) / 100;
     if (montant === 0) continue;
-    txs.push({ id: `bank-${Date.now()}-${txs.length}`, annee: year, mois: month, es, type: autoCategory(name, es), montant, note: name });
+    const label = isTR ? parseTRTransactionLabel(memo || name, trntype) : name;
+    txs.push({ id: `bank-${Date.now()}-${txs.length}`, annee: year, mois: month, es, type: autoCategory(label, es), montant, note: label });
   }
   return txs;
 }
@@ -4151,6 +4218,34 @@ function BudgetView({ uid, quickAddTx, setQuickAddTx, onCatsChange }) {
   const [gsLoading,     setGsLoading]     = useState(false);
   const [activeTab,     setActiveTab]     = useState("overview");
   const [bankPreview,   setBankPreview]   = useState(null);
+  const [ocrLoading,    setOcrLoading]    = useState(false);
+  const [ocrProgress,   setOcrProgress]   = useState(0);
+  const [ocrError,      setOcrError]      = useState("");
+  const [showOcrZone,   setShowOcrZone]   = useState(false);
+  const ocrFileRef = useRef(null);
+
+  const runBankOcr = useCallback(async (blob) => {
+    setOcrLoading(true); setOcrError(""); setOcrProgress(0); setShowOcrZone(false);
+    try {
+      if (!window.Tesseract) {
+        await new Promise((res, rej) => {
+          const s = document.createElement("script");
+          s.src = "https://unpkg.com/tesseract.js@2.1.0/dist/tesseract.min.js";
+          s.onload = res; s.onerror = rej;
+          document.head.appendChild(s);
+        });
+      }
+      const processed = await preprocessImageForOcr(blob);
+      const { data: { text } } = await window.Tesseract.recognize(processed, "fra", {
+        logger: m => { if (m.status === "recognizing text") setOcrProgress(Math.round(m.progress * 100)); }
+      });
+      const parsed = parseBankOcrText(text);
+      if (!parsed.length) { setOcrError("Aucune transaction détectée — vérifiez que la capture contient une liste de mouvements avec dates et montants."); return; }
+      setBankPreview({ transactions: parsed, fileName: "Capture d'écran OCR" });
+    } catch (e) {
+      setOcrError("Erreur OCR : " + (e?.message || String(e)));
+    } finally { setOcrLoading(false); setOcrProgress(0); }
+  }, []);
 
   // Add form
   const [form, setForm] = useState({ es:"Sortie", type:"", montant:"", note:"", annee: new Date().getFullYear(), mois: new Date().getMonth()+1 });
@@ -4240,6 +4335,24 @@ function BudgetView({ uid, quickAddTx, setQuickAddTx, onCatsChange }) {
   // Ré-appliquer quickAddTx après rechargement Firebase (anti race condition)
   const quickAddTxRef = useRef(quickAddTx);
   useEffect(() => { quickAddTxRef.current = quickAddTx; }, [quickAddTx]);
+
+  // Listener Ctrl+V global pour OCR screenshot quand la zone est active
+  useEffect(() => {
+    if (!showOcrZone) return;
+    const handler = (e) => {
+      const items = e.clipboardData?.items || [];
+      for (const item of items) {
+        if (item.type.startsWith("image/")) {
+          e.preventDefault();
+          const blob = item.getAsFile();
+          if (blob) runBankOcr(blob);
+          return;
+        }
+      }
+    };
+    document.addEventListener("paste", handler);
+    return () => document.removeEventListener("paste", handler);
+  }, [showOcrZone, runBankOcr]);
 
   // Auto-save on change
   useEffect(() => { if (budgetSynced) saveBudgetTx(transactions); }, [transactions, budgetSynced]);
@@ -5898,6 +6011,47 @@ function BudgetView({ uid, quickAddTx, setQuickAddTx, onCatsChange }) {
               </div>
             </Card>
           )}
+
+          {/* ── OCR screenshot ── */}
+          <Card style={{ padding:16 }}>
+            <div style={{ fontSize:13, fontWeight:700, color:"#F1F5F9", marginBottom:6 }}>📷 Import par capture d'écran</div>
+            <div style={{ fontSize:11, color:"#475569", marginBottom:12 }}>
+              App Boursobank → liste de transactions → screenshot → Ctrl+V ici. Fonctionne aussi avec une image importée.
+            </div>
+            {!showOcrZone && !ocrLoading && (
+              <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
+                <button onClick={() => setShowOcrZone(true)}
+                  style={{ background:"rgba(129,140,248,0.15)", border:"1px solid rgba(129,140,248,0.3)", borderRadius:8, color:"#A5B4FC", padding:"8px 16px", fontSize:13, cursor:"pointer", fontWeight:600 }}>
+                  📋 Coller une capture (Ctrl+V)
+                </button>
+                <button onClick={() => ocrFileRef.current?.click()}
+                  style={{ background:"rgba(255,255,255,0.04)", border:"1px solid rgba(255,255,255,0.1)", borderRadius:8, color:"#94A3B8", padding:"8px 14px", fontSize:13, cursor:"pointer" }}>
+                  📁 Choisir une image
+                </button>
+                <input ref={ocrFileRef} type="file" accept="image/*" style={{ display:"none" }}
+                  onChange={e => { const f = e.target.files?.[0]; if (f) runBankOcr(f); e.target.value = ""; }} />
+              </div>
+            )}
+            {showOcrZone && !ocrLoading && (
+              <div style={{ border:"2px dashed rgba(129,140,248,0.4)", borderRadius:10, padding:"28px 20px", textAlign:"center", background:"rgba(129,140,248,0.06)", cursor:"pointer" }}
+                onClick={() => ocrFileRef.current?.click()}>
+                <div style={{ fontSize:28, marginBottom:8 }}>📋</div>
+                <div style={{ fontSize:13, color:"#A5B4FC", fontWeight:600 }}>Appuyez sur Ctrl+V pour coller la capture</div>
+                <div style={{ fontSize:11, color:"#475569", marginTop:4 }}>ou cliquez pour choisir un fichier image</div>
+                <button onClick={e => { e.stopPropagation(); setShowOcrZone(false); }}
+                  style={{ marginTop:12, background:"transparent", border:"none", color:"#475569", cursor:"pointer", fontSize:12, textDecoration:"underline" }}>Annuler</button>
+              </div>
+            )}
+            {ocrLoading && (
+              <div style={{ textAlign:"center", padding:"20px 0" }}>
+                <div style={{ fontSize:12, color:"#818CF8", marginBottom:8 }}>🔍 Analyse OCR en cours… {ocrProgress > 0 ? `${ocrProgress}%` : ""}</div>
+                <div style={{ height:6, background:"rgba(255,255,255,0.06)", borderRadius:3 }}>
+                  <div style={{ height:"100%", borderRadius:3, background:"#818CF8", width:`${ocrProgress}%`, transition:"width 0.3s" }} />
+                </div>
+              </div>
+            )}
+            {ocrError && <div style={{ fontSize:12, color:"#F87171", marginTop:8, padding:"8px 12px", background:"rgba(248,113,113,0.1)", borderRadius:6 }}>{ocrError}</div>}
+          </Card>
 
           <Card style={{ padding:16, background:"rgba(99,102,241,0.05)", border:"1px solid rgba(99,102,241,0.2)" }}>
             <div style={{ fontSize:13, fontWeight:600, color:"#818CF8", marginBottom:10 }}>📊 Données chargées</div>
